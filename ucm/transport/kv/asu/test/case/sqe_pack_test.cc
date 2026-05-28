@@ -38,7 +38,7 @@ protected:
 TEST_F(SqePackTest, StoreSqePackMatchesProtocol)
 {
     // Test values
-    constexpr std::uint32_t kCid = 0x1234;
+    constexpr std::uint16_t kCid = 0x1234;
     constexpr std::uint32_t kKvNsId = 0x0001;
     constexpr std::uint8_t kDtype = 0x1;   // 3 bits [15:13]
     constexpr std::uint8_t kDspec = 0x05;  // 5 bits [12:8]
@@ -117,7 +117,7 @@ TEST_F(SqePackTest, StoreSqePackMatchesProtocol)
 
 TEST_F(SqePackTest, RetrieveSqePackMatchesProtocol)
 {
-    constexpr std::uint32_t kCid = 0x5678;
+    constexpr std::uint16_t kCid = 0x5678;
     constexpr std::uint32_t kKvNsId = 0x0002;
     constexpr std::uint64_t kBufferAddr = 0x0000FEDCBA987654ULL;
     constexpr std::uint32_t kBufferLength = 0x00020000;  // 128KB
@@ -162,7 +162,7 @@ TEST_F(SqePackTest, RetrieveSqePackMatchesProtocol)
 
 TEST_F(SqePackTest, BatchStoreSqePackMatchesProtocol)
 {
-    constexpr std::uint32_t kCid = 0xABCD;
+    constexpr std::uint16_t kCid = 0xABCD;
     constexpr std::uint32_t kKvNsId = 0x0003;
     constexpr std::uint8_t kDtype = 0x2;
     constexpr std::uint8_t kDspec = 0x0A;
@@ -241,7 +241,7 @@ TEST_F(SqePackTest, BatchStoreSqePackMatchesProtocol)
 
 TEST_F(SqePackTest, BatchRetrieveSqePackMatchesProtocol)
 {
-    constexpr std::uint32_t kCid = 0x1111;
+    constexpr std::uint16_t kCid = 0x1111;
     constexpr std::uint32_t kKvNsId = 0x0004;
     constexpr std::uint64_t kRespBufferAddr = 0x0000444455556666ULL;
     constexpr std::uint32_t kRespMrKey = 0x88888888;
@@ -295,7 +295,7 @@ TEST_F(SqePackTest, BatchRetrieveSqePackMatchesProtocol)
 
 TEST_F(SqePackTest, DeleteSqePackMatchesProtocol)
 {
-    constexpr std::uint32_t kCid = 0x2222;
+    constexpr std::uint16_t kCid = 0x2222;
     constexpr std::uint32_t kKvNsId = 0x0005;
     constexpr std::uint64_t kRespBufferAddr = 0x0000AAAA0000BBBBULL;
     constexpr std::uint32_t kRespMrKey = 0x77777777;
@@ -337,7 +337,7 @@ TEST_F(SqePackTest, DeleteSqePackMatchesProtocol)
 
 TEST_F(SqePackTest, ExistSqePackMatchesProtocol)
 {
-    constexpr std::uint32_t kCid = 0x3333;
+    constexpr std::uint16_t kCid = 0x3333;
     constexpr std::uint32_t kKvNsId = 0x0006;
     constexpr std::uint64_t kRespBufferAddr = 0x0000CCCC0000DDDDULL;
     constexpr std::uint32_t kRespMrKey = 0x66666666;
@@ -379,7 +379,7 @@ TEST_F(SqePackTest, ExistSqePackMatchesProtocol)
 
 TEST_F(SqePackTest, KeepAliveSqePackMatchesProtocol)
 {
-    constexpr std::uint32_t kCid = 0x4444;
+    constexpr std::uint16_t kCid = 0x4444;
     constexpr std::uint64_t kRespBufferAddr = 0x0000EEEE0000FFFFULL;
     constexpr std::uint32_t kRespMrKey = 0x55555555;
     constexpr bool kRflag = true;

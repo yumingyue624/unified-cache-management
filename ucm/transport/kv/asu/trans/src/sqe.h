@@ -61,7 +61,7 @@ public:
 
 class KvStoreRequest : public SqeRequest {
 public:
-    std::uint32_t cid{0};
+    std::uint16_t cid{0};
     std::uint32_t kv_ns_id{0};
     std::uint8_t dtype{0};
     std::uint8_t dspec{0};
@@ -76,7 +76,7 @@ public:
 
 class KvRetrieveRequest : public SqeRequest {
 public:
-    std::uint32_t cid{0};
+    std::uint16_t cid{0};
     std::uint32_t kv_ns_id{0};
     std::uint64_t buffer_addr{0};
     std::uint32_t buffer_length{0};
@@ -98,7 +98,7 @@ public:
 
 class KvBatchStoreRequest : public SqeRequest {
 public:
-    std::uint32_t cid{0};
+    std::uint16_t cid{0};
     std::uint32_t kv_ns_id{0};
     std::uint8_t dtype{0};
     std::uint8_t dspec{0};
@@ -121,7 +121,7 @@ public:
 
 class KvBatchRetrieveRequest : public SqeRequest {
 public:
-    std::uint32_t cid{0};
+    std::uint16_t cid{0};
     std::uint32_t kv_ns_id{0};
     std::uint64_t response_buffer_addr{0};
     std::uint32_t response_mr_key{0};
@@ -133,7 +133,7 @@ public:
 
 class KvDeleteRequest : public SqeRequest {
 public:
-    std::uint32_t cid{0};
+    std::uint16_t cid{0};
     std::uint32_t kv_ns_id{0};
     std::uint64_t response_buffer_addr{0};
     std::uint32_t response_mr_key{0};
@@ -144,7 +144,7 @@ public:
 
 class KvExistRequest : public SqeRequest {
 public:
-    std::uint32_t cid{0};
+    std::uint16_t cid{0};
     std::uint32_t kv_ns_id{0};
     std::uint64_t response_buffer_addr{0};
     std::uint32_t response_mr_key{0};
@@ -156,7 +156,7 @@ public:
 
 class KvKeepAliveRequest : public SqeRequest {
 public:
-    std::uint32_t cid{0};
+    std::uint16_t cid{0};
     std::uint64_t response_buffer_addr{0};
     std::uint32_t response_mr_key{0};
     bool rflag{false};
