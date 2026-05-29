@@ -192,6 +192,51 @@ TEST_F(SendBufferTest, WrapAround)
     buffer.Destroy();
 }
 
+TEST_F(SendBufferTest, WrapAroundAddressCorrectness)
+{
+    SendBuffer buffer;
+    auto status = buffer.Init(1024);  // Small buffer
+    ASSERT_TRUE(status.ok());
+
+    void* base = buffer.GetBase();
+
+    // Step 1: Allocate 900 bytes to push submit_tail near the end
+    ScatterGatherEntry sge1;
+    status = buffer.Allocate(900, 1, sge1);
+    ASSERT_TRUE(status.ok());
+    ASSERT_EQ(reinterpret_cast<void*>(sge1.addr), base);  // Should start at base
+
+    // Step 2: Reclaim to free up space at the head
+    buffer.Submit(1);
+    buffer.Reclaim(1);
+
+    // Step 3: Allocate 200 bytes - this should wrap around
+    // submit_tail is at 900, capacity is 1024, so offset = 900
+    // We want 200 bytes, but only 124 bytes left at the tail (1024 - 900)
+    // This should wrap around and allocate at the head (base_)
+    ScatterGatherEntry sge2;
+    status = buffer.Allocate(200, 2, sge2);
+    ASSERT_TRUE(status.ok()) << "Wrap-around allocation failed: " << status.message;
+
+    // The key test: address should be at base_, not at base_ + 900
+    ASSERT_EQ(reinterpret_cast<void*>(sge2.addr), base)
+        << "Wrap-around should allocate at head, not at tail offset";
+
+    // Verify we can write to the entire 200 bytes without going out of bounds
+    std::memset(reinterpret_cast<void*>(sge2.addr), 0xAB, 200);
+
+    // Verify the data was written correctly
+    auto* data = reinterpret_cast<unsigned char*>(sge2.addr);
+    for (int i = 0; i < 200; ++i) {
+        ASSERT_EQ(data[i], 0xAB) << "Data corruption at byte " << i;
+    }
+
+    buffer.Submit(2);
+    buffer.Reclaim(2);
+
+    buffer.Destroy();
+}
+
 TEST_F(SendBufferTest, ConcurrentAllocateAndReclaim)
 {
     SendBuffer buffer;
