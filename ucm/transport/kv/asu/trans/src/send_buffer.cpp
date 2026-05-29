@@ -93,13 +93,21 @@ void* SendBuffer::AllocateSpace(std::size_t len)
         std::size_t offset = tail % capacity_;
 
         std::size_t actual_len = len;
-        if (offset + len > capacity_) { actual_len = len + (capacity_ - offset); }
+        void* addr = nullptr;
+
+        if (offset + len > capacity_) {
+            // Wrap-around: skip tail padding, allocate from head
+            actual_len = len + (capacity_ - offset);
+            addr = base_;
+        } else {
+            addr = static_cast<char*>(base_) + offset;
+        }
 
         if (used + actual_len > capacity_) { return nullptr; }
 
         if (submit_tail_.compare_exchange_weak(tail, tail + actual_len, std::memory_order_acq_rel,
                                                std::memory_order_relaxed)) {
-            return static_cast<char*>(base_) + offset;
+            return addr;
         }
     }
 }
