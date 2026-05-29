@@ -66,7 +66,8 @@ TEST_F(SqePackTest, StoreSqePackMatchesProtocol)
 
     // Pack
     KvStoreSqe sqe;
-    auto status = sqe.Pack(req);
+    std::vector<std::uint32_t> packed(16, 0);
+    auto status = sqe.Pack(req, packed.data());
     ASSERT_TRUE(status.ok()) << status.message;
 
     // Build expected buffer according to protocol spec
@@ -107,8 +108,7 @@ TEST_F(SqePackTest, StoreSqePackMatchesProtocol)
     if (key_len > 0) { std::memcpy(&expected[12], kKey.data(), key_len); }
 
     // Compare
-    ASSERT_EQ(sqe.Size(), expected.size() * sizeof(std::uint32_t));
-    const auto* packed = static_cast<const std::uint32_t*>(sqe.Data());
+    ASSERT_EQ(packed.size(), expected.size());
     for (std::size_t i = 0; i < expected.size(); ++i) {
         EXPECT_EQ(packed[i], expected[i]) << "Mismatch at Dword " << i << ": expected 0x"
                                           << std::hex << expected[i] << ", got 0x" << packed[i];
@@ -139,7 +139,8 @@ TEST_F(SqePackTest, RetrieveSqePackMatchesProtocol)
     req.key = kKey;
 
     KvRetrieveSqe sqe;
-    auto status = sqe.Pack(req);
+    std::vector<std::uint32_t> packed(sqe.PackedSize(req) / sizeof(std::uint32_t), 0);
+    auto status = sqe.Pack(req, packed.data());
     ASSERT_TRUE(status.ok()) << status.message;
 
     std::vector<std::uint32_t> expected(16, 0);
@@ -153,8 +154,7 @@ TEST_F(SqePackTest, RetrieveSqePackMatchesProtocol)
     expected[11] = (kLr ? (1U << 31) : 0) | (kLength & 0xFFFFFF);
     std::memcpy(&expected[12], kKey.data(), std::min(kKey.size(), static_cast<std::size_t>(16)));
 
-    ASSERT_EQ(sqe.Size(), expected.size() * sizeof(std::uint32_t));
-    const auto* packed = static_cast<const std::uint32_t*>(sqe.Data());
+    ASSERT_EQ(packed.size(), expected.size());
     for (std::size_t i = 0; i < expected.size(); ++i) {
         EXPECT_EQ(packed[i], expected[i]) << "Mismatch at Dword " << i;
     }
@@ -198,7 +198,8 @@ TEST_F(SqePackTest, BatchStoreSqePackMatchesProtocol)
     req.entries = {entry1, entry2};
 
     KvBatchStoreSqe sqe;
-    auto status = sqe.Pack(req);
+    std::vector<std::uint32_t> packed(sqe.PackedSize(req) / sizeof(std::uint32_t), 0);
+    auto status = sqe.Pack(req, packed.data());
     ASSERT_TRUE(status.ok()) << status.message;
 
     // 16 base dwords + 2 entries * 9 dwords = 34 dwords
@@ -232,8 +233,7 @@ TEST_F(SqePackTest, BatchStoreSqePackMatchesProtocol)
     expected[32] = ((entry2.mr_key & 0xFF) << 24) | (entry2.length & 0xFFFFFF);
     expected[33] = (0x40 << 24) | ((entry2.mr_key >> 8) & 0xFFFFFF);
 
-    ASSERT_EQ(sqe.Size(), expected.size() * sizeof(std::uint32_t));
-    const auto* packed = static_cast<const std::uint32_t*>(sqe.Data());
+    ASSERT_EQ(packed.size(), expected.size());
     for (std::size_t i = 0; i < expected.size(); ++i) {
         EXPECT_EQ(packed[i], expected[i]) << "Mismatch at Dword " << i;
     }
@@ -266,7 +266,8 @@ TEST_F(SqePackTest, BatchRetrieveSqePackMatchesProtocol)
     req.entries = {entry};
 
     KvBatchRetrieveSqe sqe;
-    auto status = sqe.Pack(req);
+    std::vector<std::uint32_t> packed(sqe.PackedSize(req) / sizeof(std::uint32_t), 0);
+    auto status = sqe.Pack(req, packed.data());
     ASSERT_TRUE(status.ok()) << status.message;
 
     std::vector<std::uint32_t> expected(25, 0);       // 16 + 1*9
@@ -286,8 +287,7 @@ TEST_F(SqePackTest, BatchRetrieveSqePackMatchesProtocol)
     expected[23] = ((entry.mr_key & 0xFF) << 24) | (entry.length & 0xFFFFFF);
     expected[24] = (0x40 << 24) | ((entry.mr_key >> 8) & 0xFFFFFF);
 
-    ASSERT_EQ(sqe.Size(), expected.size() * sizeof(std::uint32_t));
-    const auto* packed = static_cast<const std::uint32_t*>(sqe.Data());
+    ASSERT_EQ(packed.size(), expected.size());
     for (std::size_t i = 0; i < expected.size(); ++i) {
         EXPECT_EQ(packed[i], expected[i]) << "Mismatch at Dword " << i;
     }
@@ -311,7 +311,8 @@ TEST_F(SqePackTest, DeleteSqePackMatchesProtocol)
     req.keys = {"delete_key_1", "delete_key_2"};
 
     KvDeleteSqe sqe;
-    auto status = sqe.Pack(req);
+    std::vector<std::uint32_t> packed(sqe.PackedSize(req) / sizeof(std::uint32_t), 0);
+    auto status = sqe.Pack(req, packed.data());
     ASSERT_TRUE(status.ok()) << status.message;
 
     std::vector<std::uint32_t> expected(24, 0);  // 16 + 2*4
@@ -328,8 +329,7 @@ TEST_F(SqePackTest, DeleteSqePackMatchesProtocol)
     std::memcpy(&expected[20], req.keys[1].data(),
                 std::min(req.keys[1].size(), static_cast<std::size_t>(16)));
 
-    ASSERT_EQ(sqe.Size(), expected.size() * sizeof(std::uint32_t));
-    const auto* packed = static_cast<const std::uint32_t*>(sqe.Data());
+    ASSERT_EQ(packed.size(), expected.size());
     for (std::size_t i = 0; i < expected.size(); ++i) {
         EXPECT_EQ(packed[i], expected[i]) << "Mismatch at Dword " << i;
     }
@@ -355,7 +355,8 @@ TEST_F(SqePackTest, ExistSqePackMatchesProtocol)
     req.keys = {"exist_key"};
 
     KvExistSqe sqe;
-    auto status = sqe.Pack(req);
+    std::vector<std::uint32_t> packed(sqe.PackedSize(req) / sizeof(std::uint32_t), 0);
+    auto status = sqe.Pack(req, packed.data());
     ASSERT_TRUE(status.ok()) << status.message;
 
     std::vector<std::uint32_t> expected(20, 0);       // 16 + 1*4
@@ -370,8 +371,7 @@ TEST_F(SqePackTest, ExistSqePackMatchesProtocol)
     std::memcpy(&expected[16], req.keys[0].data(),
                 std::min(req.keys[0].size(), static_cast<std::size_t>(16)));
 
-    ASSERT_EQ(sqe.Size(), expected.size() * sizeof(std::uint32_t));
-    const auto* packed = static_cast<const std::uint32_t*>(sqe.Data());
+    ASSERT_EQ(packed.size(), expected.size());
     for (std::size_t i = 0; i < expected.size(); ++i) {
         EXPECT_EQ(packed[i], expected[i]) << "Mismatch at Dword " << i;
     }
@@ -391,7 +391,8 @@ TEST_F(SqePackTest, KeepAliveSqePackMatchesProtocol)
     req.rflag = kRflag;
 
     KvKeepAliveSqe sqe;
-    auto status = sqe.Pack(req);
+    std::vector<std::uint32_t> packed(sqe.PackedSize(req) / sizeof(std::uint32_t), 0);
+    auto status = sqe.Pack(req, packed.data());
     ASSERT_TRUE(status.ok()) << status.message;
 
     std::vector<std::uint32_t> expected(16, 0);
@@ -400,8 +401,7 @@ TEST_F(SqePackTest, KeepAliveSqePackMatchesProtocol)
     expected[4] = (kRespBufferAddr >> 32) & 0xFFFFFFFFULL;
     expected[5] = kRespMrKey;
 
-    ASSERT_EQ(sqe.Size(), expected.size() * sizeof(std::uint32_t));
-    const auto* packed = static_cast<const std::uint32_t*>(sqe.Data());
+    ASSERT_EQ(packed.size(), expected.size());
     for (std::size_t i = 0; i < expected.size(); ++i) {
         EXPECT_EQ(packed[i], expected[i]) << "Mismatch at Dword " << i;
     }
