@@ -62,7 +62,7 @@ Status SendBuffer::Init(std::size_t capacity)
     capacity_ = capacity;
 
     rob_ = std::make_unique<ReorderEntry[]>(kMaxROBEntries);
-    cid_to_rob_.assign(65536, kInvalidROBIndex);
+    cid_to_rob_.assign(kMaxCIDCount, kInvalidROBIndex);
 
     submit_tail_.store(0, std::memory_order_relaxed);
     reclaim_head_.store(0, std::memory_order_relaxed);

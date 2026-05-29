@@ -59,6 +59,7 @@ public:
 
 private:
     static constexpr std::size_t kAlignment = 512;
+    static constexpr std::size_t kMaxCIDCount = 65536;  // 16-bit CID range
     static constexpr std::size_t kMaxROBEntries = 65536;
     static constexpr std::size_t kInvalidROBIndex = SIZE_MAX;
 
