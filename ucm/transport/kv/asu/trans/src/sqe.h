@@ -33,6 +33,9 @@
 
 namespace UC::ASU {
 
+class SendBuffer;
+struct ScatterGatherEntry;
+
 enum class SqeOpcode : std::uint8_t {
     Store = 0x1,
     Retrieve = 0x2,
@@ -167,16 +170,9 @@ public:
     virtual ~Sqe() = default;
 
     virtual std::uint32_t GetOpcode() const = 0;
-    const void* Data() const { return dwords.data(); }
-    std::size_t Size() const { return dwords.size() * sizeof(std::uint32_t); }
-
-    virtual Status Pack(const SqeRequest& req) = 0;
-    virtual Status Validate() const = 0;
-
-protected:
-    // TODO: Optimize memory allocation. Currently using vector for dynamic size,
-    // but final implementation should write directly into SendBuffer to avoid copying.
-    std::vector<std::uint32_t> dwords;
+    virtual std::size_t PackedSize(const SqeRequest& req) const = 0;
+    virtual Status Pack(const SqeRequest& req, std::uint32_t* target) = 0;
+    virtual Status Validate(const std::uint32_t* data) const = 0;
 };
 
 class SqeRegistry {
@@ -219,8 +215,12 @@ public:
         return static_cast<std::uint32_t>(SqeOpcode::Store);
     }
 
-    Status Pack(const SqeRequest& req) override;
-    Status Validate() const override;
+    std::size_t PackedSize(const SqeRequest& req) const override
+    {
+        return kSqeDwordCount * sizeof(std::uint32_t);
+    }
+    Status Pack(const SqeRequest& req, std::uint32_t* target) override;
+    Status Validate(const std::uint32_t* data) const override;
 };
 
 class KvRetrieveSqe : public Sqe {
@@ -232,8 +232,12 @@ public:
         return static_cast<std::uint32_t>(SqeOpcode::Retrieve);
     }
 
-    Status Pack(const SqeRequest& req) override;
-    Status Validate() const override;
+    std::size_t PackedSize(const SqeRequest& req) const override
+    {
+        return kSqeDwordCount * sizeof(std::uint32_t);
+    }
+    Status Pack(const SqeRequest& req, std::uint32_t* target) override;
+    Status Validate(const std::uint32_t* data) const override;
 };
 
 class KvBatchStoreSqe : public Sqe {
@@ -245,11 +249,12 @@ public:
         return static_cast<std::uint32_t>(SqeOpcode::BatchStore);
     }
 
-    Status Pack(const SqeRequest& req) override;
-    Status Validate() const override;
+    std::size_t PackedSize(const SqeRequest& req) const override;
+    Status Pack(const SqeRequest& req, std::uint32_t* target) override;
+    Status Validate(const std::uint32_t* data) const override;
 
 private:
-    void PackEntry(const KvBatchStoreEntry& entry, std::size_t index);
+    static void PackEntry(const KvBatchStoreEntry& entry, std::uint32_t* base);
 };
 
 class KvBatchRetrieveSqe : public Sqe {
@@ -261,11 +266,12 @@ public:
         return static_cast<std::uint32_t>(SqeOpcode::BatchRetrieve);
     }
 
-    Status Pack(const SqeRequest& req) override;
-    Status Validate() const override;
+    std::size_t PackedSize(const SqeRequest& req) const override;
+    Status Pack(const SqeRequest& req, std::uint32_t* target) override;
+    Status Validate(const std::uint32_t* data) const override;
 
 private:
-    void PackEntry(const KvBatchRetrieveEntry& entry, std::size_t index);
+    static void PackEntry(const KvBatchRetrieveEntry& entry, std::uint32_t* base);
 };
 
 class KvDeleteSqe : public Sqe {
@@ -277,11 +283,12 @@ public:
         return static_cast<std::uint32_t>(SqeOpcode::Delete);
     }
 
-    Status Pack(const SqeRequest& req) override;
-    Status Validate() const override;
+    std::size_t PackedSize(const SqeRequest& req) const override;
+    Status Pack(const SqeRequest& req, std::uint32_t* target) override;
+    Status Validate(const std::uint32_t* data) const override;
 
 private:
-    void PackEntry(const std::string& key, std::size_t index);
+    static void PackEntry(const std::string& key, std::uint32_t* base);
 };
 
 class KvExistSqe : public Sqe {
@@ -293,11 +300,12 @@ public:
         return static_cast<std::uint32_t>(SqeOpcode::Exist);
     }
 
-    Status Pack(const SqeRequest& req) override;
-    Status Validate() const override;
+    std::size_t PackedSize(const SqeRequest& req) const override;
+    Status Pack(const SqeRequest& req, std::uint32_t* target) override;
+    Status Validate(const std::uint32_t* data) const override;
 
 private:
-    void PackEntry(const std::string& key, std::size_t index);
+    static void PackEntry(const std::string& key, std::uint32_t* base);
 };
 
 class KvKeepAliveSqe : public Sqe {
@@ -309,8 +317,12 @@ public:
         return static_cast<std::uint32_t>(SqeOpcode::KeepAlive);
     }
 
-    Status Pack(const SqeRequest& req) override;
-    Status Validate() const override;
+    std::size_t PackedSize(const SqeRequest& req) const override
+    {
+        return kSqeDwordCount * sizeof(std::uint32_t);
+    }
+    Status Pack(const SqeRequest& req, std::uint32_t* target) override;
+    Status Validate(const std::uint32_t* data) const override;
 };
 
 REGISTER_SQE(KvStoreSqe, SqeOpcode::Store)
@@ -320,5 +332,12 @@ REGISTER_SQE(KvBatchRetrieveSqe, SqeOpcode::BatchRetrieve)
 REGISTER_SQE(KvDeleteSqe, SqeOpcode::Delete)
 REGISTER_SQE(KvExistSqe, SqeOpcode::Exist)
 REGISTER_SQE(KvKeepAliveSqe, SqeOpcode::KeepAlive)
+
+// Convenience function: Allocate from SendBuffer, Pack SQE, handle errors
+// Returns filled SGE ready for ibv_post_send
+// Caller must call send_buffer.Submit(cid) after successful post_send
+// Caller must call send_buffer.Reclaim(cid) after receiving response
+Status PrepareSend(Sqe& sqe, const SqeRequest& req, std::uint16_t cid,
+                   SendBuffer& send_buffer, ScatterGatherEntry& sge);
 
 }  // namespace UC::ASU
