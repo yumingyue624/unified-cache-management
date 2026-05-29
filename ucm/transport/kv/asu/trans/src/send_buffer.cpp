@@ -181,6 +181,18 @@ void SendBuffer::Reclaim(std::uint16_t cid)
     TryReclaim();
 }
 
+// Reclaim ROB entries one at a time via CAS rather than batch scanning.
+// Batch scanning wastes work when CAS fails under contention, and delays
+// reclaim_head_ updates, causing AllocateSpace to see stale free space.
+//
+// TODO: Add timeout-based recovery for stuck ROB entries. If a caller forgets
+// to call Cancel after Pack/post_send failure, the ROB entry stays at
+// submitted=F, completed=F forever, blocking all subsequent reclaims and
+// eventually causing buffer exhaustion. A timeout mechanism could detect
+// entries that have been stuck too long and force-reclaim them. This requires
+// adding a timestamp to ReorderEntry and checking elapsed time in TryReclaim,
+// but must be careful not to reclaim entries that are still being actively
+// written to by the caller.
 void SendBuffer::TryReclaim()
 {
     while (true) {
