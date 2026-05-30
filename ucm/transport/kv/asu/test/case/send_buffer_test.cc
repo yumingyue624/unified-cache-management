@@ -97,9 +97,6 @@ TEST_F(SendBufferTest, SingleAllocateAndReclaim)
     // Write some data
     std::memset(addr, 0xAB, 64);
 
-    // Submit
-    buffer.Submit(1);
-
     // Reclaim
     buffer.Reclaim(1);
 
@@ -118,7 +115,6 @@ TEST_F(SendBufferTest, MultipleAllocates)
     for (int i = 0; i < kCount; ++i) {
         status = buffer.Allocate(64, static_cast<std::uint16_t>(i + 1), sges[i]);
         ASSERT_TRUE(status.ok()) << "Failed at i=" << i << ": " << status.message;
-        buffer.Submit(static_cast<std::uint16_t>(i + 1));
     }
 
     for (int i = 0; i < kCount; ++i) { buffer.Reclaim(static_cast<std::uint16_t>(i + 1)); }
@@ -142,7 +138,6 @@ TEST_F(SendBufferTest, CancelAllocation)
     // Should be able to allocate again with same CID
     status = buffer.Allocate(64, 1, sge);
     ASSERT_TRUE(status.ok());
-    buffer.Submit(1);
     buffer.Reclaim(1);
 
     buffer.Destroy();
@@ -185,7 +180,6 @@ TEST_F(SendBufferTest, WrapAround)
         ScatterGatherEntry sge;
         status = buffer.Allocate(256, static_cast<std::uint16_t>(round + 1), sge);
         ASSERT_TRUE(status.ok()) << "Failed at round=" << round << ": " << status.message;
-        buffer.Submit(static_cast<std::uint16_t>(round + 1));
         buffer.Reclaim(static_cast<std::uint16_t>(round + 1));
     }
 
@@ -207,7 +201,6 @@ TEST_F(SendBufferTest, WrapAroundAddressCorrectness)
     ASSERT_EQ(reinterpret_cast<void*>(sge1.addr), base);  // Should start at base
 
     // Step 2: Reclaim to free up space at the head
-    buffer.Submit(1);
     buffer.Reclaim(1);
 
     // Step 3: Allocate 200 bytes - this should wrap around
@@ -231,7 +224,6 @@ TEST_F(SendBufferTest, WrapAroundAddressCorrectness)
         ASSERT_EQ(data[i], 0xAB) << "Data corruption at byte " << i;
     }
 
-    buffer.Submit(2);
     buffer.Reclaim(2);
 
     buffer.Destroy();
@@ -256,7 +248,6 @@ TEST_F(SendBufferTest, ConcurrentAllocateAndReclaim)
             // Write some data
             std::memset(reinterpret_cast<void*>(sge.addr), thread_id, 64);
 
-            buffer.Submit(cid);
             buffer.Reclaim(cid);
         }
     };

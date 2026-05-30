@@ -53,18 +53,18 @@ constexpr std::uint32_t kFixedBits = 0x3;
 constexpr std::uint32_t kAlignmentBytes = 512;
 constexpr std::size_t kBatchEntrySizeBytes = 36;
 constexpr std::size_t kBatchEntryDwordCount = 9;
-constexpr std::size_t kDeleteEntrySizeBytes = 16;
-constexpr std::size_t kDeleteEntryDwordCount = 4;
+constexpr std::size_t kKeyEntrySizeBytes = 16;
+constexpr std::size_t kKeyEntryDwordCount = 4;
 constexpr std::size_t kMaxBatchNumber = 227;
 
 class SqeRequest {
 public:
     virtual ~SqeRequest() = default;
+    std::uint16_t cid{0};
 };
 
 class KvStoreRequest : public SqeRequest {
 public:
-    std::uint16_t cid{0};
     std::uint32_t kv_ns_id{0};
     std::uint8_t dtype{0};
     std::uint8_t dspec{0};

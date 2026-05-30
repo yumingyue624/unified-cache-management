@@ -50,7 +50,6 @@ public:
     void Destroy();
 
     Status Allocate(std::size_t size, std::uint16_t cid, ScatterGatherEntry& sge);
-    void Submit(std::uint16_t cid);
     void Cancel(std::uint16_t cid);
     void Reclaim(std::uint16_t cid);
 
@@ -65,8 +64,7 @@ private:
 
     struct ReorderEntry {
         std::size_t length{0};
-        std::atomic<bool> submitted{false};
-        std::atomic<bool> completed{false};
+        std::atomic<bool> in_use{false};
     };
 
     void* base_{nullptr};
