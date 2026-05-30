@@ -89,15 +89,8 @@ void* FlagBuffer::AllocateSpace(std::size_t len)
 
         // Check if allocation crosses boundary
         if (offset + len > capacity_) {
+            // Place padding header to mark skipped region
             std::size_t skip_len = capacity_ - offset;
-
-            // If skip_len < sizeof(Header), merge it into current allocation
-            if (skip_len < sizeof(Header)) {
-                len += skip_len;
-                skip_len = 0;
-            }
-
-            // Place padding header if space allows
             if (skip_len >= sizeof(Header)) {
                 auto* padding_header = reinterpret_cast<Header*>(
                     static_cast<char*>(base_) + offset);
@@ -112,6 +105,13 @@ void* FlagBuffer::AllocateSpace(std::size_t len)
                 continue;
             }
             continue;
+        }
+
+        // Check if remaining space after allocation is too small for a header
+        // If so, extend current allocation to consume the tail space
+        std::size_t remaining = capacity_ - (offset + len);
+        if (remaining > 0 && remaining < sizeof(Header)) {
+            len += remaining;
         }
 
         std::size_t new_tail = tail + len;
