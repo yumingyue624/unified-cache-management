@@ -91,11 +91,17 @@ void* FlagBuffer::AllocateSpace(std::size_t len)
         if (offset + len > capacity_) {
             std::size_t skip_len = capacity_ - offset;
 
+            // If skip_len < sizeof(Header), merge it into current allocation
+            if (skip_len < sizeof(Header)) {
+                len += skip_len;
+                skip_len = 0;
+            }
+
             // Place padding header if space allows
             if (skip_len >= sizeof(Header)) {
                 auto* padding_header = reinterpret_cast<Header*>(
                     static_cast<char*>(base_) + offset);
-                padding_header->length = 0;
+                padding_header->length = static_cast<std::uint32_t>(skip_len - sizeof(Header));
                 padding_header->in_use.store(false, std::memory_order_release);
             }
 
