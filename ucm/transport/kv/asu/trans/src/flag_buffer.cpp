@@ -76,49 +76,56 @@ void FlagBuffer::Destroy()
     capacity_ = 0;
 }
 
-void* FlagBuffer::AllocateSpace(std::size_t len)
+FlagBuffer::AllocationResult FlagBuffer::AllocateSpace(std::size_t len)
 {
     while (true) {
         std::size_t tail = submit_tail_.load(std::memory_order_acquire);
         std::size_t head = reclaim_head_.load(std::memory_order_acquire);
         std::size_t used = tail - head;
 
-        if (used + len > capacity_) { return nullptr; }
+        if (used + len > capacity_) { return {nullptr, 0}; }
 
         std::size_t offset = tail % capacity_;
+        std::size_t actual_len = len;
+        std::size_t new_tail = 0;
+        void* result_ptr = nullptr;
+        bool need_continue = false;
 
-        // Check if allocation crosses boundary
         if (offset + len > capacity_) {
-            // Place padding header to mark skipped region
+            // 情况 1：跨越边界
             std::size_t skip_len = capacity_ - offset;
+
             if (skip_len >= sizeof(Header)) {
+                // 可以放置 padding header
                 auto* padding_header = reinterpret_cast<Header*>(
                     static_cast<char*>(base_) + offset);
                 padding_header->length = static_cast<std::uint32_t>(skip_len - sizeof(Header));
                 padding_header->in_use.store(false, std::memory_order_release);
-            }
 
-            std::size_t new_tail = tail + skip_len;
-
-            if (submit_tail_.compare_exchange_weak(tail, new_tail, std::memory_order_acq_rel,
-                                                   std::memory_order_relaxed)) {
-                continue;
+                new_tail = tail + skip_len;
+                need_continue = true;
+            } else {
+                // 无法放置 padding header，合并到当前分配
+                actual_len = len + skip_len;
+                new_tail = tail + actual_len;
+                result_ptr = static_cast<char*>(base_) + offset;
             }
-            continue;
+        } else {
+            // 情况 2：不跨越边界
+            std::size_t remaining = capacity_ - (offset + len);
+            if (remaining > 0 && remaining < sizeof(Header)) {
+                // 分配后剩余空间不足一个 header，扩展
+                actual_len = len + remaining;
+            }
+            new_tail = tail + actual_len;
+            result_ptr = static_cast<char*>(base_) + offset;
         }
 
-        // Check if remaining space after allocation is too small for a header
-        // If so, extend current allocation to consume the tail space
-        std::size_t remaining = capacity_ - (offset + len);
-        if (remaining > 0 && remaining < sizeof(Header)) {
-            len += remaining;
-        }
-
-        std::size_t new_tail = tail + len;
-
+        // 统一 CAS
         if (submit_tail_.compare_exchange_weak(tail, new_tail, std::memory_order_acq_rel,
                                                std::memory_order_relaxed)) {
-            return static_cast<char*>(base_) + offset;
+            if (need_continue) { continue; }
+            return {result_ptr, actual_len};
         }
     }
 }
@@ -156,12 +163,12 @@ Status FlagBuffer::Allocate(std::size_t size, void*& data_ptr)
 
     TryReclaim();
 
-    void* slot = AllocateSpace(total_len);
-    if (!slot) {
+    auto result = AllocateSpace(total_len);
+    if (!result.ptr) {
         while (true) {
             TryReclaim();
-            slot = AllocateSpace(total_len);
-            if (slot) { break; }
+            result = AllocateSpace(total_len);
+            if (result.ptr) { break; }
 #ifdef _WIN32
             _mm_pause();
 #else
@@ -170,11 +177,11 @@ Status FlagBuffer::Allocate(std::size_t size, void*& data_ptr)
         }
     }
 
-    auto* header = static_cast<Header*>(slot);
-    header->length = static_cast<std::uint32_t>(size);
+    auto* header = static_cast<Header*>(result.ptr);
+    header->length = static_cast<std::uint32_t>(result.actual_len - sizeof(Header));
     header->in_use.store(true, std::memory_order_release);
 
-    data_ptr = static_cast<char*>(slot) + sizeof(Header);
+    data_ptr = static_cast<char*>(result.ptr) + sizeof(Header);
     return Status::OK();
 }
 
