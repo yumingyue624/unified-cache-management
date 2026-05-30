@@ -141,8 +141,7 @@ Status SendBuffer::Allocate(std::size_t size, std::uint16_t cid, ScatterGatherEn
 
     std::size_t rob_idx = rob_tail_.fetch_add(1, std::memory_order_acq_rel) % kMaxROBEntries;
     rob_[rob_idx].length = size;
-    rob_[rob_idx].submitted.store(false, std::memory_order_relaxed);
-    rob_[rob_idx].completed.store(false, std::memory_order_relaxed);
+    rob_[rob_idx].in_use.store(true, std::memory_order_release);
 
     cid_to_rob_[cid] = rob_idx;
 
@@ -153,22 +152,12 @@ Status SendBuffer::Allocate(std::size_t size, std::uint16_t cid, ScatterGatherEn
     return Status::OK();
 }
 
-void SendBuffer::Submit(std::uint16_t cid)
-{
-    std::size_t rob_idx = cid_to_rob_[cid];
-    if (rob_idx == kInvalidROBIndex) { return; }
-
-    rob_[rob_idx].submitted.store(true, std::memory_order_release);
-    TryReclaim();
-}
-
 void SendBuffer::Cancel(std::uint16_t cid)
 {
     std::size_t rob_idx = cid_to_rob_[cid];
     if (rob_idx == kInvalidROBIndex) { return; }
 
-    rob_[rob_idx].submitted.store(true, std::memory_order_relaxed);
-    rob_[rob_idx].completed.store(true, std::memory_order_release);
+    rob_[rob_idx].in_use.store(false, std::memory_order_release);
     TryReclaim();
 }
 
@@ -177,7 +166,7 @@ void SendBuffer::Reclaim(std::uint16_t cid)
     std::size_t rob_idx = cid_to_rob_[cid];
     if (rob_idx == kInvalidROBIndex) { return; }
 
-    rob_[rob_idx].completed.store(true, std::memory_order_release);
+    rob_[rob_idx].in_use.store(false, std::memory_order_release);
     TryReclaim();
 }
 
@@ -186,21 +175,26 @@ void SendBuffer::Reclaim(std::uint16_t cid)
 // reclaim_head_ updates, causing AllocateSpace to see stale free space.
 //
 // TODO: Add timeout-based recovery for stuck ROB entries. If a caller forgets
-// to call Cancel after Pack/post_send failure, the ROB entry stays at
-// submitted=F, completed=F forever, blocking all subsequent reclaims and
-// eventually causing buffer exhaustion. A timeout mechanism could detect
-// entries that have been stuck too long and force-reclaim them. This requires
-// adding a timestamp to ReorderEntry and checking elapsed time in TryReclaim,
-// but must be careful not to reclaim entries that are still being actively
-// written to by the caller.
+// to call Cancel/Reclaim after Allocate, the ROB entry stays at in_use=true
+// forever, blocking all subsequent reclaims and eventually causing buffer
+// exhaustion. A timeout mechanism could detect entries that have been stuck
+// too long and force-reclaim them. This requires adding a timestamp to
+// ReorderEntry and checking elapsed time in TryReclaim, but must be careful
+// not to reclaim entries that are still being actively written to by the caller.
 void SendBuffer::TryReclaim()
 {
     while (true) {
         std::size_t head = rob_head_.load(std::memory_order_acquire);
+        std::size_t tail = rob_tail_.load(std::memory_order_acquire);
+        
+        // Only reclaim if there are entries to reclaim
+        if (head >= tail) {
+            break;
+        }
+        
         std::size_t idx = head % kMaxROBEntries;
 
-        if (!rob_[idx].submitted.load(std::memory_order_acquire) ||
-            !rob_[idx].completed.load(std::memory_order_acquire)) {
+        if (rob_[idx].in_use.load(std::memory_order_acquire)) {
             break;
         }
 

@@ -360,7 +360,7 @@ void KvBatchRetrieveSqe::PackEntry(const KvBatchRetrieveEntry& entry, std::uint3
 std::size_t KvDeleteSqe::PackedSize(const SqeRequest& req) const
 {
     auto& r = static_cast<const KvDeleteRequest&>(req);
-    return (kSqeDwordCount + r.batch_number * kDeleteEntryDwordCount) * sizeof(std::uint32_t);
+    return (kSqeDwordCount + r.batch_number * kKeyEntryDwordCount) * sizeof(std::uint32_t);
 }
 
 Status KvDeleteSqe::Pack(const SqeRequest& req, std::uint32_t* target)
@@ -389,7 +389,7 @@ Status KvDeleteSqe::Pack(const SqeRequest& req, std::uint32_t* target)
     // Dword 6-7: DPTR.buffer = 0 (fixed)
 
     // Dword 8: DPTR.length = Batch Number * 16
-    target[8] = r.batch_number * kDeleteEntrySizeBytes;
+    target[8] = r.batch_number * kKeyEntrySizeBytes;
 
     // Dword 9: DPTR.Type = 0x1
     target[9] = static_cast<std::uint32_t>(DptrType::Batch) << 24;
@@ -401,7 +401,7 @@ Status KvDeleteSqe::Pack(const SqeRequest& req, std::uint32_t* target)
 
     // Pack delete entries
     for (std::size_t i = 0; i < r.batch_number; ++i) {
-        PackEntry(r.keys[i], target + kSqeDwordCount + i * kDeleteEntryDwordCount);
+        PackEntry(r.keys[i], target + kSqeDwordCount + i * kKeyEntryDwordCount);
     }
     return Status::OK();
 }
@@ -418,7 +418,7 @@ Status KvDeleteSqe::Validate(const std::uint32_t* data) const
                              "batch_number must be in range [1, 227]");
     }
     std::uint32_t dptr_length = data[8] & 0xFFFFFF;
-    if (dptr_length != batch_number * kDeleteEntrySizeBytes) {
+    if (dptr_length != batch_number * kKeyEntrySizeBytes) {
         return Status::Error(StatusCode::INVALID_ARGUMENT,
                              "DPTR.length must equal batch_number * 16");
     }
@@ -435,7 +435,7 @@ void KvDeleteSqe::PackEntry(const std::string& key, std::uint32_t* base)
 std::size_t KvExistSqe::PackedSize(const SqeRequest& req) const
 {
     auto& r = static_cast<const KvExistRequest&>(req);
-    return (kSqeDwordCount + r.batch_number * kDeleteEntryDwordCount) * sizeof(std::uint32_t);
+    return (kSqeDwordCount + r.batch_number * kKeyEntryDwordCount) * sizeof(std::uint32_t);
 }
 
 Status KvExistSqe::Pack(const SqeRequest& req, std::uint32_t* target)
@@ -464,7 +464,7 @@ Status KvExistSqe::Pack(const SqeRequest& req, std::uint32_t* target)
     // Dword 6-7: DPTR.buffer = 0 (fixed)
 
     // Dword 8: DPTR.length = Batch Number * 16
-    target[8] = r.batch_number * kDeleteEntrySizeBytes;
+    target[8] = r.batch_number * kKeyEntrySizeBytes;
 
     // Dword 9: DPTR.Type = 0x1
     target[9] = static_cast<std::uint32_t>(DptrType::Batch) << 24;
@@ -477,7 +477,7 @@ Status KvExistSqe::Pack(const SqeRequest& req, std::uint32_t* target)
 
     // Pack exist entries
     for (std::size_t i = 0; i < r.batch_number; ++i) {
-        PackEntry(r.keys[i], target + kSqeDwordCount + i * kDeleteEntryDwordCount);
+        PackEntry(r.keys[i], target + kSqeDwordCount + i * kKeyEntryDwordCount);
     }
     return Status::OK();
 }
@@ -494,7 +494,7 @@ Status KvExistSqe::Validate(const std::uint32_t* data) const
                              "batch_number must be in range [1, 227]");
     }
     std::uint32_t dptr_length = data[8] & 0xFFFFFF;
-    if (dptr_length != batch_number * kDeleteEntrySizeBytes) {
+    if (dptr_length != batch_number * kKeyEntrySizeBytes) {
         return Status::Error(StatusCode::INVALID_ARGUMENT,
                              "DPTR.length must equal batch_number * 16");
     }
