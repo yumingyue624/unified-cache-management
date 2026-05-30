@@ -539,22 +539,6 @@ Status KvKeepAliveSqe::Validate(const std::uint32_t* data) const
     return Status::OK();
 }
 
-Status PrepareSend(Sqe& sqe, const SqeRequest& req, std::uint16_t cid,
-                   SendBuffer& send_buffer, ScatterGatherEntry& sge)
-{
-    std::size_t size = sqe.PackedSize(req);
-    auto status = send_buffer.Allocate(size, cid, sge);
-    if (!status.ok()) { return status; }
-
-    status = sqe.Pack(req, reinterpret_cast<std::uint32_t*>(sge.addr));
-    if (!status.ok()) {
-        send_buffer.Cancel(cid);
-        return status;
-    }
-
-    return Status::OK();
-}
-
 Status SqeManager::Init(SendBuffer& send_buffer)
 {
     send_buffer_ = &send_buffer;
