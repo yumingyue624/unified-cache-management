@@ -171,6 +171,7 @@ public:
 
     virtual std::uint32_t GetOpcode() const = 0;
     virtual std::size_t PackedSize(const SqeRequest& req) const = 0;
+    virtual std::size_t ResponseSize(const SqeRequest& req) const = 0;
     virtual Status Pack(const SqeRequest& req, std::uint32_t* target) = 0;
     virtual Status Validate(const std::uint32_t* data) const = 0;
 };
@@ -219,6 +220,12 @@ public:
     {
         return kSqeDwordCount * sizeof(std::uint32_t);
     }
+
+    std::size_t ResponseSize(const SqeRequest& req) const override
+    {
+        return kSqeDwordCount * sizeof(std::uint32_t);
+    }
+
     Status Pack(const SqeRequest& req, std::uint32_t* target) override;
     Status Validate(const std::uint32_t* data) const override;
 };
@@ -236,6 +243,12 @@ public:
     {
         return kSqeDwordCount * sizeof(std::uint32_t);
     }
+
+    std::size_t ResponseSize(const SqeRequest& req) const override
+    {
+        return kSqeDwordCount * sizeof(std::uint32_t);
+    }
+
     Status Pack(const SqeRequest& req, std::uint32_t* target) override;
     Status Validate(const std::uint32_t* data) const override;
 };
@@ -250,6 +263,9 @@ public:
     }
 
     std::size_t PackedSize(const SqeRequest& req) const override;
+
+    std::size_t ResponseSize(const SqeRequest& req) const override;
+
     Status Pack(const SqeRequest& req, std::uint32_t* target) override;
     Status Validate(const std::uint32_t* data) const override;
 
@@ -267,6 +283,9 @@ public:
     }
 
     std::size_t PackedSize(const SqeRequest& req) const override;
+
+    std::size_t ResponseSize(const SqeRequest& req) const override;
+
     Status Pack(const SqeRequest& req, std::uint32_t* target) override;
     Status Validate(const std::uint32_t* data) const override;
 
@@ -284,6 +303,9 @@ public:
     }
 
     std::size_t PackedSize(const SqeRequest& req) const override;
+
+    std::size_t ResponseSize(const SqeRequest& req) const override;
+
     Status Pack(const SqeRequest& req, std::uint32_t* target) override;
     Status Validate(const std::uint32_t* data) const override;
 
@@ -301,6 +323,9 @@ public:
     }
 
     std::size_t PackedSize(const SqeRequest& req) const override;
+
+    std::size_t ResponseSize(const SqeRequest& req) const override;
+
     Status Pack(const SqeRequest& req, std::uint32_t* target) override;
     Status Validate(const std::uint32_t* data) const override;
 
@@ -321,6 +346,12 @@ public:
     {
         return kSqeDwordCount * sizeof(std::uint32_t);
     }
+
+    std::size_t ResponseSize(const SqeRequest& req) const override
+    {
+        return kSqeDwordCount * sizeof(std::uint32_t);
+    }
+
     Status Pack(const SqeRequest& req, std::uint32_t* target) override;
     Status Validate(const std::uint32_t* data) const override;
 };
