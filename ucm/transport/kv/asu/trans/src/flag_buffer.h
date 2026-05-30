@@ -64,7 +64,12 @@ private:
     std::atomic<std::size_t> submit_tail_{0};
     std::atomic<std::size_t> reclaim_head_{0};
 
-    void* AllocateSpace(std::size_t len);
+    struct AllocationResult {
+        void* ptr;
+        std::size_t actual_len;
+    };
+
+    AllocationResult AllocateSpace(std::size_t len);
     void TryReclaim();
     Header* GetHeader(void* data_ptr) const;
 };
