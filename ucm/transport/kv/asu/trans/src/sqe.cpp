@@ -569,7 +569,7 @@ Status SqeManager::SendRequest(SqeOpcode opcode, const SqeRequest& req, ScatterG
 
     status = sqe->Pack(req, reinterpret_cast<std::uint32_t*>(sge.addr));
     if (!status.ok()) {
-        send_buffer_->Cancel(req.cid);
+        send_buffer_->Reclaim(req.cid);
         return status;
     }
 

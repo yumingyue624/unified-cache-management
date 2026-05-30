@@ -122,7 +122,7 @@ TEST_F(SendBufferTest, MultipleAllocates)
     buffer.Destroy();
 }
 
-TEST_F(SendBufferTest, CancelAllocation)
+TEST_F(SendBufferTest, ReclaimAllocation)
 {
     SendBuffer buffer;
     auto status = buffer.Init(1024 * 1024);
@@ -132,8 +132,8 @@ TEST_F(SendBufferTest, CancelAllocation)
     status = buffer.Allocate(64, 1, sge);
     ASSERT_TRUE(status.ok());
 
-    // Cancel instead of submit
-    buffer.Cancel(1);
+    // Reclaim without using the buffer
+    buffer.Reclaim(1);
 
     // Should be able to allocate again with same CID
     status = buffer.Allocate(64, 1, sge);
