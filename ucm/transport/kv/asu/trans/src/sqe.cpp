@@ -173,6 +173,13 @@ std::size_t KvBatchStoreSqe::PackedSize(const SqeRequest& req) const
     return (kSqeDwordCount + r.batch_number * kBatchEntryDwordCount) * sizeof(std::uint32_t);
 }
 
+std::size_t KvBatchStoreSqe::ResponseSize(const SqeRequest& req) const
+{
+    auto& r = static_cast<const KvBatchStoreRequest&>(req);
+    // CQE: 16 bytes + Result Buffer: ceil(batch_number / 2) bytes (4 bits per key)
+    return kSqeDwordCount * sizeof(std::uint32_t) + (r.batch_number + 1) / 2;
+}
+
 Status KvBatchStoreSqe::Pack(const SqeRequest& req, std::uint32_t* target)
 {
     auto& r = static_cast<const KvBatchStoreRequest&>(req);
@@ -269,6 +276,13 @@ std::size_t KvBatchRetrieveSqe::PackedSize(const SqeRequest& req) const
     return (kSqeDwordCount + r.batch_number * kBatchEntryDwordCount) * sizeof(std::uint32_t);
 }
 
+std::size_t KvBatchRetrieveSqe::ResponseSize(const SqeRequest& req) const
+{
+    auto& r = static_cast<const KvBatchRetrieveRequest&>(req);
+    // CQE: 16 bytes + Result Buffer: ceil(batch_number / 2) bytes (4 bits per key)
+    return kSqeDwordCount * sizeof(std::uint32_t) + (r.batch_number + 1) / 2;
+}
+
 Status KvBatchRetrieveSqe::Pack(const SqeRequest& req, std::uint32_t* target)
 {
     auto& r = static_cast<const KvBatchRetrieveRequest&>(req);
@@ -363,6 +377,13 @@ std::size_t KvDeleteSqe::PackedSize(const SqeRequest& req) const
     return (kSqeDwordCount + r.batch_number * kKeyEntryDwordCount) * sizeof(std::uint32_t);
 }
 
+std::size_t KvDeleteSqe::ResponseSize(const SqeRequest& req) const
+{
+    auto& r = static_cast<const KvDeleteRequest&>(req);
+    // CQE: 16 bytes + Result Buffer: ceil(batch_number / 8) bytes (1 bit per key)
+    return kSqeDwordCount * sizeof(std::uint32_t) + (r.batch_number + 7) / 8;
+}
+
 Status KvDeleteSqe::Pack(const SqeRequest& req, std::uint32_t* target)
 {
     auto& r = static_cast<const KvDeleteRequest&>(req);
@@ -436,6 +457,13 @@ std::size_t KvExistSqe::PackedSize(const SqeRequest& req) const
 {
     auto& r = static_cast<const KvExistRequest&>(req);
     return (kSqeDwordCount + r.batch_number * kKeyEntryDwordCount) * sizeof(std::uint32_t);
+}
+
+std::size_t KvExistSqe::ResponseSize(const SqeRequest& req) const
+{
+    auto& r = static_cast<const KvExistRequest&>(req);
+    // CQE: 16 bytes + Result Buffer: ceil(batch_number / 8) bytes (1 bit per key)
+    return kSqeDwordCount * sizeof(std::uint32_t) + (r.batch_number + 7) / 8;
 }
 
 Status KvExistSqe::Pack(const SqeRequest& req, std::uint32_t* target)
