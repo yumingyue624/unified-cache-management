@@ -555,4 +555,50 @@ Status PrepareSend(Sqe& sqe, const SqeRequest& req, std::uint16_t cid,
     return Status::OK();
 }
 
+Status SqeManager::Init(SendBuffer& send_buffer)
+{
+    send_buffer_ = &send_buffer;
+
+    packers_[SqeOpcode::Store] = std::make_unique<KvStoreSqe>();
+    packers_[SqeOpcode::Retrieve] = std::make_unique<KvRetrieveSqe>();
+    packers_[SqeOpcode::BatchStore] = std::make_unique<KvBatchStoreSqe>();
+    packers_[SqeOpcode::BatchRetrieve] = std::make_unique<KvBatchRetrieveSqe>();
+    packers_[SqeOpcode::Delete] = std::make_unique<KvDeleteSqe>();
+    packers_[SqeOpcode::Exist] = std::make_unique<KvExistSqe>();
+    packers_[SqeOpcode::KeepAlive] = std::make_unique<KvKeepAliveSqe>();
+
+    return Status::OK();
+}
+
+Status SqeManager::SendRequest(SqeOpcode opcode, const SqeRequest& req, ScatterGatherEntry& sge)
+{
+    Sqe* sqe = GetSqe(opcode);
+    if (!sqe) {
+        return Status::Error(StatusCode::INVALID_ARGUMENT, "unknown SQE opcode");
+    }
+
+    std::size_t size = sqe->PackedSize(req);
+    auto status = send_buffer_->Allocate(size, req.cid, sge);
+    if (!status.ok()) {
+        return status;
+    }
+
+    status = sqe->Pack(req, reinterpret_cast<std::uint32_t*>(sge.addr));
+    if (!status.ok()) {
+        send_buffer_->Cancel(req.cid);
+        return status;
+    }
+
+    return Status::OK();
+}
+
+Sqe* SqeManager::GetSqe(SqeOpcode opcode) const
+{
+    auto it = packers_.find(opcode);
+    if (it == packers_.end()) {
+        return nullptr;
+    }
+    return it->second.get();
+}
+
 }  // namespace UC::ASU

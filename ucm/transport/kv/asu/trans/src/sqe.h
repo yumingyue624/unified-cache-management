@@ -340,4 +340,27 @@ REGISTER_SQE(KvKeepAliveSqe, SqeOpcode::KeepAlive)
 Status PrepareSend(Sqe& sqe, const SqeRequest& req, std::uint16_t cid,
                    SendBuffer& send_buffer, ScatterGatherEntry& sge);
 
+class SqeManager {
+public:
+    SqeManager() = default;
+    ~SqeManager() = default;
+
+    SqeManager(const SqeManager&) = delete;
+    SqeManager& operator=(const SqeManager&) = delete;
+
+    // 初始化：创建 7 种 Sqe 对象
+    Status Init(SendBuffer& send_buffer);
+
+    // 发送请求：Allocate + Pack + Submit/Cancel
+    // 成功时返回 Status::OK() 并填充 sge
+    // 失败时返回错误码，内部已调用 Cancel
+    Status SendRequest(SqeOpcode opcode, const SqeRequest& req, ScatterGatherEntry& sge);
+
+private:
+    SendBuffer* send_buffer_{nullptr};
+    std::unordered_map<SqeOpcode, std::unique_ptr<Sqe>> packers_;
+
+    Sqe* GetSqe(SqeOpcode opcode) const;
+};
+
 }  // namespace UC::ASU
