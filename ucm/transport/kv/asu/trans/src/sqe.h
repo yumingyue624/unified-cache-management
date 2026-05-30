@@ -333,13 +333,6 @@ REGISTER_SQE(KvDeleteSqe, SqeOpcode::Delete)
 REGISTER_SQE(KvExistSqe, SqeOpcode::Exist)
 REGISTER_SQE(KvKeepAliveSqe, SqeOpcode::KeepAlive)
 
-// Convenience function: Allocate from SendBuffer, Pack SQE, handle errors
-// Returns filled SGE ready for ibv_post_send
-// Caller must call send_buffer.Submit(cid) after successful post_send
-// Caller must call send_buffer.Reclaim(cid) after receiving response
-Status PrepareSend(Sqe& sqe, const SqeRequest& req, std::uint16_t cid,
-                   SendBuffer& send_buffer, ScatterGatherEntry& sge);
-
 class SqeManager {
 public:
     SqeManager() = default;
