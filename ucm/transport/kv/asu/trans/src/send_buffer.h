@@ -50,7 +50,6 @@ public:
     void Destroy();
 
     Status Allocate(std::size_t size, std::uint16_t cid, ScatterGatherEntry& sge);
-    void Cancel(std::uint16_t cid);
     void Reclaim(std::uint16_t cid);
 
     void* GetBase() const { return base_; }

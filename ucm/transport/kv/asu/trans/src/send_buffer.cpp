@@ -152,15 +152,6 @@ Status SendBuffer::Allocate(std::size_t size, std::uint16_t cid, ScatterGatherEn
     return Status::OK();
 }
 
-void SendBuffer::Cancel(std::uint16_t cid)
-{
-    std::size_t rob_idx = cid_to_rob_[cid];
-    if (rob_idx == kInvalidROBIndex) { return; }
-
-    rob_[rob_idx].in_use.store(false, std::memory_order_release);
-    TryReclaim();
-}
-
 void SendBuffer::Reclaim(std::uint16_t cid)
 {
     std::size_t rob_idx = cid_to_rob_[cid];
@@ -175,7 +166,7 @@ void SendBuffer::Reclaim(std::uint16_t cid)
 // reclaim_head_ updates, causing AllocateSpace to see stale free space.
 //
 // TODO: Add timeout-based recovery for stuck ROB entries. If a caller forgets
-// to call Cancel/Reclaim after Allocate, the ROB entry stays at in_use=true
+// to call Reclaim after Allocate, the ROB entry stays at in_use=true
 // forever, blocking all subsequent reclaims and eventually causing buffer
 // exhaustion. A timeout mechanism could detect entries that have been stuck
 // too long and force-reclaim them. This requires adding a timestamp to

@@ -344,9 +344,9 @@ public:
     // 初始化：创建 7 种 Sqe 对象
     Status Init(SendBuffer& send_buffer);
 
-    // 发送请求：Allocate + Pack + Submit/Cancel
+    // 发送请求：Allocate + Pack
     // 成功时返回 Status::OK() 并填充 sge
-    // 失败时返回错误码，内部已调用 Cancel
+    // 失败时返回错误码，内部已调用 Reclaim
     Status SendRequest(SqeOpcode opcode, const SqeRequest& req, ScatterGatherEntry& sge);
 
 private:
