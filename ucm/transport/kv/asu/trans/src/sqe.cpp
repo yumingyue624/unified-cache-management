@@ -173,16 +173,6 @@ std::size_t KvBatchStoreSqe::PackedSize(const SqeRequest& req) const
     return (kSqeDwordCount + r.batch_number * kBatchEntryDwordCount) * sizeof(std::uint32_t);
 }
 
-std::size_t KvBatchStoreSqe::ResponseSize(const SqeRequest& req) const
-{
-    auto& r = static_cast<const KvBatchStoreRequest&>(req);
-    // CQE header: 4 dwords = 16 bytes
-    // Result Buffer: batch_number * 4 bits per key, convert to bytes
-    constexpr std::size_t kCqeHeaderBytes = kCqeDwordCount * sizeof(std::uint32_t);
-    constexpr std::size_t kBitsPerKey = 4;
-    return kCqeHeaderBytes + (r.batch_number * kBitsPerKey + 7) / 8;
-}
-
 Status KvBatchStoreSqe::Pack(const SqeRequest& req, std::uint32_t* target)
 {
     auto& r = static_cast<const KvBatchStoreRequest&>(req);
@@ -279,15 +269,6 @@ std::size_t KvBatchRetrieveSqe::PackedSize(const SqeRequest& req) const
     return (kSqeDwordCount + r.batch_number * kBatchEntryDwordCount) * sizeof(std::uint32_t);
 }
 
-std::size_t KvBatchRetrieveSqe::ResponseSize(const SqeRequest& req) const
-{
-    auto& r = static_cast<const KvBatchRetrieveRequest&>(req);
-    // CQE header: 4 dwords = 16 bytes
-    // Result Buffer: batch_number * 4 bits per key, convert to bytes
-    constexpr std::size_t kCqeHeaderBytes = kCqeDwordCount * sizeof(std::uint32_t);
-    constexpr std::size_t kBitsPerKey = 4;
-    return kCqeHeaderBytes + (r.batch_number * kBitsPerKey + 7) / 8;
-}
 
 Status KvBatchRetrieveSqe::Pack(const SqeRequest& req, std::uint32_t* target)
 {
@@ -383,16 +364,6 @@ std::size_t KvDeleteSqe::PackedSize(const SqeRequest& req) const
     return (kSqeDwordCount + r.batch_number * kKeyEntryDwordCount) * sizeof(std::uint32_t);
 }
 
-std::size_t KvDeleteSqe::ResponseSize(const SqeRequest& req) const
-{
-    auto& r = static_cast<const KvDeleteRequest&>(req);
-    // CQE header: 4 dwords = 16 bytes
-    // Result Buffer: batch_number * 1 bit per key, convert to bytes
-    constexpr std::size_t kCqeHeaderBytes = kCqeDwordCount * sizeof(std::uint32_t);
-    constexpr std::size_t kBitsPerKey = 1;
-    return kCqeHeaderBytes + (r.batch_number * kBitsPerKey + 7) / 8;
-}
-
 Status KvDeleteSqe::Pack(const SqeRequest& req, std::uint32_t* target)
 {
     auto& r = static_cast<const KvDeleteRequest&>(req);
@@ -466,16 +437,6 @@ std::size_t KvExistSqe::PackedSize(const SqeRequest& req) const
 {
     auto& r = static_cast<const KvExistRequest&>(req);
     return (kSqeDwordCount + r.batch_number * kKeyEntryDwordCount) * sizeof(std::uint32_t);
-}
-
-std::size_t KvExistSqe::ResponseSize(const SqeRequest& req) const
-{
-    auto& r = static_cast<const KvExistRequest&>(req);
-    // CQE header: 4 dwords = 16 bytes
-    // Result Buffer: batch_number * 1 bit per key, convert to bytes
-    constexpr std::size_t kCqeHeaderBytes = kCqeDwordCount * sizeof(std::uint32_t);
-    constexpr std::size_t kBitsPerKey = 1;
-    return kCqeHeaderBytes + (r.batch_number * kBitsPerKey + 7) / 8;
 }
 
 Status KvExistSqe::Pack(const SqeRequest& req, std::uint32_t* target)
