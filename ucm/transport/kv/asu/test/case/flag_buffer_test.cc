@@ -208,6 +208,126 @@ TEST_F(FlagBufferTest, WrapAroundBoundary)
     buffer.Destroy();
 }
 
+TEST_F(FlagBufferTest, WrapAroundWithPaddingHeader)
+{
+    FlagBuffer buffer;
+    auto status = buffer.Init(128);
+    ASSERT_TRUE(status.ok());
+
+    // Allocate 100 bytes (8 header + 92 data), leaving 28 bytes
+    void* ptr1 = nullptr;
+    status = buffer.Allocate(92, ptr1);
+    ASSERT_TRUE(status.ok());
+    ASSERT_NE(ptr1, nullptr);
+
+    // Reclaim ptr1
+    buffer.Reclaim(ptr1);
+
+    // Allocate 20 bytes (8 header + 12 data)
+    // This fits in the 28 bytes remaining, so no wrap-around
+    void* ptr2 = nullptr;
+    status = buffer.Allocate(12, ptr2);
+    ASSERT_TRUE(status.ok());
+    ASSERT_NE(ptr2, nullptr);
+
+    // ptr2 should be right after ptr1's space
+    char* base = static_cast<char*>(buffer.GetBase());
+    char* data1 = static_cast<char*>(ptr1);
+    char* data2 = static_cast<char*>(ptr2);
+    ASSERT_EQ(data2, data1 + 92 + 8);  // ptr1 data + ptr1 header
+
+    // Now allocate something that will force wrap-around
+    // After ptr2, we have 8 bytes left (128 - 100 - 20 = 8)
+    // This is exactly sizeof(Header), so next allocation will wrap
+    buffer.Reclaim(ptr2);
+
+    void* ptr3 = nullptr;
+    status = buffer.Allocate(32, ptr3);
+    ASSERT_TRUE(status.ok());
+    ASSERT_NE(ptr3, nullptr);
+
+    // ptr3 should wrap around to the beginning
+    char* data3 = static_cast<char*>(ptr3);
+    ASSERT_EQ(data3, base + 8);
+
+    buffer.Reclaim(ptr3);
+    buffer.Destroy();
+}
+
+TEST_F(FlagBufferTest, WrapAroundWithoutPaddingHeader)
+{
+    FlagBuffer buffer;
+    auto status = buffer.Init(128);
+    ASSERT_TRUE(status.ok());
+
+    // Allocate 104 bytes (8 header + 96 data), leaving 24 bytes
+    void* ptr1 = nullptr;
+    status = buffer.Allocate(96, ptr1);
+    ASSERT_TRUE(status.ok());
+    ASSERT_NE(ptr1, nullptr);
+
+    // Reclaim ptr1
+    buffer.Reclaim(ptr1);
+
+    // Allocate 20 bytes (8 header + 12 data)
+    // This fits in the 24 bytes remaining, but leaves only 4 bytes
+    // which is < sizeof(Header), so it will be extended to consume the tail
+    void* ptr2 = nullptr;
+    status = buffer.Allocate(12, ptr2);
+    ASSERT_TRUE(status.ok());
+    ASSERT_NE(ptr2, nullptr);
+
+    // Now try to allocate something that will force wrap-around
+    void* ptr3 = nullptr;
+    status = buffer.Allocate(32, ptr3);
+    ASSERT_TRUE(status.ok());
+    ASSERT_NE(ptr3, nullptr);
+
+    // ptr3 should wrap around to the beginning
+    char* base = static_cast<char*>(buffer.GetBase());
+    char* data3 = static_cast<char*>(ptr3);
+    ASSERT_EQ(data3, base + 8);
+
+    buffer.Reclaim(ptr2);
+    buffer.Reclaim(ptr3);
+    buffer.Destroy();
+}
+
+TEST_F(FlagBufferTest, ExtendAllocationToConsumeTail)
+{
+    FlagBuffer buffer;
+    auto status = buffer.Init(64);
+    ASSERT_TRUE(status.ok());
+
+    // Allocate 48 bytes (8 header + 40 data), leaving 16 bytes
+    void* ptr1 = nullptr;
+    status = buffer.Allocate(40, ptr1);
+    ASSERT_TRUE(status.ok());
+    ASSERT_NE(ptr1, nullptr);
+
+    // Reclaim ptr1
+    buffer.Reclaim(ptr1);
+
+    // Allocate 1 byte (8 header + 1 data)
+    // This leaves 7 bytes, which is less than sizeof(Header) (8 bytes)
+    // According to the logic, if remaining < sizeof(Header), extend allocation
+    // So the allocation will consume 8 + 1 + 7 = 16 bytes total
+    void* ptr2 = nullptr;
+    status = buffer.Allocate(1, ptr2);
+    ASSERT_TRUE(status.ok());
+    ASSERT_NE(ptr2, nullptr);
+
+    // Verify ptr2 is at the expected location (base + 48, after ptr1's reclaimed slot)
+    // The allocation consumes the remaining 7 bytes (less than sizeof(Header) = 8)
+    // So the slot is at base + 48, and data is at base + 48 + 8
+    char* base = static_cast<char*>(buffer.GetBase());
+    char* data2 = static_cast<char*>(ptr2);
+    ASSERT_EQ(data2, base + 48 + 8);  // data pointer is slot + header size
+
+    buffer.Reclaim(ptr2);
+    buffer.Destroy();
+}
+
 TEST_F(FlagBufferTest, ConcurrentAllocateAndReclaim)
 {
     FlagBuffer buffer;
