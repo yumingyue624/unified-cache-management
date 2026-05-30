@@ -49,6 +49,7 @@ enum class SqeOpcode : std::uint8_t {
 enum class DptrType : std::uint8_t { Standard = 0x40, Batch = 0x1 };
 
 constexpr std::size_t kSqeDwordCount = 16;
+constexpr std::size_t kCqeDwordCount = 4;
 constexpr std::uint32_t kFixedBits = 0x3;
 constexpr std::uint32_t kAlignmentBytes = 512;
 constexpr std::size_t kBatchEntrySizeBytes = 36;
@@ -223,7 +224,7 @@ public:
 
     std::size_t ResponseSize(const SqeRequest& req) const override
     {
-        return kSqeDwordCount * sizeof(std::uint32_t);
+        return kCqeDwordCount * sizeof(std::uint32_t);
     }
 
     Status Pack(const SqeRequest& req, std::uint32_t* target) override;
@@ -246,7 +247,7 @@ public:
 
     std::size_t ResponseSize(const SqeRequest& req) const override
     {
-        return kSqeDwordCount * sizeof(std::uint32_t);
+        return kCqeDwordCount * sizeof(std::uint32_t);
     }
 
     Status Pack(const SqeRequest& req, std::uint32_t* target) override;
@@ -349,7 +350,7 @@ public:
 
     std::size_t ResponseSize(const SqeRequest& req) const override
     {
-        return kSqeDwordCount * sizeof(std::uint32_t);
+        return kCqeDwordCount * sizeof(std::uint32_t);
     }
 
     Status Pack(const SqeRequest& req, std::uint32_t* target) override;
