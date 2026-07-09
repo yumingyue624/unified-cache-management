@@ -25,7 +25,6 @@
 #include <cassert>
 #include <cstdint>
 #include <vector>
-
 #include "drampool_fake_deps.h"
 #include "drampool_server.h"
 #include "kv_protocol.h"
@@ -50,8 +49,8 @@ public:
     UC::Status ProcessOneRequest(RequestPtr request);
 
 private:
-    UC::Status ProcessDump(const KvDumpLoadRequest& request);
-    UC::Status ProcessLoad(const KvDumpLoadRequest& request);
+    UC::Status ProcessDump(const KvDumpRequest& request);
+    UC::Status ProcessLoad(const KvLoadRequest& request);
     UC::Status ProcessLookup(const KvLookupRequest& request);
 
     void RollbackDumpItems(const std::vector<TransferItem>& items);

@@ -47,7 +47,10 @@ enum class KvOpcode : std::uint8_t {
 constexpr std::size_t kKvKeySize = 16;
 constexpr std::size_t kKvHeaderSize =
     sizeof(std::uint8_t) + sizeof(std::uint64_t) + sizeof(std::uint16_t);
-constexpr std::size_t kKvDumpLoadEntrySize =
+constexpr std::size_t kKvDumpEntrySize = kKvKeySize + sizeof(std::uint64_t) +
+                                         sizeof(std::uint32_t) + sizeof(std::uint32_t) +
+                                         sizeof(std::uint64_t);
+constexpr std::size_t kKvLoadEntrySize =
     kKvKeySize + sizeof(std::uint64_t) + sizeof(std::uint32_t) + sizeof(std::uint32_t);
 constexpr std::size_t kKvLookupEntrySize = kKvKeySize;
 constexpr std::size_t kKvFlagEntrySize = sizeof(std::uint32_t);
@@ -57,14 +60,29 @@ constexpr std::size_t kOpcodeOffset = 0;
 constexpr std::size_t kRespAddrOffset = 1;
 constexpr std::size_t kBatchSizeOffset = 9;
 
-constexpr std::size_t kDumpLoadEntryKeyOffset = 0;
-constexpr std::size_t kDumpLoadEntryAddrOffset = 16;
-constexpr std::size_t kDumpLoadEntryLenOffset = 24;
-constexpr std::size_t kDumpLoadEntryIdxOffset = 28;
+constexpr std::size_t kDumpEntryKeyOffset = 0;
+constexpr std::size_t kDumpEntryAddrOffset = 16;
+constexpr std::size_t kDumpEntryLenOffset = 24;
+constexpr std::size_t kDumpEntryIdxOffset = 28;
+constexpr std::size_t kDumpEntryTtlOffset = 32;
+
+constexpr std::size_t kLoadEntryKeyOffset = 0;
+constexpr std::size_t kLoadEntryAddrOffset = 16;
+constexpr std::size_t kLoadEntryLenOffset = 24;
+constexpr std::size_t kLoadEntryIdxOffset = 28;
 
 constexpr std::size_t kLookupEntryKeyOffset = 0;
 
-class KvDumpLoadEntry {
+class KvDumpEntry {
+public:
+    std::array<std::uint8_t, kKvKeySize> key{};
+    std::uint64_t addr{0};
+    std::uint32_t len{0};
+    std::uint32_t idx{0};
+    std::uint64_t ttl{0};
+};
+
+class KvLoadEntry {
 public:
     std::array<std::uint8_t, kKvKeySize> key{};
     std::uint64_t addr{0};
@@ -82,12 +100,20 @@ public:
     virtual ~KvRequest() = default;
 };
 
-class KvDumpLoadRequest : public KvRequest {
+class KvDumpRequest : public KvRequest {
 public:
     KvOpcode opcode{KvOpcode::None};
     std::uint64_t resp_addr{0};
     std::uint16_t batch_size{0};
-    std::vector<KvDumpLoadEntry> entries;
+    std::vector<KvDumpEntry> entries;
+};
+
+class KvLoadRequest : public KvRequest {
+public:
+    KvOpcode opcode{KvOpcode::None};
+    std::uint64_t resp_addr{0};
+    std::uint16_t batch_size{0};
+    std::vector<KvLoadEntry> entries;
 };
 
 class KvLookupRequest : public KvRequest {
@@ -157,7 +183,7 @@ public:
     virtual Status PackResponse(void* data, const KvResponse& resp) const = 0;
 };
 
-class KvDumpLoadProtocol : public KvProtocol {
+class KvDumpProtocol : public KvProtocol {
 public:
     // Client side
     std::size_t PackedSize(const KvRequest& req) const override;
@@ -170,7 +196,23 @@ public:
     Status PackResponse(void* data, const KvResponse& resp) const override;
 
 private:
-    Status ValidateRequest(const KvDumpLoadRequest& req) const;
+    Status ValidateRequest(const KvDumpRequest& req) const;
+};
+
+class KvLoadProtocol : public KvProtocol {
+public:
+    // Client side
+    std::size_t PackedSize(const KvRequest& req) const override;
+    Status PackRequest(const KvRequest& req, void* target) override;
+    Status UnpackResponse(const void* data, std::uint16_t result_count,
+                          KvResponse& out) const override;
+    // Server side
+    Status UnpackRequest(const void* data, std::size_t size,
+                         std::unique_ptr<KvRequest>& out) const override;
+    Status PackResponse(void* data, const KvResponse& resp) const override;
+
+private:
+    Status ValidateRequest(const KvLoadRequest& req) const;
 };
 
 class KvLookupProtocol : public KvProtocol {

@@ -64,20 +64,20 @@ void PackHeader(std::uint8_t* out, KvOpcode opcode, std::uint64_t resp_addr,
 }
 
 // ===========================================================================
-// KvDumpLoadProtocol
+// KvDumpProtocol
 // ===========================================================================
 
 // ---- Client side ----
 
-std::size_t KvDumpLoadProtocol::PackedSize(const KvRequest& req) const
+std::size_t KvDumpProtocol::PackedSize(const KvRequest& req) const
 {
-    const auto& r = static_cast<const KvDumpLoadRequest&>(req);
-    return kKvHeaderSize + static_cast<std::size_t>(r.batch_size) * kKvDumpLoadEntrySize;
+    const auto& r = static_cast<const KvDumpRequest&>(req);
+    return kKvHeaderSize + static_cast<std::size_t>(r.batch_size) * kKvDumpEntrySize;
 }
 
-Status KvDumpLoadProtocol::PackRequest(const KvRequest& req, void* target)
+Status KvDumpProtocol::PackRequest(const KvRequest& req, void* target)
 {
-    const auto& r = static_cast<const KvDumpLoadRequest&>(req);
+    const auto& r = static_cast<const KvDumpRequest&>(req);
     auto status = ValidateRequest(r);
     if (!status.ok()) { return status; }
 
@@ -86,20 +86,21 @@ Status KvDumpLoadProtocol::PackRequest(const KvRequest& req, void* target)
 
     for (std::size_t i = 0; i < r.entries.size(); ++i) {
         const auto& entry = r.entries[i];
-        std::uint8_t* base = out + kKvHeaderSize + i * kKvDumpLoadEntrySize;
-        std::memcpy(base + kDumpLoadEntryKeyOffset, entry.key.data(), kKvKeySize);
-        std::memcpy(base + kDumpLoadEntryAddrOffset, &entry.addr, sizeof(entry.addr));
-        std::memcpy(base + kDumpLoadEntryLenOffset, &entry.len, sizeof(entry.len));
-        std::memcpy(base + kDumpLoadEntryIdxOffset, &entry.idx, sizeof(entry.idx));
+        std::uint8_t* base = out + kKvHeaderSize + i * kKvDumpEntrySize;
+        std::memcpy(base + kDumpEntryKeyOffset, entry.key.data(), kKvKeySize);
+        std::memcpy(base + kDumpEntryAddrOffset, &entry.addr, sizeof(entry.addr));
+        std::memcpy(base + kDumpEntryLenOffset, &entry.len, sizeof(entry.len));
+        std::memcpy(base + kDumpEntryIdxOffset, &entry.idx, sizeof(entry.idx));
+        std::memcpy(base + kDumpEntryTtlOffset, &entry.ttl, sizeof(entry.ttl));
     }
     return Status::OK();
 }
 
-Status KvDumpLoadProtocol::UnpackResponse(const void* data, std::uint16_t result_count,
-                                          KvResponse& out) const
+Status KvDumpProtocol::UnpackResponse(const void* data, std::uint16_t result_count,
+                                      KvResponse& out) const
 {
     if (!data) {
-        return Status::Error(StatusCode::INVALID_ARGUMENT, "DumpLoad: UnpackResponse data is null");
+        return Status::Error(StatusCode::INVALID_ARGUMENT, "Dump: UnpackResponse data is null");
     }
     out.results.resize(result_count);
     std::memcpy(out.results.data(), data,
@@ -107,10 +108,10 @@ Status KvDumpLoadProtocol::UnpackResponse(const void* data, std::uint16_t result
     return Status::OK();
 }
 
-Status KvDumpLoadProtocol::ValidateRequest(const KvDumpLoadRequest& req) const
+Status KvDumpProtocol::ValidateRequest(const KvDumpRequest& req) const
 {
-    if (req.opcode != KvOpcode::Dump && req.opcode != KvOpcode::Load) {
-        return Status::Error(StatusCode::INVALID_ARGUMENT, "DumpLoad: opcode must be Dump or Load");
+    if (req.opcode != KvOpcode::Dump) {
+        return Status::Error(StatusCode::INVALID_ARGUMENT, "Dump: opcode must be Dump");
     }
     auto header_status = ValidateRequestHeader(req);
     if (!header_status.ok()) { return header_status; }
@@ -119,15 +120,15 @@ Status KvDumpLoadProtocol::ValidateRequest(const KvDumpLoadRequest& req) const
         const auto& entry = req.entries[i];
         if (IsAllZeroKey(entry.key.data())) {
             return Status::Error(StatusCode::INVALID_ARGUMENT,
-                                 "DumpLoad: entry[" + std::to_string(i) + "] key is all zero");
+                                 "Dump: entry[" + std::to_string(i) + "] key is all zero");
         }
         if (entry.addr == 0) {
             return Status::Error(StatusCode::INVALID_ARGUMENT,
-                                 "DumpLoad: entry[" + std::to_string(i) + "] addr is zero");
+                                 "Dump: entry[" + std::to_string(i) + "] addr is zero");
         }
         if (entry.len == 0) {
             return Status::Error(StatusCode::INVALID_ARGUMENT,
-                                 "DumpLoad: entry[" + std::to_string(i) + "] len is zero");
+                                 "Dump: entry[" + std::to_string(i) + "] len is zero");
         }
     }
     return Status::OK();
@@ -135,63 +136,198 @@ Status KvDumpLoadProtocol::ValidateRequest(const KvDumpLoadRequest& req) const
 
 // ---- Server side ----
 
-Status KvDumpLoadProtocol::UnpackRequest(const void* data, std::size_t size,
-                                         std::unique_ptr<KvRequest>& out) const
+Status KvDumpProtocol::UnpackRequest(const void* data, std::size_t size,
+                                     std::unique_ptr<KvRequest>& out) const
 {
     auto* bytes = static_cast<const std::uint8_t*>(data);
-    auto req = std::make_unique<KvDumpLoadRequest>();
+    auto req = std::make_unique<KvDumpRequest>();
 
     req->opcode = PeekOpcode(data);
-    if (req->opcode != KvOpcode::Dump && req->opcode != KvOpcode::Load) {
-        return Status::Error(StatusCode::INVALID_ARGUMENT, "DumpLoad: opcode mismatch");
+    if (req->opcode != KvOpcode::Dump) {
+        return Status::Error(StatusCode::INVALID_ARGUMENT, "Dump: opcode mismatch");
     }
 
     std::memcpy(&req->resp_addr, bytes + kRespAddrOffset, sizeof(req->resp_addr));
     if (req->resp_addr == 0) {
-        return Status::Error(StatusCode::INVALID_ARGUMENT, "DumpLoad: resp_addr is zero");
+        return Status::Error(StatusCode::INVALID_ARGUMENT, "Dump: resp_addr is zero");
     }
 
     std::memcpy(&req->batch_size, bytes + kBatchSizeOffset, sizeof(req->batch_size));
     if (req->batch_size == 0) {
-        return Status::Error(StatusCode::INVALID_ARGUMENT, "DumpLoad: batch_size is zero");
+        return Status::Error(StatusCode::INVALID_ARGUMENT, "Dump: batch_size is zero");
     }
 
     std::size_t expected_size =
-        kKvHeaderSize + static_cast<std::size_t>(req->batch_size) * kKvDumpLoadEntrySize;
+        kKvHeaderSize + static_cast<std::size_t>(req->batch_size) * kKvDumpEntrySize;
     if (size != expected_size) {
-        return Status::Error(StatusCode::INVALID_ARGUMENT,
-                             "DumpLoad: size(" + std::to_string(size) + ") != expected(" +
-                                 std::to_string(expected_size) + ")");
+        return Status::Error(StatusCode::INVALID_ARGUMENT, "Dump: size(" + std::to_string(size) +
+                                                               ") != expected(" +
+                                                               std::to_string(expected_size) + ")");
     }
 
     req->entries.resize(req->batch_size);
     for (std::size_t i = 0; i < req->batch_size; ++i) {
-        const std::uint8_t* base = bytes + kKvHeaderSize + i * kKvDumpLoadEntrySize;
-        std::memcpy(req->entries[i].key.data(), base + kDumpLoadEntryKeyOffset, kKvKeySize);
+        const std::uint8_t* base = bytes + kKvHeaderSize + i * kKvDumpEntrySize;
+        std::memcpy(req->entries[i].key.data(), base + kDumpEntryKeyOffset, kKvKeySize);
         if (IsAllZeroKey(req->entries[i].key.data())) {
             return Status::Error(StatusCode::INVALID_ARGUMENT,
-                                 "DumpLoad: entry[" + std::to_string(i) + "] key is all zero");
+                                 "Dump: entry[" + std::to_string(i) + "] key is all zero");
         }
-        std::memcpy(&req->entries[i].addr, base + kDumpLoadEntryAddrOffset, sizeof(std::uint64_t));
+        std::memcpy(&req->entries[i].addr, base + kDumpEntryAddrOffset, sizeof(std::uint64_t));
         if (req->entries[i].addr == 0) {
             return Status::Error(StatusCode::INVALID_ARGUMENT,
-                                 "DumpLoad: entry[" + std::to_string(i) + "] addr is zero");
+                                 "Dump: entry[" + std::to_string(i) + "] addr is zero");
         }
-        std::memcpy(&req->entries[i].len, base + kDumpLoadEntryLenOffset, sizeof(std::uint32_t));
+        std::memcpy(&req->entries[i].len, base + kDumpEntryLenOffset, sizeof(std::uint32_t));
         if (req->entries[i].len == 0) {
             return Status::Error(StatusCode::INVALID_ARGUMENT,
-                                 "DumpLoad: entry[" + std::to_string(i) + "] len is zero");
+                                 "Dump: entry[" + std::to_string(i) + "] len is zero");
         }
-        std::memcpy(&req->entries[i].idx, base + kDumpLoadEntryIdxOffset, sizeof(std::uint32_t));
+        std::memcpy(&req->entries[i].idx, base + kDumpEntryIdxOffset, sizeof(std::uint32_t));
+        std::memcpy(&req->entries[i].ttl, base + kDumpEntryTtlOffset, sizeof(std::uint64_t));
     }
     out = std::move(req);
     return Status::OK();
 }
 
-Status KvDumpLoadProtocol::PackResponse(void* data, const KvResponse& resp) const
+Status KvDumpProtocol::PackResponse(void* data, const KvResponse& resp) const
 {
     if (!data) {
-        return Status::Error(StatusCode::INVALID_ARGUMENT, "DumpLoad: PackResponse data is null");
+        return Status::Error(StatusCode::INVALID_ARGUMENT, "Dump: PackResponse data is null");
+    }
+    std::memcpy(data, resp.results.data(), resp.results.size() * sizeof(std::uint32_t));
+    return Status::OK();
+}
+
+// ===========================================================================
+// KvLoadProtocol
+// ===========================================================================
+
+// ---- Client side ----
+
+std::size_t KvLoadProtocol::PackedSize(const KvRequest& req) const
+{
+    const auto& r = static_cast<const KvLoadRequest&>(req);
+    return kKvHeaderSize + static_cast<std::size_t>(r.batch_size) * kKvLoadEntrySize;
+}
+
+Status KvLoadProtocol::PackRequest(const KvRequest& req, void* target)
+{
+    const auto& r = static_cast<const KvLoadRequest&>(req);
+    auto status = ValidateRequest(r);
+    if (!status.ok()) { return status; }
+
+    auto* out = static_cast<std::uint8_t*>(target);
+    PackHeader(out, r.opcode, r.resp_addr, r.batch_size);
+
+    for (std::size_t i = 0; i < r.entries.size(); ++i) {
+        const auto& entry = r.entries[i];
+        std::uint8_t* base = out + kKvHeaderSize + i * kKvLoadEntrySize;
+        std::memcpy(base + kLoadEntryKeyOffset, entry.key.data(), kKvKeySize);
+        std::memcpy(base + kLoadEntryAddrOffset, &entry.addr, sizeof(entry.addr));
+        std::memcpy(base + kLoadEntryLenOffset, &entry.len, sizeof(entry.len));
+        std::memcpy(base + kLoadEntryIdxOffset, &entry.idx, sizeof(entry.idx));
+    }
+    return Status::OK();
+}
+
+Status KvLoadProtocol::UnpackResponse(const void* data, std::uint16_t result_count,
+                                      KvResponse& out) const
+{
+    if (!data) {
+        return Status::Error(StatusCode::INVALID_ARGUMENT, "Load: UnpackResponse data is null");
+    }
+    out.results.resize(result_count);
+    std::memcpy(out.results.data(), data,
+                static_cast<std::size_t>(result_count) * sizeof(std::uint32_t));
+    return Status::OK();
+}
+
+Status KvLoadProtocol::ValidateRequest(const KvLoadRequest& req) const
+{
+    if (req.opcode != KvOpcode::Load) {
+        return Status::Error(StatusCode::INVALID_ARGUMENT, "Load: opcode must be Load");
+    }
+    auto header_status = ValidateRequestHeader(req);
+    if (!header_status.ok()) { return header_status; }
+
+    for (std::size_t i = 0; i < req.entries.size(); ++i) {
+        const auto& entry = req.entries[i];
+        if (IsAllZeroKey(entry.key.data())) {
+            return Status::Error(StatusCode::INVALID_ARGUMENT,
+                                 "Load: entry[" + std::to_string(i) + "] key is all zero");
+        }
+        if (entry.addr == 0) {
+            return Status::Error(StatusCode::INVALID_ARGUMENT,
+                                 "Load: entry[" + std::to_string(i) + "] addr is zero");
+        }
+        if (entry.len == 0) {
+            return Status::Error(StatusCode::INVALID_ARGUMENT,
+                                 "Load: entry[" + std::to_string(i) + "] len is zero");
+        }
+    }
+    return Status::OK();
+}
+
+// ---- Server side ----
+
+Status KvLoadProtocol::UnpackRequest(const void* data, std::size_t size,
+                                     std::unique_ptr<KvRequest>& out) const
+{
+    auto* bytes = static_cast<const std::uint8_t*>(data);
+    auto req = std::make_unique<KvLoadRequest>();
+
+    req->opcode = PeekOpcode(data);
+    if (req->opcode != KvOpcode::Load) {
+        return Status::Error(StatusCode::INVALID_ARGUMENT, "Load: opcode mismatch");
+    }
+
+    std::memcpy(&req->resp_addr, bytes + kRespAddrOffset, sizeof(req->resp_addr));
+    if (req->resp_addr == 0) {
+        return Status::Error(StatusCode::INVALID_ARGUMENT, "Load: resp_addr is zero");
+    }
+
+    std::memcpy(&req->batch_size, bytes + kBatchSizeOffset, sizeof(req->batch_size));
+    if (req->batch_size == 0) {
+        return Status::Error(StatusCode::INVALID_ARGUMENT, "Load: batch_size is zero");
+    }
+
+    std::size_t expected_size =
+        kKvHeaderSize + static_cast<std::size_t>(req->batch_size) * kKvLoadEntrySize;
+    if (size != expected_size) {
+        return Status::Error(StatusCode::INVALID_ARGUMENT, "Load: size(" + std::to_string(size) +
+                                                               ") != expected(" +
+                                                               std::to_string(expected_size) + ")");
+    }
+
+    req->entries.resize(req->batch_size);
+    for (std::size_t i = 0; i < req->batch_size; ++i) {
+        const std::uint8_t* base = bytes + kKvHeaderSize + i * kKvLoadEntrySize;
+        std::memcpy(req->entries[i].key.data(), base + kLoadEntryKeyOffset, kKvKeySize);
+        if (IsAllZeroKey(req->entries[i].key.data())) {
+            return Status::Error(StatusCode::INVALID_ARGUMENT,
+                                 "Load: entry[" + std::to_string(i) + "] key is all zero");
+        }
+        std::memcpy(&req->entries[i].addr, base + kLoadEntryAddrOffset, sizeof(std::uint64_t));
+        if (req->entries[i].addr == 0) {
+            return Status::Error(StatusCode::INVALID_ARGUMENT,
+                                 "Load: entry[" + std::to_string(i) + "] addr is zero");
+        }
+        std::memcpy(&req->entries[i].len, base + kLoadEntryLenOffset, sizeof(std::uint32_t));
+        if (req->entries[i].len == 0) {
+            return Status::Error(StatusCode::INVALID_ARGUMENT,
+                                 "Load: entry[" + std::to_string(i) + "] len is zero");
+        }
+        std::memcpy(&req->entries[i].idx, base + kLoadEntryIdxOffset, sizeof(std::uint32_t));
+    }
+    out = std::move(req);
+    return Status::OK();
+}
+
+Status KvLoadProtocol::PackResponse(void* data, const KvResponse& resp) const
+{
+    if (!data) {
+        return Status::Error(StatusCode::INVALID_ARGUMENT, "Load: PackResponse data is null");
     }
     std::memcpy(data, resp.results.data(), resp.results.size() * sizeof(std::uint32_t));
     return Status::OK();
@@ -322,8 +458,8 @@ Status KvLookupProtocol::PackResponse(void* data, const KvResponse& resp) const
 
 ProtocolManager::ProtocolManager()
 {
-    protocols_[KvOpcode::Dump] = std::make_unique<KvDumpLoadProtocol>();
-    protocols_[KvOpcode::Load] = std::make_unique<KvDumpLoadProtocol>();
+    protocols_[KvOpcode::Dump] = std::make_unique<KvDumpProtocol>();
+    protocols_[KvOpcode::Load] = std::make_unique<KvLoadProtocol>();
     protocols_[KvOpcode::Lookup] = std::make_unique<KvLookupProtocol>();
 }
 

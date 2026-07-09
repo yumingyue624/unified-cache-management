@@ -22,6 +22,7 @@
  * SOFTWARE.
  * */
 #include "drampool_server.h"
+#include "task_worker.h"
 
 #include <chrono>
 #include <exception>
@@ -168,6 +169,8 @@ UC::Status DramPoolServer::InitProtocol()
 
 UC::Status DramPoolServer::InitQueues()
 {
+    requestQueue_.Setup(config_.requestQueueDepth);
+    transHandleQueue_.Setup(config_.handleQueueDepth);
     RecordLifecycleEvent("InitQueues");
     return UC::Status::OK();
 }
@@ -186,11 +189,17 @@ UC::Status DramPoolServer::StartCompletionPoller()
 
 UC::Status DramPoolServer::StartTaskWorker()
 {
+    TaskWorkerDeps deps;
+    deps.request_queue = &requestQueue_;
+    deps.trans_handle_queue = &transHandleQueue_;
+    taskWorker_ = std::make_unique<TaskWorker>(deps);
+
     try {
         taskWorkerStop_.store(false, std::memory_order_release);
         taskWorkerThread_ = std::thread(&DramPoolServer::TaskWorkerLoop, this);
         RecordLifecycleEvent("StartTaskWorker");
     } catch (const std::exception& e) {
+        taskWorker_.reset();
         return UC::Status::Error(std::string{"failed to start TaskWorker: "} + e.what());
     }
     return UC::Status::OK();
@@ -238,6 +247,7 @@ void DramPoolServer::StopTaskWorker()
 {
     taskWorkerStop_.store(true, std::memory_order_release);
     if (taskWorkerThread_.joinable()) { taskWorkerThread_.join(); }
+    taskWorker_.reset();
     RecordLifecycleEvent("StopTaskWorker");
 }
 
@@ -271,7 +281,7 @@ void DramPoolServer::ReceiverLoop()
 void DramPoolServer::TaskWorkerLoop()
 {
     UC_INFO_UNLIMITED("DramPool TaskWorker started");
-    while (!taskWorkerStop_.load(std::memory_order_acquire)) { std::this_thread::sleep_for(kIdleSleep); }
+    taskWorker_->Run(taskWorkerStop_);
     UC_INFO_UNLIMITED("DramPool TaskWorker stopped");
 }
 

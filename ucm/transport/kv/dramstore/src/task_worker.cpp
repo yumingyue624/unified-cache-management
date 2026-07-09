@@ -20,7 +20,6 @@
  * DEALINGS IN THE SOFTWARE.
  * */
 #include "task_worker.h"
-
 #include <chrono>
 #include <thread>
 #include <utility>
@@ -42,26 +41,21 @@ std::uint64_t ExpireAtMs(std::uint64_t now_ms, std::uint64_t ttl_ms)
 
 KvOpcode RequestOpcode(const KvRequest& request)
 {
-    if (const auto* dump_load = dynamic_cast<const KvDumpLoadRequest*>(&request);
-        dump_load != nullptr) {
-        return dump_load->opcode;
+    if (const auto* dump = dynamic_cast<const KvDumpRequest*>(&request); dump != nullptr) {
+        return dump->opcode;
     }
-    if (const auto* lookup = dynamic_cast<const KvLookupRequest*>(&request);
-        lookup != nullptr) {
+    if (const auto* load = dynamic_cast<const KvLoadRequest*>(&request); load != nullptr) {
+        return load->opcode;
+    }
+    if (const auto* lookup = dynamic_cast<const KvLookupRequest*>(&request); lookup != nullptr) {
         return lookup->opcode;
     }
     return KvOpcode::None;
 }
 
-constexpr std::uint32_t ToUint32(ResultCode code)
-{
-    return static_cast<std::uint32_t>(code);
-}
+constexpr std::uint32_t ToUint32(ResultCode code) { return static_cast<std::uint32_t>(code); }
 
-std::uint32_t LoadFailureCode(LoadPinCode /*code*/)
-{
-    return ToUint32(ResultCode::Failed);
-}
+std::uint32_t LoadFailureCode(LoadPinCode /*code*/) { return ToUint32(ResultCode::Failed); }
 
 }  // namespace
 
@@ -69,7 +63,7 @@ void TaskWorker::Run(const std::atomic_bool& stop)
 {
     deps_.request_queue->ConsumerLoop(stop, [this](RequestPtr request) {
         const auto status = ProcessOneRequest(std::move(request));
-        (void)status;
+        if (status.Failure()) { UC_ERROR("TaskWorker ProcessOneRequest failed: {}", status); }
     });
 }
 
@@ -79,18 +73,20 @@ UC::Status TaskWorker::ProcessOneRequest(RequestPtr request)
 
     switch (RequestOpcode(*request)) {
         case KvOpcode::Dump: {
-            const auto* dump = dynamic_cast<const KvDumpLoadRequest*>(request.get());
+            const auto* dump = dynamic_cast<const KvDumpRequest*>(request.get());
             if (dump == nullptr) { return UC::Status::InvalidParam("Dump request type mismatch"); }
             return ProcessDump(*dump);
         }
         case KvOpcode::Load: {
-            const auto* load = dynamic_cast<const KvDumpLoadRequest*>(request.get());
+            const auto* load = dynamic_cast<const KvLoadRequest*>(request.get());
             if (load == nullptr) { return UC::Status::InvalidParam("Load request type mismatch"); }
             return ProcessLoad(*load);
         }
         case KvOpcode::Lookup: {
             const auto* lookup = dynamic_cast<const KvLookupRequest*>(request.get());
-            if (lookup == nullptr) { return UC::Status::InvalidParam("Lookup request type mismatch"); }
+            if (lookup == nullptr) {
+                return UC::Status::InvalidParam("Lookup request type mismatch");
+            }
             return ProcessLookup(*lookup);
         }
         case KvOpcode::None:
@@ -99,7 +95,7 @@ UC::Status TaskWorker::ProcessOneRequest(RequestPtr request)
     return UC::Status::InvalidParam("TaskWorker got request with unknown opcode");
 }
 
-UC::Status TaskWorker::ProcessDump(const KvDumpLoadRequest& request)
+UC::Status TaskWorker::ProcessDump(const KvDumpRequest& request)
 {
     if (request.batch_size != request.entries.size()) {
         return UC::Status::InvalidParam("Dump request batch size mismatch");
@@ -115,13 +111,12 @@ UC::Status TaskWorker::ProcessDump(const KvDumpLoadRequest& request)
     for (std::uint16_t index = 0; index < request.batch_size; ++index) {
         const auto& entry = request.entries[index];
         const BlockId& key = reinterpret_cast<const BlockId&>(entry.key);
-        if (deps_.metadata->Contains(key)) {
-            continue;
-        }
+        if (deps_.metadata->Contains(key)) { continue; }
 
         auto allocated = deps_.buffer_manager->Allocate(entry.len);
         if (!allocated.HasValue()) {
             results[index] = ToUint32(ResultCode::Failed);
+            UC_ERROR("Dump[{}] Allocate failed, len={}", index, entry.len);
             break;
         }
         auto slot = std::move(allocated).Value();
@@ -132,7 +127,8 @@ UC::Status TaskWorker::ProcessDump(const KvDumpLoadRequest& request)
         options.local_addr = slot.addr;
         options.len = entry.len;
         options.abs_pos = entry.idx;
-        options.expire_at_ms = ExpireAtMs(now_ms, g_drampool_config.defaultDumpTtlMs);
+        const auto ttl = entry.ttl != 0 ? entry.ttl : g_drampool_config.defaultDumpTtlMs;
+        options.expire_at_ms = ExpireAtMs(now_ms, ttl);
         options.class_id = slot.class_id;
 
         const auto reserve = deps_.metadata->ReserveDumpEntry(options);
@@ -143,6 +139,8 @@ UC::Status TaskWorker::ProcessDump(const KvDumpLoadRequest& request)
         if (reserve.code != ReserveDumpCode::Reserved) {
             deps_.buffer_manager->Free(slot.handle);
             results[index] = ToUint32(ResultCode::Failed);
+            UC_ERROR("Dump[{}] ReserveDumpEntry failed, code={}", index,
+                     static_cast<int>(reserve.code));
             break;
         }
 
@@ -162,8 +160,7 @@ UC::Status TaskWorker::ProcessDump(const KvDumpLoadRequest& request)
     }
 
     if (transfer_items.empty()) {
-        return deps_.response_writer->WriteResponse(KvOpcode::Dump,
-                                                    request.resp_addr, results);
+        return deps_.response_writer->WriteResponse(KvOpcode::Dump, request.resp_addr, results);
     }
 
     TransportOp op;
@@ -173,12 +170,12 @@ UC::Status TaskWorker::ProcessDump(const KvDumpLoadRequest& request)
 
     auto submitted = deps_.transport->SubmitAsync(op);
     if (!submitted.HasValue()) {
+        UC_ERROR("Dump SubmitAsync failed, items={}", transfer_items.size());
         RollbackDumpItems(transfer_items);
         for (const auto& item : transfer_items) {
             results[item.request_index] = ToUint32(ResultCode::Failed);
         }
-        return deps_.response_writer->WriteResponse(KvOpcode::Dump,
-                                                    request.resp_addr, results);
+        return deps_.response_writer->WriteResponse(KvOpcode::Dump, request.resp_addr, results);
     }
 
     InflightRecord record;
@@ -192,7 +189,7 @@ UC::Status TaskWorker::ProcessDump(const KvDumpLoadRequest& request)
     return SubmitInflight(std::move(record));
 }
 
-UC::Status TaskWorker::ProcessLoad(const KvDumpLoadRequest& request)
+UC::Status TaskWorker::ProcessLoad(const KvLoadRequest& request)
 {
     if (request.batch_size != request.entries.size()) {
         return UC::Status::InvalidParam("Load request batch size mismatch");
@@ -211,11 +208,14 @@ UC::Status TaskWorker::ProcessLoad(const KvDumpLoadRequest& request)
         auto pin = deps_.metadata->LookupAndPinLoad(key, now_ms);
         if (pin.code != LoadPinCode::Pinned) {
             results[index] = LoadFailureCode(pin.code);
+            UC_ERROR("Load[{}] LookupAndPinLoad failed, code={}", index,
+                     static_cast<int>(pin.code));
             continue;
         }
         if (entry.len > pin.len) {
             deps_.metadata->UnpinLoad(key);
             results[index] = ToUint32(ResultCode::Failed);
+            UC_ERROR("Load[{}] len mismatch, entry.len={} > pin.len={}", index, entry.len, pin.len);
             continue;
         }
 
@@ -235,8 +235,7 @@ UC::Status TaskWorker::ProcessLoad(const KvDumpLoadRequest& request)
     }
 
     if (transfer_items.empty()) {
-        return deps_.response_writer->WriteResponse(KvOpcode::Load,
-                                                    request.resp_addr, results);
+        return deps_.response_writer->WriteResponse(KvOpcode::Load, request.resp_addr, results);
     }
 
     TransportOp op;
@@ -246,12 +245,12 @@ UC::Status TaskWorker::ProcessLoad(const KvDumpLoadRequest& request)
 
     auto submitted = deps_.transport->SubmitAsync(op);
     if (!submitted.HasValue()) {
+        UC_ERROR("Load SubmitAsync failed, items={}", transfer_items.size());
         UnpinLoadItems(transfer_items);
         for (const auto& item : transfer_items) {
             results[item.request_index] = ToUint32(ResultCode::Failed);
         }
-        return deps_.response_writer->WriteResponse(KvOpcode::Load,
-                                                    request.resp_addr, results);
+        return deps_.response_writer->WriteResponse(KvOpcode::Load, request.resp_addr, results);
     }
 
     InflightRecord record;
@@ -283,8 +282,8 @@ UC::Status TaskWorker::ProcessLookup(const KvLookupRequest& request)
         break;
     }
 
-    return deps_.response_writer->WriteResponse(KvOpcode::Lookup,
-                                                request.resp_addr, {prefix_count});
+    return deps_.response_writer->WriteResponse(KvOpcode::Lookup, request.resp_addr,
+                                                {prefix_count});
 }
 
 void TaskWorker::RollbackDumpItems(const std::vector<TransferItem>& items)

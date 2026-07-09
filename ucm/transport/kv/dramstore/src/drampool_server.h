@@ -75,6 +75,8 @@ enum class ResultCode : std::uint32_t {
     Failed = 1,
 };
 
+class TaskWorker;
+
 class DramPoolServer {
 public:
     DramPoolServer() = default;
@@ -133,6 +135,10 @@ private:
     std::thread taskWorkerThread_;
     std::thread completionPollerThread_;
     std::thread gcThread_;
+
+    RequestQueue requestQueue_;
+    TransHandleQueue transHandleQueue_;
+    std::unique_ptr<TaskWorker> taskWorker_;
 
     mutable std::mutex lifecycleMutex_;
     std::vector<std::string> lifecycleEvents_;
