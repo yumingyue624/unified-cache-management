@@ -46,6 +46,7 @@ UC::Status DramPoolServer::Init(const DramPoolConfig& config)
     if (status.Failure()) { return status; }
 
     config_ = config;
+    g_drampool_config = config;
 
     status = InitDataTransportManager();
     if (status.Failure()) { return status; }

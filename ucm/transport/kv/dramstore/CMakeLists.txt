@@ -10,6 +10,7 @@ add_library(drampool_core STATIC
 target_include_directories(drampool_core
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/ucm/store/detail
 )
 
 target_link_libraries(drampool_core

@@ -37,15 +37,15 @@ struct CommandLineOptions {
 };
 
 struct DramPoolConfig {
-    std::string serverId{"drampool-0"};
     std::string listenAddr{"127.0.0.1:9000"};
-    std::string transportMode{"tcp"};
     std::vector<std::string> nics{};
-
     std::uint64_t poolSizeGb{0};
     std::vector<std::uint64_t> poolBlockSizes{4096};
     std::vector<std::uint32_t> poolBlockProportions{100};
     std::uint64_t defaultDumpTtlMs{7200000};
+
+    std::string serverId{"drampool-0"};
+    std::string transportMode{"tcp"};
 
     std::uint32_t metadataShards{1024};
 
@@ -67,6 +67,8 @@ struct DramPoolConfig {
 
     std::unordered_map<std::string, std::string> extra;
 };
+
+inline DramPoolConfig g_drampool_config{};
 
 std::string BuildUsage(const char* program);
 UC::Status ParseCommandLine(int argc, char** argv, CommandLineOptions& options);

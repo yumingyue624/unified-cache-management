@@ -22,58 +22,16 @@
 #pragma once
 
 #include <atomic>
+#include <cassert>
 #include <cstdint>
-#include <memory>
 #include <vector>
 
 #include "drampool_fake_deps.h"
+#include "drampool_server.h"
 #include "kv_protocol.h"
 #include "status/status.h"
-#include "template/spsc_ring_queue.h"
 
 namespace UC::DRAMPOOL {
-
-using RequestPtr = std::unique_ptr<UC::DRAMPOOL::KvRequest>;
-using RequestQueue = UC::SpscRingQueue<RequestPtr>;
-
-struct TransferItem {
-    std::uint16_t request_index{0};
-    Key key{};
-    std::uint64_t remote_addr{0};
-    std::uint32_t len{0};
-    BufferHandle buffer_handle;
-};
-
-struct InflightRecord {
-    UC::DRAMPOOL::KvOpcode opcode{UC::DRAMPOOL::KvOpcode::None};
-    TransportHandle handle;
-
-    std::uint64_t resp_addr{0};
-    std::uint16_t batch_size{0};
-
-    std::vector<std::uint32_t> results;
-    std::vector<TransferItem> transfer_items;
-
-    std::uint64_t submit_ms{0};
-};
-
-using TransHandleQueue = UC::SpscRingQueue<InflightRecord>;
-
-namespace ResultCode {
-constexpr std::uint32_t kOk = 0;
-constexpr std::uint32_t kKeyExists = 1;
-constexpr std::uint32_t kNotFound = 2;
-constexpr std::uint32_t kNotReady = 3;
-constexpr std::uint32_t kExpired = 4;
-constexpr std::uint32_t kNoSpace = 5;
-constexpr std::uint32_t kTransportError = 6;
-constexpr std::uint32_t kInvalidRequest = 7;
-constexpr std::uint32_t kInternalError = 8;
-}  // namespace ResultCode
-
-struct TaskWorkerConfig {
-    std::uint64_t default_dump_ttl_ms{0};
-};
 
 struct TaskWorkerDeps {
     RequestQueue* request_queue{nullptr};
@@ -86,23 +44,21 @@ struct TaskWorkerDeps {
 
 class TaskWorker final {
 public:
-    TaskWorker(TaskWorkerDeps deps, TaskWorkerConfig config = {});
+    TaskWorker(TaskWorkerDeps deps) : deps_(deps) {}
 
-    UC::Status Validate() const;
     void Run(const std::atomic_bool& stop);
-    UC::Status ProcessOne(RequestPtr request);
+    UC::Status ProcessOneRequest(RequestPtr request);
 
 private:
-    UC::Status ProcessDump(const UC::DRAMPOOL::KvDumpLoadRequest& request);
-    UC::Status ProcessLoad(const UC::DRAMPOOL::KvDumpLoadRequest& request);
-    UC::Status ProcessLookup(const UC::DRAMPOOL::KvLookupRequest& request);
+    UC::Status ProcessDump(const KvDumpLoadRequest& request);
+    UC::Status ProcessLoad(const KvDumpLoadRequest& request);
+    UC::Status ProcessLookup(const KvLookupRequest& request);
 
     void RollbackDumpItems(const std::vector<TransferItem>& items);
     void UnpinLoadItems(const std::vector<TransferItem>& items);
     UC::Status SubmitInflight(InflightRecord&& record);
 
     TaskWorkerDeps deps_;
-    TaskWorkerConfig config_;
 };
 
 }  // namespace UC::DRAMPOOL

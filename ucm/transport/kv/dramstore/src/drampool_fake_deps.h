@@ -25,21 +25,17 @@
 #include <cstdint>
 #include <vector>
 
+#include "../../asu/trans/src/buffer_manager.h"
 #include "kv_protocol.h"
 #include "status/status.h"
+#include "type/types.h"
 
 namespace UC::DRAMPOOL {
 
 // Temporary contracts for modules that are not landed yet. Replace these
 // definitions with the real BufferMgr / TransportMgr / MetadataIndex headers
 // when those modules become available.
-using Key = std::array<std::uint8_t, UC::DRAMPOOL::kKvKeySize>;
-
-struct BufferHandle {
-    std::uint64_t value{0};
-
-    bool Valid() const noexcept { return value != 0; }
-};
+using ScatterGatherEntry = UC::ASU::ScatterGatherEntry;
 
 struct TransportHandle {
     std::uint64_t value{0};
@@ -59,7 +55,7 @@ struct TransportSegment {
 };
 
 struct TransportOp {
-    UC::DRAMPOOL::KvOpcode opcode{UC::DRAMPOOL::KvOpcode::None};
+    KvOpcode opcode{KvOpcode::None};
     TransportDirection direction{TransportDirection::ReadRemoteToLocal};
     std::vector<TransportSegment> segments;
 };
@@ -72,7 +68,7 @@ struct BufferSlot {
 };
 
 struct EntryCreateOptions {
-    Key key{};
+    BlockId key{};
     BufferHandle buffer_handle;
     std::uint64_t local_addr{0};
     std::uint32_t len{0};
@@ -120,14 +116,14 @@ class MetadataIndex {
 public:
     virtual ~MetadataIndex() = default;
 
-    virtual bool Contains(const Key& key) = 0;
+    virtual bool Contains(const BlockId& key) = 0;
     virtual ReserveDumpResult ReserveDumpEntry(const EntryCreateOptions& options) = 0;
-    virtual void RemoveReserved(const Key& key) = 0;
+    virtual void RemoveReserved(const BlockId& key) = 0;
 
-    virtual LoadPinResult LookupAndPinLoad(const Key& key, std::uint64_t now_ms) = 0;
-    virtual void UnpinLoad(const Key& key) = 0;
+    virtual LoadPinResult LookupAndPinLoad(const BlockId& key, std::uint64_t now_ms) = 0;
+    virtual void UnpinLoad(const BlockId& key) = 0;
 
-    virtual LookupCode LookupReady(const Key& key, std::uint64_t now_ms) = 0;
+    virtual LookupCode LookupReady(const BlockId& key, std::uint64_t now_ms) = 0;
 };
 
 class BufferManager {
@@ -150,7 +146,7 @@ class ResponseWriter {
 public:
     virtual ~ResponseWriter() = default;
 
-    virtual UC::Status WriteResponse(UC::DRAMPOOL::KvOpcode opcode, std::uint64_t resp_addr,
+    virtual UC::Status WriteResponse(KvOpcode opcode, std::uint64_t resp_addr,
                                  const std::vector<std::uint32_t>& results) = 0;
 };
 

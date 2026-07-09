@@ -24,14 +24,56 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
 #include "drampool_config.h"
+#include "drampool_fake_deps.h"
+#include "kv_protocol.h"
 #include "status/status.h"
+#include "template/spsc_ring_queue.h"
 
 namespace UC::DRAMPOOL {
+
+using BlockId = UC::Detail::BlockId;
+using RequestPtr = std::unique_ptr<KvRequest>;
+using RequestQueue = UC::SpscRingQueue<RequestPtr>;
+
+struct BufferHandle {
+    ScatterGatherEntry sge{};
+    std::uint16_t slab_id{0};
+};
+
+struct TransferItem {
+    std::uint16_t request_index{0};
+    BlockId key{};
+    std::uint64_t remote_addr{0};
+    std::uint32_t len{0};
+    BufferHandle buffer_handle;
+};
+
+struct InflightRecord {
+    KvOpcode opcode{KvOpcode::None};
+    TransportHandle handle;
+
+    std::uint64_t resp_addr{0};
+    std::uint16_t batch_size{0};
+
+    std::vector<std::uint32_t> results;
+    std::vector<TransferItem> transfer_items;
+
+    std::uint64_t submit_ms{0};
+};
+
+using TransHandleQueue = UC::SpscRingQueue<InflightRecord>;
+
+enum class ResultCode : std::uint32_t {
+    Ok = 0,
+    Failed = 1,
+};
 
 class DramPoolServer {
 public:
