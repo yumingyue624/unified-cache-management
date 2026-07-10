@@ -63,6 +63,13 @@ void PackHeader(std::uint8_t* out, KvOpcode opcode, std::uint64_t resp_addr,
     std::memcpy(out + kBatchSizeOffset, &batch_size, sizeof(batch_size));
 }
 
+void PackDumpHeader(std::uint8_t* out, KvOpcode opcode, std::uint64_t resp_addr,
+                    std::uint16_t batch_size, std::uint32_t ttl)
+{
+    PackHeader(out, opcode, resp_addr, batch_size);
+    std::memcpy(out + kDumpTtlOffset, &ttl, sizeof(ttl));
+}
+
 // ===========================================================================
 // KvDumpProtocol
 // ===========================================================================
@@ -72,7 +79,7 @@ void PackHeader(std::uint8_t* out, KvOpcode opcode, std::uint64_t resp_addr,
 std::size_t KvDumpProtocol::PackedSize(const KvRequest& req) const
 {
     const auto& r = static_cast<const KvDumpRequest&>(req);
-    return kKvHeaderSize + static_cast<std::size_t>(r.batch_size) * kKvDumpEntrySize;
+    return kKvDumpHeaderSize + static_cast<std::size_t>(r.batch_size) * kKvDumpEntrySize;
 }
 
 Status KvDumpProtocol::PackRequest(const KvRequest& req, void* target)
@@ -82,16 +89,15 @@ Status KvDumpProtocol::PackRequest(const KvRequest& req, void* target)
     if (!status.ok()) { return status; }
 
     auto* out = static_cast<std::uint8_t*>(target);
-    PackHeader(out, r.opcode, r.resp_addr, r.batch_size);
+    PackDumpHeader(out, r.opcode, r.resp_addr, r.batch_size, r.ttl);
 
     for (std::size_t i = 0; i < r.entries.size(); ++i) {
         const auto& entry = r.entries[i];
-        std::uint8_t* base = out + kKvHeaderSize + i * kKvDumpEntrySize;
+        std::uint8_t* base = out + kKvDumpHeaderSize + i * kKvDumpEntrySize;
         std::memcpy(base + kDumpEntryKeyOffset, entry.key.data(), kKvKeySize);
         std::memcpy(base + kDumpEntryAddrOffset, &entry.addr, sizeof(entry.addr));
         std::memcpy(base + kDumpEntryLenOffset, &entry.len, sizeof(entry.len));
         std::memcpy(base + kDumpEntryIdxOffset, &entry.idx, sizeof(entry.idx));
-        std::memcpy(base + kDumpEntryTtlOffset, &entry.ttl, sizeof(entry.ttl));
     }
     return Status::OK();
 }
@@ -158,16 +164,17 @@ Status KvDumpProtocol::UnpackRequest(const void* data, std::size_t size,
     }
 
     std::size_t expected_size =
-        kKvHeaderSize + static_cast<std::size_t>(req->batch_size) * kKvDumpEntrySize;
+        kKvDumpHeaderSize + static_cast<std::size_t>(req->batch_size) * kKvDumpEntrySize;
     if (size != expected_size) {
         return Status::Error(StatusCode::INVALID_ARGUMENT, "Dump: size(" + std::to_string(size) +
                                                                ") != expected(" +
                                                                std::to_string(expected_size) + ")");
     }
 
+    std::memcpy(&req->ttl, bytes + kDumpTtlOffset, sizeof(req->ttl));
     req->entries.resize(req->batch_size);
     for (std::size_t i = 0; i < req->batch_size; ++i) {
-        const std::uint8_t* base = bytes + kKvHeaderSize + i * kKvDumpEntrySize;
+        const std::uint8_t* base = bytes + kKvDumpHeaderSize + i * kKvDumpEntrySize;
         std::memcpy(req->entries[i].key.data(), base + kDumpEntryKeyOffset, kKvKeySize);
         if (IsAllZeroKey(req->entries[i].key.data())) {
             return Status::Error(StatusCode::INVALID_ARGUMENT,
@@ -184,7 +191,6 @@ Status KvDumpProtocol::UnpackRequest(const void* data, std::size_t size,
                                  "Dump: entry[" + std::to_string(i) + "] len is zero");
         }
         std::memcpy(&req->entries[i].idx, base + kDumpEntryIdxOffset, sizeof(std::uint32_t));
-        std::memcpy(&req->entries[i].ttl, base + kDumpEntryTtlOffset, sizeof(std::uint64_t));
     }
     out = std::move(req);
     return Status::OK();

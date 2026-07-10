@@ -22,11 +22,10 @@
 #pragma once
 
 #include <atomic>
-#include <cassert>
 #include <cstdint>
 #include <vector>
 #include "drampool_fake_deps.h"
-#include "drampool_server.h"
+#include "drampool_types.h"
 #include "kv_protocol.h"
 #include "status/status.h"
 
@@ -39,12 +38,14 @@ struct TaskWorkerDeps {
     BufferManager* buffer_manager{nullptr};
     TransportManager* transport{nullptr};
     ResponseWriter* response_writer{nullptr};
+    std::uint64_t default_dump_ttl_ms{0};
 };
 
 class TaskWorker final {
 public:
     TaskWorker(TaskWorkerDeps deps) : deps_(deps) {}
 
+    UC::Status ValidateDependencies() const;
     void Run(const std::atomic_bool& stop);
     UC::Status ProcessOneRequest(RequestPtr request);
 

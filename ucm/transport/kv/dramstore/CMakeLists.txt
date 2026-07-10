@@ -1,9 +1,11 @@
 find_package(Threads REQUIRED)
 
 add_library(drampool_core STATIC
+    src/completion_poller.cpp
     src/drampool_config.cpp
     src/drampool_daemon.cpp
     src/drampool_server.cpp
+    src/kv_protocol.cpp
     src/task_worker.cpp
 )
 
@@ -47,4 +49,18 @@ if(BUILD_UNIT_TESTS)
         target_link_options(drampool_startup.test PRIVATE /PROFILE)
     endif()
     gtest_discover_tests(drampool_startup.test)
+
+    add_executable(completion_poller.test
+        test/completion_poller_test.cpp
+    )
+    target_link_libraries(completion_poller.test
+        PRIVATE
+            drampool_core
+            gtest_main
+            gtest
+    )
+    if(MSVC)
+        target_link_options(completion_poller.test PRIVATE /PROFILE)
+    endif()
+    gtest_discover_tests(completion_poller.test)
 endif()

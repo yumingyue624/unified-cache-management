@@ -47,9 +47,10 @@ enum class KvOpcode : std::uint8_t {
 constexpr std::size_t kKvKeySize = 16;
 constexpr std::size_t kKvHeaderSize =
     sizeof(std::uint8_t) + sizeof(std::uint64_t) + sizeof(std::uint16_t);
+constexpr std::size_t kKvDumpHeaderSize =
+    sizeof(std::uint8_t) + sizeof(std::uint64_t) + sizeof(std::uint16_t) + sizeof(std::uint32_t);
 constexpr std::size_t kKvDumpEntrySize = kKvKeySize + sizeof(std::uint64_t) +
-                                         sizeof(std::uint32_t) + sizeof(std::uint32_t) +
-                                         sizeof(std::uint64_t);
+                                         sizeof(std::uint32_t) + sizeof(std::uint32_t);
 constexpr std::size_t kKvLoadEntrySize =
     kKvKeySize + sizeof(std::uint64_t) + sizeof(std::uint32_t) + sizeof(std::uint32_t);
 constexpr std::size_t kKvLookupEntrySize = kKvKeySize;
@@ -59,12 +60,12 @@ constexpr std::size_t kKvFlagEntrySize = sizeof(std::uint32_t);
 constexpr std::size_t kOpcodeOffset = 0;
 constexpr std::size_t kRespAddrOffset = 1;
 constexpr std::size_t kBatchSizeOffset = 9;
+constexpr std::size_t kDumpTtlOffset = 11;
 
 constexpr std::size_t kDumpEntryKeyOffset = 0;
 constexpr std::size_t kDumpEntryAddrOffset = 16;
 constexpr std::size_t kDumpEntryLenOffset = 24;
 constexpr std::size_t kDumpEntryIdxOffset = 28;
-constexpr std::size_t kDumpEntryTtlOffset = 32;
 
 constexpr std::size_t kLoadEntryKeyOffset = 0;
 constexpr std::size_t kLoadEntryAddrOffset = 16;
@@ -79,7 +80,6 @@ public:
     std::uint64_t addr{0};
     std::uint32_t len{0};
     std::uint32_t idx{0};
-    std::uint64_t ttl{0};
 };
 
 class KvLoadEntry {
@@ -105,6 +105,7 @@ public:
     KvOpcode opcode{KvOpcode::None};
     std::uint64_t resp_addr{0};
     std::uint16_t batch_size{0};
+    std::uint32_t ttl{0};
     std::vector<KvDumpEntry> entries;
 };
 
@@ -142,9 +143,13 @@ bool IsAllZeroKey(const std::uint8_t* key);
 // Human-readable protocol name for log prefixes (Dump/Load/Lookup, "Unknown" otherwise).
 const char* ProtocolName(KvOpcode opcode);
 
-// Write the 11-byte header (opcode + resp_addr + batch_size) into out.
+// Write the common header (opcode + resp_addr + batch_size) into out. Used by Load/Lookup.
 void PackHeader(std::uint8_t* out, KvOpcode opcode, std::uint64_t resp_addr,
                 std::uint16_t batch_size);
+
+// Write the Dump header (opcode + resp_addr + batch_size + ttl) into out.
+void PackDumpHeader(std::uint8_t* out, KvOpcode opcode, std::uint64_t resp_addr,
+                    std::uint16_t batch_size, std::uint32_t ttl);
 
 // Validate resp_addr != 0 and batch_size == entries.size() (and non-zero).
 template <typename Req>

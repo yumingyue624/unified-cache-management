@@ -1,17 +1,16 @@
-#include "drampool_config.h"
-#include "drampool_daemon.h"
-#include "drampool_server.h"
-
 #include <algorithm>
 #include <chrono>
 #include <csignal>
 #include <cstdio>
 #include <fstream>
 #include <future>
+#include <gtest/gtest.h>
 #include <string>
 #include <thread>
 #include <vector>
-#include <gtest/gtest.h>
+#include "drampool_config.h"
+#include "drampool_daemon.h"
+#include "drampool_server.h"
 
 namespace UC::DRAMPOOL {
 namespace {
@@ -31,6 +30,7 @@ DramPoolConfig MakeValidConfig()
     config.pollerDrainBudget = 64;
     config.pollerScanBudget = 64;
     config.pollerMaxPending = 1024;
+    config.pollerIdleWaitUs = 100;
     config.gcEnabled = true;
     config.gcIntervalMs = 10;
     config.opTimeoutMs = 5000;
@@ -73,6 +73,7 @@ std::string ValidConfigText()
            "poller.drain_budget = 64\n"
            "poller.scan_budget = 64\n"
            "poller.max_pending = 1024\n"
+           "poller.idle_wait_us = 100\n"
            "gc.enabled = true\n"
            "gc.interval_ms = 1000\n"
            "op.timeout_ms = 5000\n"
@@ -138,7 +139,7 @@ TEST(DramPoolConfigTest, HandlesHelpAndInvalidCommandLines)
 TEST(DramPoolConfigTest, LoadsKeyValueConfigAndPreservesExtraKeys)
 {
     const std::string path = WriteConfigFile("drampool_startup_valid.conf",
-                                            ValidConfigText() + "future.option = value\n");
+                                             ValidConfigText() + "future.option = value\n");
 
     auto loaded = LoadDramPoolConfig(path);
     std::remove(path.c_str());
@@ -149,6 +150,7 @@ TEST(DramPoolConfigTest, LoadsKeyValueConfigAndPreservesExtraKeys)
     EXPECT_EQ(config.poolBlockSizes.size(), 2U);
     EXPECT_EQ(config.poolBlockProportions[1], 30U);
     EXPECT_EQ(config.metadataShards, 8U);
+    EXPECT_EQ(config.pollerIdleWaitUs, 100U);
     EXPECT_EQ(config.logLevel, "info");
     ASSERT_EQ(config.extra.count("future.option"), 1U);
     EXPECT_EQ(config.extra.at("future.option"), "value");
@@ -157,9 +159,9 @@ TEST(DramPoolConfigTest, LoadsKeyValueConfigAndPreservesExtraKeys)
 TEST(DramPoolConfigTest, LoadsDefaultsAndBoolVariants)
 {
     const std::string path = WriteConfigFile("drampool_startup_defaults.conf",
-                                            "pool.size_gb = 1\n"
-                                            "gc.enabled = off\n"
-                                            "log.level = WARN\n");
+                                             "pool.size_gb = 1\n"
+                                             "gc.enabled = off\n"
+                                             "log.level = WARN\n");
     auto loaded = LoadDramPoolConfig(path);
     std::remove(path.c_str());
 
@@ -173,7 +175,8 @@ TEST(DramPoolConfigTest, LoadsDefaultsAndBoolVariants)
 TEST(DramPoolConfigTest, RejectsMalformedConfigFiles)
 {
     {
-        const std::string path = WriteConfigFile("drampool_startup_missing_equal.conf", "bad line\n");
+        const std::string path =
+            WriteConfigFile("drampool_startup_missing_equal.conf", "bad line\n");
         auto loaded = LoadDramPoolConfig(path);
         std::remove(path.c_str());
         EXPECT_FALSE(loaded.HasValue());
@@ -192,8 +195,8 @@ TEST(DramPoolConfigTest, RejectsMalformedConfigFiles)
         EXPECT_FALSE(loaded.HasValue());
     }
     {
-        const std::string path =
-            WriteConfigFile("drampool_startup_bad_bool.conf", "pool.size_gb = 1\ngc.enabled = maybe\n");
+        const std::string path = WriteConfigFile("drampool_startup_bad_bool.conf",
+                                                 "pool.size_gb = 1\ngc.enabled = maybe\n");
         auto loaded = LoadDramPoolConfig(path);
         std::remove(path.c_str());
         EXPECT_FALSE(loaded.HasValue());
@@ -224,6 +227,7 @@ TEST(DramPoolConfigTest, RejectsInvalidCoreConfig)
     expectInvalid([](DramPoolConfig& config) { config.pollerScanBudget = 0; });
     expectInvalid([](DramPoolConfig& config) { config.pollerMaxPending = 0; });
     expectInvalid([](DramPoolConfig& config) { config.pollerMaxPending = 32; });
+    expectInvalid([](DramPoolConfig& config) { config.pollerIdleWaitUs = 0; });
     expectInvalid([](DramPoolConfig& config) { config.gcIntervalMs = 0; });
     expectInvalid([](DramPoolConfig& config) { config.opTimeoutMs = 0; });
     expectInvalid([](DramPoolConfig& config) { config.shutdownTimeoutMs = 0; });
@@ -292,14 +296,9 @@ TEST(DramPoolServerTest, StartsReceiverLastAndStopsReceiverFirst)
     EXPECT_TRUE(ContainsInOrder(events, startupOrder));
 
     const std::vector<std::string> shutdownOrder = {
-        "SetServiceReady(false)",
-        "StopReceiver",
-        "StopTaskWorker",
-        "CancelInflightTransports",
-        "StopCompletionPoller",
-        "StopGCThread",
-        "UnregisterBufferMemory",
-        "DestroyMetadataIndex",
+        "SetServiceReady(false)",   "StopReceiver",         "StopTaskWorker",
+        "CancelInflightTransports", "StopCompletionPoller", "StopGCThread",
+        "UnregisterBufferMemory",   "DestroyMetadataIndex",
     };
     EXPECT_TRUE(ContainsInOrder(events, shutdownOrder));
 }
@@ -319,9 +318,9 @@ TEST(DramPoolServerTest, GcDisabledSkipsGcThreadLifecycleEvents)
     const auto events = server.LifecycleEvents();
     EXPECT_EQ(std::find(events.begin(), events.end(), "StartGCThread"), events.end());
     EXPECT_EQ(std::find(events.begin(), events.end(), "StopGCThread"), events.end());
-    EXPECT_TRUE(ContainsInOrder(events, {"StartCompletionPoller", "StartTaskWorker",
-                                         "StartRequestChannelAndReceiver",
-                                         "SetServiceReady(true)"}));
+    EXPECT_TRUE(
+        ContainsInOrder(events, {"StartCompletionPoller", "StartTaskWorker",
+                                 "StartRequestChannelAndReceiver", "SetServiceReady(true)"}));
 }
 
 TEST(DramPoolDaemonTest, ReturnsForHelpAndInvalidConfig)
@@ -345,8 +344,8 @@ TEST(DramPoolDaemonTest, ReturnsForHelpAndInvalidConfig)
 
 TEST(DramPoolDaemonTest, RunsUntilSigint)
 {
-    const std::string path = WriteConfigFile("drampool_daemon_valid.conf",
-                                            ValidConfigText() + "gc.interval_ms = 10\n");
+    const std::string path =
+        WriteConfigFile("drampool_daemon_valid.conf", ValidConfigText() + "gc.interval_ms = 10\n");
     const char* argv[] = {"drampool", "--config", "drampool_daemon_valid.conf"};
 
     auto result = std::async(std::launch::async, [&argv]() {

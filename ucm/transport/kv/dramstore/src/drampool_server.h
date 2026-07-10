@@ -24,62 +24,27 @@
 #pragma once
 
 #include <atomic>
+#include <condition_variable>
 #include <cstdint>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
+#include "completion_poller.h"
 #include "drampool_config.h"
 #include "drampool_fake_deps.h"
+#include "drampool_types.h"
 #include "kv_protocol.h"
 #include "status/status.h"
-#include "template/spsc_ring_queue.h"
 
 namespace UC::DRAMPOOL {
-
-using BlockId = UC::Detail::BlockId;
-using RequestPtr = std::unique_ptr<KvRequest>;
-using RequestQueue = UC::SpscRingQueue<RequestPtr>;
-
-struct BufferHandle {
-    ScatterGatherEntry sge{};
-    std::uint16_t slab_id{0};
-};
-
-struct TransferItem {
-    std::uint16_t request_index{0};
-    BlockId key{};
-    std::uint64_t remote_addr{0};
-    std::uint32_t len{0};
-    BufferHandle buffer_handle;
-};
-
-struct InflightRecord {
-    KvOpcode opcode{KvOpcode::None};
-    TransportHandle handle;
-
-    std::uint64_t resp_addr{0};
-    std::uint16_t batch_size{0};
-
-    std::vector<std::uint32_t> results;
-    std::vector<TransferItem> transfer_items;
-
-    std::uint64_t submit_ms{0};
-};
-
-using TransHandleQueue = UC::SpscRingQueue<InflightRecord>;
-
-enum class ResultCode : std::uint32_t {
-    Ok = 0,
-    Failed = 1,
-};
 
 class TaskWorker;
 
 class DramPoolServer {
 public:
-    DramPoolServer() = default;
+    DramPoolServer();
     ~DramPoolServer();
 
     DramPoolServer(const DramPoolServer&) = delete;
@@ -93,6 +58,15 @@ public:
     std::vector<std::string> LifecycleEvents() const;
 
 private:
+    enum class ServerState {
+        New = 0,
+        Initialized,
+        Starting,
+        Ready,
+        Stopping,
+        Stopped,
+    };
+
     UC::Status InitDataTransportManager();
     UC::Status InstallDataTransport();
     UC::Status InitBufferMgr();
@@ -120,10 +94,10 @@ private:
     void CompletionPollerLoop();
     void GCThreadLoop();
     void RecordLifecycleEvent(const std::string& event);
+    void StopLocked();
+    void ResetInitializedComponents();
 
     DramPoolConfig config_;
-    std::atomic_bool initialized_{false};
-    std::atomic_bool started_{false};
     std::atomic_bool serviceReady_{false};
 
     std::atomic_bool receiverStop_{true};
@@ -138,8 +112,18 @@ private:
 
     RequestQueue requestQueue_;
     TransHandleQueue transHandleQueue_;
+    std::unique_ptr<TransportManager> transportManager_;
+    std::unique_ptr<BufferManager> bufferManager_;
+    std::unique_ptr<MetadataIndex> metadataIndex_;
+    std::unique_ptr<ProtocolManager> protocolManager_;
+    std::unique_ptr<ResponseWriter> responseWriter_;
     std::unique_ptr<TaskWorker> taskWorker_;
+    std::unique_ptr<CompletionPoller> completionPoller_;
 
+    mutable std::mutex controlMutex_;
+    ServerState state_{ServerState::New};
+    std::mutex stopWaitMutex_;
+    std::condition_variable stopWaitCv_;
     mutable std::mutex lifecycleMutex_;
     std::vector<std::string> lifecycleEvents_;
 };

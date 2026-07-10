@@ -71,12 +71,12 @@ TEST_F(KvProtocolTest, PackDumpRequestMatchesLayout)
     entry.addr = 0x1122334455667788ULL;
     entry.len = 0xAABBCCDD;
     entry.idx = 0x12345678;
-    entry.ttl = 0x9999AAAABBBBCCCCULL;
 
     KvDumpRequest req;
     req.opcode = KvOpcode::Dump;
     req.resp_addr = 0x0102030405060708ULL;
     req.batch_size = 1;
+    req.ttl = 0x99AABBCCU;
     req.entries = {entry};
 
     std::vector<std::uint8_t> packed(mgr_.GetPackedSize(req.opcode, req), 0);
@@ -86,11 +86,12 @@ TEST_F(KvProtocolTest, PackDumpRequestMatchesLayout)
     EXPECT_EQ(packed[0], static_cast<std::uint8_t>(KvOpcode::Dump));
     ExpectLe64(packed, 1, req.resp_addr);
     ExpectLe16(packed, 9, req.batch_size);
-    EXPECT_EQ(std::memcmp(packed.data() + kKvHeaderSize, entry.key.data(), kKvKeySize), 0);
-    ExpectLe64(packed, kKvHeaderSize + 16, entry.addr);
-    ExpectLe32(packed, kKvHeaderSize + 24, entry.len);
-    ExpectLe32(packed, kKvHeaderSize + 28, entry.idx);
-    ExpectLe64(packed, kKvHeaderSize + 32, entry.ttl);
+    ExpectLe32(packed, kDumpTtlOffset, req.ttl);
+    EXPECT_EQ(packed.size(), kKvDumpHeaderSize + kKvDumpEntrySize);
+    EXPECT_EQ(std::memcmp(packed.data() + kKvDumpHeaderSize, entry.key.data(), kKvKeySize), 0);
+    ExpectLe64(packed, kKvDumpHeaderSize + 16, entry.addr);
+    ExpectLe32(packed, kKvDumpHeaderSize + 24, entry.len);
+    ExpectLe32(packed, kKvDumpHeaderSize + 28, entry.idx);
 }
 
 TEST_F(KvProtocolTest, PackLoadRequestMatchesLayout)
@@ -362,13 +363,13 @@ TEST_F(KvProtocolTest, DumpLoadMultiEntryRoundTrip)
     req.opcode = KvOpcode::Dump;
     req.resp_addr = 0xA5A5A5A5A5A5A5A5ULL;
     req.batch_size = kBatch;
+    req.ttl = 0x10203040U;
     for (std::uint16_t i = 0; i < kBatch; ++i) {
         KvDumpEntry e;
         e.key = MakeKey(static_cast<std::uint8_t>(i * 0x10));
         e.addr = 0x1000ULL * (i + 1);
         e.len = 0x200U * (i + 1);
         e.idx = i;
-        e.ttl = 0x1000ULL * (i + 1);
         req.entries.push_back(e);
     }
 
@@ -378,6 +379,7 @@ TEST_F(KvProtocolTest, DumpLoadMultiEntryRoundTrip)
     std::unique_ptr<KvRequest> parsed;
     ASSERT_TRUE(mgr_.UnpackRequest(packed.data(), packed.size(), parsed).ok());
     auto& dl = static_cast<KvDumpRequest&>(*parsed);
+    EXPECT_EQ(dl.ttl, req.ttl);
     ASSERT_EQ(dl.entries.size(), kBatch);
     for (std::uint16_t i = 0; i < kBatch; ++i) {
         EXPECT_EQ(std::memcmp(dl.entries[i].key.data(), req.entries[i].key.data(), kKvKeySize), 0)
@@ -385,7 +387,6 @@ TEST_F(KvProtocolTest, DumpLoadMultiEntryRoundTrip)
         EXPECT_EQ(dl.entries[i].addr, req.entries[i].addr) << "entry " << i;
         EXPECT_EQ(dl.entries[i].len, req.entries[i].len) << "entry " << i;
         EXPECT_EQ(dl.entries[i].idx, req.entries[i].idx) << "entry " << i;
-        EXPECT_EQ(dl.entries[i].ttl, req.entries[i].ttl) << "entry " << i;
     }
 }
 
@@ -425,7 +426,7 @@ TEST_F(KvProtocolTest, RejectsNoneOpcodeOnDumpLoad)
     req.resp_addr = 0x1000;
     req.batch_size = 1;
     req.entries = {
-        KvDumpEntry{MakeKey(0x10), 0x2000, 0x100, 0, 0}
+        KvDumpEntry{MakeKey(0x10), 0x2000, 0x100, 0}
     };
 
     std::vector<std::uint8_t> buf(mgr_.GetPackedSize(KvOpcode::Dump, req), 0);
@@ -441,7 +442,7 @@ TEST_F(KvProtocolTest, RejectsOpcodeMismatch)
     req.resp_addr = 0x1000;
     req.batch_size = 1;
     req.entries = {
-        KvDumpEntry{MakeKey(0x10), 0x2000, 0x100, 0, 0}
+        KvDumpEntry{MakeKey(0x10), 0x2000, 0x100, 0}
     };
 
     std::vector<std::uint8_t> buf(mgr_.GetPackedSize(KvOpcode::Dump, req), 0);
@@ -505,8 +506,8 @@ TEST_F(KvProtocolTest, UnpackRequestRejectsSizeMismatch)
     req.resp_addr = 0x1000;
     req.batch_size = 2;
     req.entries = {
-        KvDumpEntry{MakeKey(0x10), 0x2000, 0x100, 0, 0},
-        KvDumpEntry{MakeKey(0x20), 0x3000, 0x200, 1, 0}
+        KvDumpEntry{MakeKey(0x10), 0x2000, 0x100, 0},
+        KvDumpEntry{MakeKey(0x20), 0x3000, 0x200, 1}
     };
 
     std::vector<std::uint8_t> packed(mgr_.GetPackedSize(req.opcode, req), 0);
@@ -614,8 +615,9 @@ TEST_F(KvProtocolTest, MultiRoundSequentialPacks)
             req.opcode = opcode;
             req.resp_addr = resp_addr;
             req.batch_size = 1;
+            req.ttl = 0x500U * (round + 1);
             req.entries = {
-                KvDumpEntry{MakeKey(round), addr, len, round, 0x500ULL * (round + 1)}
+                KvDumpEntry{MakeKey(round), addr, len, round}
             };
             packed.resize(mgr_.GetPackedSize(opcode, req), 0);
             ASSERT_TRUE(mgr_.PackRequest(packed.data(), opcode, req).ok()) << "round " << round;
@@ -638,8 +640,8 @@ TEST_F(KvProtocolTest, MultiRoundSequentialPacks)
             auto& dl = static_cast<KvDumpRequest&>(*parsed);
             EXPECT_EQ(dl.opcode, opcode) << "round " << round;
             EXPECT_EQ(dl.resp_addr, resp_addr) << "round " << round;
+            EXPECT_EQ(dl.ttl, 0x500U * (round + 1)) << "round " << round;
             EXPECT_EQ(dl.entries[0].idx, round) << "round " << round;
-            EXPECT_EQ(dl.entries[0].ttl, 0x500ULL * (round + 1)) << "round " << round;
         } else {
             auto& dl = static_cast<KvLoadRequest&>(*parsed);
             EXPECT_EQ(dl.opcode, opcode) << "round " << round;

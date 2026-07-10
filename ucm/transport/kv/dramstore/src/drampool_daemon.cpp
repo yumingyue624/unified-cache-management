@@ -22,7 +22,6 @@
  * SOFTWARE.
  * */
 #include "drampool_daemon.h"
-
 #include <chrono>
 #include <csignal>
 #include <iostream>
@@ -30,6 +29,13 @@
 #include "logger.h"
 
 namespace UC::DRAMPOOL {
+namespace {
+
+constexpr int kDefaultLogFileCount = 3;
+constexpr int kDefaultLogFileSizeMb = 64;
+constexpr auto kShutdownPollInterval = std::chrono::milliseconds(100);
+
+}  // namespace
 
 std::atomic_bool DramPoolDaemon::shutdownRequested_{false};
 
@@ -88,7 +94,7 @@ int DramPoolDaemon::Run(int argc, char** argv)
 
 UC::Status DramPoolDaemon::SetupLogger(const DramPoolConfig& config)
 {
-    UC::Logger::Setup(config.logDir, 3, 64);
+    UC::Logger::Setup(config.logDir, kDefaultLogFileCount, kDefaultLogFileSizeMb);
     return UC::Status::OK();
 }
 
@@ -107,7 +113,7 @@ UC::Status DramPoolDaemon::SetupSignals()
 void DramPoolDaemon::WaitForShutdown()
 {
     while (!shutdownRequested_.load(std::memory_order_acquire)) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        std::this_thread::sleep_for(kShutdownPollInterval);
     }
 }
 

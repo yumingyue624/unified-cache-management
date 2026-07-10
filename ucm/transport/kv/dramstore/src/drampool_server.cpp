@@ -22,26 +22,23 @@
  * SOFTWARE.
  * */
 #include "drampool_server.h"
-#include "task_worker.h"
-
 #include <chrono>
 #include <exception>
 #include <utility>
 #include "logger.h"
+#include "task_worker.h"
 
 namespace UC::DRAMPOOL {
-namespace {
-
-constexpr auto kIdleSleep = std::chrono::milliseconds(10);
-
-}  // namespace
+DramPoolServer::DramPoolServer() = default;
 
 DramPoolServer::~DramPoolServer() { Stop(); }
 
 UC::Status DramPoolServer::Init(const DramPoolConfig& config)
 {
-    if (initialized_.load(std::memory_order_acquire)) {
-        return UC::Status::InvalidParam("DramPoolServer is already initialized");
+    std::lock_guard<std::mutex> controlGuard(controlMutex_);
+    if (state_ != ServerState::New) {
+        return UC::Status::InvalidParam(
+            "DramPoolServer cannot be initialized in its current state");
     }
     auto status = ValidateDramPoolConfig(config);
     if (status.Failure()) { return status; }
@@ -49,66 +46,97 @@ UC::Status DramPoolServer::Init(const DramPoolConfig& config)
     config_ = config;
     g_drampool_config = config;
 
-    status = InitDataTransportManager();
-    if (status.Failure()) { return status; }
-    status = InstallDataTransport();
-    if (status.Failure()) { return status; }
-    status = InitBufferMgr();
-    if (status.Failure()) { return status; }
-    status = RegisterBufferMemory();
-    if (status.Failure()) { return status; }
-    status = InitMetadataIndex();
-    if (status.Failure()) { return status; }
-    status = InitProtocol();
-    if (status.Failure()) { return status; }
-    status = InitQueues();
-    if (status.Failure()) { return status; }
+    try {
+        status = InitDataTransportManager();
+        if (status.Failure()) {
+            ResetInitializedComponents();
+            return status;
+        }
+        status = InstallDataTransport();
+        if (status.Failure()) {
+            ResetInitializedComponents();
+            return status;
+        }
+        status = InitBufferMgr();
+        if (status.Failure()) {
+            ResetInitializedComponents();
+            return status;
+        }
+        status = RegisterBufferMemory();
+        if (status.Failure()) {
+            ResetInitializedComponents();
+            return status;
+        }
+        status = InitMetadataIndex();
+        if (status.Failure()) {
+            ResetInitializedComponents();
+            return status;
+        }
+        status = InitProtocol();
+        if (status.Failure()) {
+            ResetInitializedComponents();
+            return status;
+        }
+        status = InitQueues();
+        if (status.Failure()) {
+            ResetInitializedComponents();
+            return status;
+        }
+    } catch (const std::exception& error) {
+        ResetInitializedComponents();
+        return UC::Status::Error(std::string{"DramPoolServer initialization failed: "} +
+                                 error.what());
+    }
 
-    initialized_.store(true, std::memory_order_release);
+    state_ = ServerState::Initialized;
     return UC::Status::OK();
 }
 
 UC::Status DramPoolServer::Start()
 {
-    if (!initialized_.load(std::memory_order_acquire)) {
-        return UC::Status::InvalidParam("DramPoolServer is not initialized");
+    std::lock_guard<std::mutex> controlGuard(controlMutex_);
+    if (state_ != ServerState::Initialized) {
+        return UC::Status::InvalidParam("DramPoolServer is not ready to start");
     }
-    bool expected = false;
-    if (!started_.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
-        return UC::Status::InvalidParam("DramPoolServer is already started");
-    }
+    state_ = ServerState::Starting;
 
+    // Start internal threads before the receiver makes the service externally visible.
     auto status = StartCompletionPoller();
     if (status.Failure()) {
-        Stop();
+        StopLocked();
         return status;
     }
     status = StartTaskWorker();
     if (status.Failure()) {
-        Stop();
+        StopLocked();
         return status;
     }
     status = StartGCThread();
     if (status.Failure()) {
-        Stop();
+        StopLocked();
         return status;
     }
     status = StartRequestChannelAndReceiver();
     if (status.Failure()) {
-        Stop();
+        StopLocked();
         return status;
     }
     SetServiceReady(true);
+    state_ = ServerState::Ready;
     return UC::Status::OK();
 }
 
 void DramPoolServer::Stop()
 {
-    if (!started_.exchange(false, std::memory_order_acq_rel) &&
-        !initialized_.load(std::memory_order_acquire)) {
-        return;
-    }
+    std::lock_guard<std::mutex> controlGuard(controlMutex_);
+    StopLocked();
+}
 
+void DramPoolServer::StopLocked()
+{
+    if (state_ == ServerState::New || state_ == ServerState::Stopped) { return; }
+    state_ = ServerState::Stopping;
+    // Close ingress first, drain accepted work, then destroy shared dependencies.
     SetServiceReady(false);
     StopReceiver();
     StopTaskWorker();
@@ -117,13 +145,12 @@ void DramPoolServer::Stop()
     StopGCThread();
     UnregisterBufferMemory();
     DestroyMetadataIndex();
-    initialized_.store(false, std::memory_order_release);
+    ResetInitializedComponents();
+    state_ = ServerState::Stopped;
 }
 
 bool DramPoolServer::IsServiceReady() const noexcept
-{
-    return serviceReady_.load(std::memory_order_acquire);
-}
+{ return serviceReady_.load(std::memory_order_acquire); }
 
 std::vector<std::string> DramPoolServer::LifecycleEvents() const
 {
@@ -133,36 +160,47 @@ std::vector<std::string> DramPoolServer::LifecycleEvents() const
 
 UC::Status DramPoolServer::InitDataTransportManager()
 {
+    transportManager_ = std::make_unique<FakeTransportManager>();
     RecordLifecycleEvent("InitDataTransportManager");
     return UC::Status::OK();
 }
 
 UC::Status DramPoolServer::InstallDataTransport()
 {
+    if (!transportManager_) {
+        return UC::Status::InvalidParam("TransportManager is not initialized");
+    }
     RecordLifecycleEvent("InstallDataTransport");
     return UC::Status::OK();
 }
 
 UC::Status DramPoolServer::InitBufferMgr()
 {
+    bufferManager_ = std::make_unique<FakeBufferManager>();
     RecordLifecycleEvent("InitBufferMgr");
     return UC::Status::OK();
 }
 
 UC::Status DramPoolServer::RegisterBufferMemory()
 {
+    if (!bufferManager_ || !transportManager_) {
+        return UC::Status::InvalidParam("buffer registration dependencies are not initialized");
+    }
     RecordLifecycleEvent("RegisterBufferMemory");
     return UC::Status::OK();
 }
 
 UC::Status DramPoolServer::InitMetadataIndex()
 {
+    metadataIndex_ = std::make_unique<FakeMetadataIndex>();
     RecordLifecycleEvent("InitMetadataIndex");
     return UC::Status::OK();
 }
 
 UC::Status DramPoolServer::InitProtocol()
 {
+    protocolManager_ = std::make_unique<ProtocolManager>();
+    responseWriter_ = std::make_unique<FakeResponseWriter>();
     RecordLifecycleEvent("InitProtocol");
     return UC::Status::OK();
 }
@@ -177,11 +215,25 @@ UC::Status DramPoolServer::InitQueues()
 
 UC::Status DramPoolServer::StartCompletionPoller()
 {
+    if (!metadataIndex_ || !bufferManager_ || !transportManager_ || !responseWriter_) {
+        return UC::Status::InvalidParam("CompletionPoller dependencies are not initialized");
+    }
+
+    CompletionPollerOptions options;
+    options.drain_budget = config_.pollerDrainBudget;
+    options.scan_budget = config_.pollerScanBudget;
+    options.max_pending = config_.pollerMaxPending;
+    options.operation_timeout_ms = config_.opTimeoutMs;
+    options.idle_wait_us = config_.pollerIdleWaitUs;
     try {
+        completionPoller_ =
+            std::make_unique<CompletionPoller>(transHandleQueue_, *metadataIndex_, *bufferManager_,
+                                               *transportManager_, *responseWriter_, options);
         completionPollerStop_.store(false, std::memory_order_release);
         completionPollerThread_ = std::thread(&DramPoolServer::CompletionPollerLoop, this);
         RecordLifecycleEvent("StartCompletionPoller");
     } catch (const std::exception& e) {
+        completionPoller_.reset();
         return UC::Status::Error(std::string{"failed to start CompletionPoller: "} + e.what());
     }
     return UC::Status::OK();
@@ -192,7 +244,17 @@ UC::Status DramPoolServer::StartTaskWorker()
     TaskWorkerDeps deps;
     deps.request_queue = &requestQueue_;
     deps.trans_handle_queue = &transHandleQueue_;
+    deps.metadata = metadataIndex_.get();
+    deps.buffer_manager = bufferManager_.get();
+    deps.transport = transportManager_.get();
+    deps.response_writer = responseWriter_.get();
+    deps.default_dump_ttl_ms = config_.defaultDumpTtlMs;
     taskWorker_ = std::make_unique<TaskWorker>(deps);
+    const auto validation = taskWorker_->ValidateDependencies();
+    if (validation.Failure()) {
+        taskWorker_.reset();
+        return validation;
+    }
 
     try {
         taskWorkerStop_.store(false, std::memory_order_release);
@@ -239,6 +301,7 @@ void DramPoolServer::SetServiceReady(bool ready)
 void DramPoolServer::StopReceiver()
 {
     receiverStop_.store(true, std::memory_order_release);
+    stopWaitCv_.notify_all();
     if (receiverThread_.joinable()) { receiverThread_.join(); }
     RecordLifecycleEvent("StopReceiver");
 }
@@ -251,30 +314,48 @@ void DramPoolServer::StopTaskWorker()
     RecordLifecycleEvent("StopTaskWorker");
 }
 
-void DramPoolServer::CancelInflightTransports() { RecordLifecycleEvent("CancelInflightTransports"); }
+void DramPoolServer::CancelInflightTransports()
+{
+    if (completionPoller_) { completionPoller_->RequestCancelAll(); }
+    RecordLifecycleEvent("CancelInflightTransports");
+}
 
 void DramPoolServer::StopCompletionPoller()
 {
     completionPollerStop_.store(true, std::memory_order_release);
     if (completionPollerThread_.joinable()) { completionPollerThread_.join(); }
+    if (completionPoller_ && !completionPoller_->Healthy()) {
+        UC_ERROR_UNLIMITED("DramPool CompletionPoller stopped in failed state");
+    }
+    completionPoller_.reset();
     RecordLifecycleEvent("StopCompletionPoller");
 }
 
 void DramPoolServer::StopGCThread()
 {
     gcThreadStop_.store(true, std::memory_order_release);
+    stopWaitCv_.notify_all();
     if (gcThread_.joinable()) { gcThread_.join(); }
     if (config_.gcEnabled) { RecordLifecycleEvent("StopGCThread"); }
 }
 
-void DramPoolServer::UnregisterBufferMemory() { RecordLifecycleEvent("UnregisterBufferMemory"); }
+void DramPoolServer::UnregisterBufferMemory()
+{
+    bufferManager_.reset();
+    RecordLifecycleEvent("UnregisterBufferMemory");
+}
 
-void DramPoolServer::DestroyMetadataIndex() { RecordLifecycleEvent("DestroyMetadataIndex"); }
+void DramPoolServer::DestroyMetadataIndex()
+{
+    metadataIndex_.reset();
+    RecordLifecycleEvent("DestroyMetadataIndex");
+}
 
 void DramPoolServer::ReceiverLoop()
 {
     UC_INFO_UNLIMITED("DramPool Receiver started, listen_addr={}", config_.listenAddr);
-    while (!receiverStop_.load(std::memory_order_acquire)) { std::this_thread::sleep_for(kIdleSleep); }
+    std::unique_lock<std::mutex> waitLock(stopWaitMutex_);
+    stopWaitCv_.wait(waitLock, [this]() { return receiverStop_.load(std::memory_order_acquire); });
     UC_INFO_UNLIMITED("DramPool Receiver stopped");
 }
 
@@ -288,9 +369,7 @@ void DramPoolServer::TaskWorkerLoop()
 void DramPoolServer::CompletionPollerLoop()
 {
     UC_INFO_UNLIMITED("DramPool CompletionPoller started");
-    while (!completionPollerStop_.load(std::memory_order_acquire)) {
-        std::this_thread::sleep_for(kIdleSleep);
-    }
+    completionPoller_->Run(completionPollerStop_);
     UC_INFO_UNLIMITED("DramPool CompletionPoller stopped");
 }
 
@@ -298,7 +377,11 @@ void DramPoolServer::GCThreadLoop()
 {
     UC_INFO_UNLIMITED("DramPool GCThread started, interval_ms={}", config_.gcIntervalMs);
     const auto interval = std::chrono::milliseconds(config_.gcIntervalMs);
-    while (!gcThreadStop_.load(std::memory_order_acquire)) { std::this_thread::sleep_for(interval); }
+    std::unique_lock<std::mutex> waitLock(stopWaitMutex_);
+    while (!gcThreadStop_.load(std::memory_order_acquire)) {
+        stopWaitCv_.wait_for(waitLock, interval,
+                             [this]() { return gcThreadStop_.load(std::memory_order_acquire); });
+    }
     UC_INFO_UNLIMITED("DramPool GCThread stopped");
 }
 
@@ -306,6 +389,17 @@ void DramPoolServer::RecordLifecycleEvent(const std::string& event)
 {
     std::lock_guard<std::mutex> guard(lifecycleMutex_);
     lifecycleEvents_.push_back(event);
+}
+
+void DramPoolServer::ResetInitializedComponents()
+{
+    completionPoller_.reset();
+    taskWorker_.reset();
+    responseWriter_.reset();
+    protocolManager_.reset();
+    metadataIndex_.reset();
+    bufferManager_.reset();
+    transportManager_.reset();
 }
 
 }  // namespace UC::DRAMPOOL

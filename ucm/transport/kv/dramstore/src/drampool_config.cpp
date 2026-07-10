@@ -22,7 +22,6 @@
  * SOFTWARE.
  * */
 #include "drampool_config.h"
-
 #include <algorithm>
 #include <cctype>
 #include <fstream>
@@ -100,7 +99,8 @@ std::vector<std::uint32_t> ParseUint32List(const std::string& value)
     return result;
 }
 
-UC::Status ApplyConfigValue(DramPoolConfig& config, const std::string& key, const std::string& value)
+UC::Status ApplyConfigValue(DramPoolConfig& config, const std::string& key,
+                            const std::string& value)
 {
     try {
         if (key == "server.id") {
@@ -127,6 +127,8 @@ UC::Status ApplyConfigValue(DramPoolConfig& config, const std::string& key, cons
             config.pollerScanBudget = ParseUint32(value);
         } else if (key == "poller.max_pending") {
             config.pollerMaxPending = ParseUint32(value);
+        } else if (key == "poller.idle_wait_us") {
+            config.pollerIdleWaitUs = ParseUint32(value);
         } else if (key == "gc.enabled") {
             config.gcEnabled = ParseBool(value);
         } else if (key == "gc.interval_ms") {
@@ -143,8 +145,8 @@ UC::Status ApplyConfigValue(DramPoolConfig& config, const std::string& key, cons
             config.extra[key] = value;
         }
     } catch (const std::exception& e) {
-        return UC::Status::InvalidParam("invalid config value, key={}, value={}, error={}", key, value,
-                                    e.what());
+        return UC::Status::InvalidParam("invalid config value, key={}, value={}, error={}", key,
+                                        value, e.what());
     }
     return UC::Status::OK();
 }
@@ -157,7 +159,9 @@ UC::Status RequirePositive(const char* name, std::uint64_t value)
 
 UC::Status RequireAtLeast(const char* name, std::uint64_t value, std::uint64_t minimum)
 {
-    if (value < minimum) { return UC::Status::InvalidParam("{} must be at least {}", name, minimum); }
+    if (value < minimum) {
+        return UC::Status::InvalidParam("{} must be at least {}", name, minimum);
+    }
     return UC::Status::OK();
 }
 
@@ -166,7 +170,8 @@ UC::Status RequireAtLeast(const char* name, std::uint64_t value, std::uint64_t m
 std::string BuildUsage(const char* program)
 {
     std::string name = program == nullptr ? "drampool" : program;
-    return "Usage: " + name + " --config <path>\n"
+    return "Usage: " + name +
+           " --config <path>\n"
            "Options:\n"
            "  -c, --config <path>  Path to DramPool key=value config file.\n"
            "  -h, --help           Show this help message.\n";
@@ -219,7 +224,9 @@ UC::Expected<DramPoolConfig> LoadDramPoolConfig(const std::string& configPath)
 
         const auto key = Trim(line.substr(0, pos));
         const auto value = Trim(line.substr(pos + 1));
-        if (key.empty()) { return UC::Status::InvalidParam("invalid config line {}, empty key", lineNo); }
+        if (key.empty()) {
+            return UC::Status::InvalidParam("invalid config line {}, empty key", lineNo);
+        }
 
         auto status = ApplyConfigValue(config, key, value);
         if (status.Failure()) { return status; }
@@ -233,7 +240,9 @@ UC::Expected<DramPoolConfig> LoadDramPoolConfig(const std::string& configPath)
 UC::Status ValidateDramPoolConfig(const DramPoolConfig& config)
 {
     if (Trim(config.serverId).empty()) { return UC::Status::InvalidParam("server.id is required"); }
-    if (Trim(config.listenAddr).empty()) { return UC::Status::InvalidParam("listen.addr is required"); }
+    if (Trim(config.listenAddr).empty()) {
+        return UC::Status::InvalidParam("listen.addr is required");
+    }
 
     const auto transportMode = ToLower(config.transportMode);
     if (transportMode != "tcp" && transportMode != "rdma" && transportMode != "hixl") {
@@ -273,6 +282,8 @@ UC::Status ValidateDramPoolConfig(const DramPoolConfig& config)
     if (status.Failure()) { return status; }
     status = RequirePositive("poller.max_pending", config.pollerMaxPending);
     if (status.Failure()) { return status; }
+    status = RequirePositive("poller.idle_wait_us", config.pollerIdleWaitUs);
+    if (status.Failure()) { return status; }
     if (config.pollerMaxPending < config.pollerDrainBudget ||
         config.pollerMaxPending < config.pollerScanBudget) {
         return UC::Status::InvalidParam(
@@ -288,8 +299,8 @@ UC::Status ValidateDramPoolConfig(const DramPoolConfig& config)
     }
 
     const auto logLevel = ToLower(config.logLevel);
-    if (logLevel != "debug" && logLevel != "info" && logLevel != "warn" &&
-        logLevel != "error" && logLevel != "critical") {
+    if (logLevel != "debug" && logLevel != "info" && logLevel != "warn" && logLevel != "error" &&
+        logLevel != "critical") {
         return UC::Status::InvalidParam("unsupported log.level: {}", config.logLevel);
     }
     if (Trim(config.logDir).empty()) { return UC::Status::InvalidParam("log.dir is required"); }

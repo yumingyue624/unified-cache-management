@@ -31,6 +31,11 @@
 
 namespace UC::DRAMPOOL {
 
+inline constexpr std::uint32_t kDefaultPollerDrainBudget = 64;
+inline constexpr std::uint32_t kDefaultPollerScanBudget = 64;
+inline constexpr std::uint32_t kDefaultPollerMaxPending = 1024 * 1024;
+inline constexpr std::uint32_t kDefaultPollerIdleWaitUs = 100;
+
 struct CommandLineOptions {
     std::string configPath;
     bool showHelp{false};
@@ -52,9 +57,10 @@ struct DramPoolConfig {
     std::uint32_t requestQueueDepth{65536};
     std::uint32_t handleQueueDepth{65536};
 
-    std::uint32_t pollerDrainBudget{64};
-    std::uint32_t pollerScanBudget{64};
-    std::uint32_t pollerMaxPending{1048576};
+    std::uint32_t pollerDrainBudget{kDefaultPollerDrainBudget};
+    std::uint32_t pollerScanBudget{kDefaultPollerScanBudget};
+    std::uint32_t pollerMaxPending{kDefaultPollerMaxPending};
+    std::uint32_t pollerIdleWaitUs{kDefaultPollerIdleWaitUs};
 
     bool gcEnabled{true};
     std::uint32_t gcIntervalMs{1000};
