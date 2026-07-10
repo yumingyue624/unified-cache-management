@@ -132,8 +132,9 @@ class BufferManager {
 public:
     virtual ~BufferManager() = default;
 
+    virtual std::uint32_t SlotSize() const = 0;
     virtual UC::Expected<BufferSlot> Allocate(std::uint32_t len) = 0;
-    virtual UC::Status Free(BufferHandle handle) = 0;
+    virtual void Free(BufferHandle handle) = 0;
 };
 
 class TransportManager {
@@ -145,14 +146,6 @@ public:
     // Cancel only requests termination; QueryStatus still owns terminal detection.
     virtual UC::Status Cancel(TransportHandle handle) = 0;
     virtual UC::Status ReleaseHandle(TransportHandle handle) = 0;
-};
-
-class ResponseWriter {
-public:
-    virtual ~ResponseWriter() = default;
-
-    virtual UC::Status WriteResponse(KvOpcode opcode, std::uint64_t resp_addr,
-                                     const std::vector<std::uint32_t>& results) = 0;
 };
 
 class FakeMetadataIndex final : public MetadataIndex {
@@ -255,6 +248,10 @@ private:
 
 class FakeBufferManager final : public BufferManager {
 public:
+    explicit FakeBufferManager(std::uint32_t slotSize) : slotSize_(slotSize) {}
+
+    std::uint32_t SlotSize() const override { return slotSize_; }
+
     UC::Expected<BufferSlot> Allocate(std::uint32_t len) override
     {
         if (len == 0) { return UC::Status::InvalidParam("buffer length must be positive"); }
@@ -286,6 +283,7 @@ public:
     }
 
 private:
+    std::uint32_t slotSize_{0};
     mutable std::mutex mutex_;
     std::uint64_t nextId_{1};
     std::unordered_map<std::uint64_t, std::unique_ptr<std::uint8_t[]>> allocations_;
@@ -359,40 +357,43 @@ private:
     std::unordered_map<std::uint64_t, std::size_t> queryCounts_;
 };
 
-class FakeResponseWriter final : public ResponseWriter {
-public:
-    UC::Status WriteResponse(KvOpcode opcode, std::uint64_t respAddr,
-                             const std::vector<std::uint32_t>& results) override
-    {
-        if (opcode == KvOpcode::None || respAddr == 0 || results.empty()) {
-            return UC::Status::InvalidParam("invalid response");
+inline UC::Status WriteResponse(KvOpcode opcode, std::uint64_t resp_addr,
+                                const std::vector<std::uint32_t>& results)
+{
+    auto len = results.size() * sizeof(std::uint32_t);
+    std::vector<std::uint8_t> respbuf(len);
+    auto status = g_services.protocol_mgr->PackResponse(respbuf.data(), opcode, KvResponse{results});
+    if (status.Failure()) return status;
+
+    TransportOp op;
+    op.opcode = opcode;
+    op.direction = TransportDirection::WriteLocalToRemote;
+    op.segments.push_back({reinterpret_cast<std::uint64_t>(respbuf.data()), resp_addr, len});
+    auto submitted = g_services.transport->SubmitAsync(op);
+    return submitted.HasValue() ? UC::Status::OK() : submitted.Error();
+}
+
+inline UC::Expected<BufferSlot> AllocateBuffer(std::uint32_t len)
+{
+    for (std::size_t i = 0; i < g_services.buffer_managers.size(); ++i) {
+        if (g_services.buffer_managers[i]->SlotSize() >= len) {
+            auto result = g_services.buffer_managers[i]->Allocate(len);
+            if (result.HasValue()) {
+                result.Value().class_id = static_cast<std::uint32_t>(i);
+                result.Value().handle.class_id = static_cast<std::uint32_t>(i);
+            }
+            return result;
         }
-        std::lock_guard<std::mutex> guard(mutex_);
-        lastOpcode_ = opcode;
-        lastResponseAddr_ = respAddr;
-        lastResults_ = results;
-        ++responseCount_;
-        return UC::Status::OK();
     }
+    return UC::Status::Error("no buffer pool fits len=" + std::to_string(len));
+}
 
-    std::size_t ResponseCount() const
-    {
-        std::lock_guard<std::mutex> guard(mutex_);
-        return responseCount_;
+inline UC::Status FreeBuffer(const BufferHandle& handle)
+{
+    if (handle.class_id < g_services.buffer_managers.size()) {
+        return g_services.buffer_managers[handle.class_id]->Free(handle);
     }
-
-    std::vector<std::uint32_t> LastResults() const
-    {
-        std::lock_guard<std::mutex> guard(mutex_);
-        return lastResults_;
-    }
-
-private:
-    mutable std::mutex mutex_;
-    KvOpcode lastOpcode_{KvOpcode::None};
-    std::uint64_t lastResponseAddr_{0};
-    std::vector<std::uint32_t> lastResults_;
-    std::size_t responseCount_{0};
-};
+    return UC::Status::NotFound();
+}
 
 }  // namespace UC::DRAMPOOL

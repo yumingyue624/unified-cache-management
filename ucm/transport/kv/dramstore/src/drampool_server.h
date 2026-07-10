@@ -113,10 +113,9 @@ private:
     RequestQueue requestQueue_;
     TransHandleQueue transHandleQueue_;
     std::unique_ptr<TransportManager> transportManager_;
-    std::unique_ptr<BufferManager> bufferManager_;
+    std::vector<std::unique_ptr<BufferManager>> bufferManagers_;
     std::unique_ptr<MetadataIndex> metadataIndex_;
     std::unique_ptr<ProtocolManager> protocolManager_;
-    std::unique_ptr<ResponseWriter> responseWriter_;
     std::unique_ptr<TaskWorker> taskWorker_;
     std::unique_ptr<CompletionPoller> completionPoller_;
 

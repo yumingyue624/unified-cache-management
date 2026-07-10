@@ -14,19 +14,9 @@
 
 namespace UC::DRAMPOOL {
 
-struct CompletionPollerOptions {
-    std::size_t drain_budget{0};
-    std::size_t scan_budget{0};
-    std::size_t max_pending{0};
-    std::uint64_t operation_timeout_ms{0};
-    std::uint32_t idle_wait_us{0};
-};
-
 class CompletionPoller final {
 public:
-    CompletionPoller(TransHandleQueue& ingress, MetadataIndex& metadata,
-                     BufferManager& bufferManager, TransportManager& transport,
-                     ResponseWriter& responseWriter, CompletionPollerOptions options);
+    CompletionPoller() = default;
 
     void Run(const std::atomic_bool& stop) noexcept;
     void RequestCancelAll() noexcept;
@@ -42,13 +32,6 @@ private:
     void ApplyTerminal(InflightRecord& record, TransportStatus terminalStatus);
     bool TryReleaseHandle(InflightRecord& record);
     bool OperationTimedOut(const InflightRecord& record, std::uint64_t nowMs) const;
-
-    TransHandleQueue& ingress_;
-    MetadataIndex& metadata_;
-    BufferManager& bufferManager_;
-    TransportManager& transport_;
-    ResponseWriter& responseWriter_;
-    CompletionPollerOptions options_;
 
     std::deque<InflightRecord> pending_;
     std::atomic_bool cancelAllRequested_{false};

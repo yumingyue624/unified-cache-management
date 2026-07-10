@@ -24,6 +24,8 @@
 #include <cstring>
 #include <thread>
 #include <utility>
+#include "drampool_config.h"
+#include "drampool_fake_deps.h"
 #include "logger.h"
 
 namespace UC::DRAMPOOL {
@@ -41,20 +43,6 @@ std::uint64_t NowMs()
 std::uint64_t ExpireAtMs(std::uint64_t now_ms, std::uint64_t ttl_ms)
 { return ttl_ms == 0 ? 0 : now_ms + ttl_ms; }
 
-KvOpcode RequestOpcode(const KvRequest& request)
-{
-    if (const auto* dump = dynamic_cast<const KvDumpRequest*>(&request); dump != nullptr) {
-        return dump->opcode;
-    }
-    if (const auto* load = dynamic_cast<const KvLoadRequest*>(&request); load != nullptr) {
-        return load->opcode;
-    }
-    if (const auto* lookup = dynamic_cast<const KvLookupRequest*>(&request); lookup != nullptr) {
-        return lookup->opcode;
-    }
-    return KvOpcode::None;
-}
-
 template <typename WireKey>
 BlockId CopyBlockId(const WireKey& wireKey)
 {
@@ -64,80 +52,40 @@ BlockId CopyBlockId(const WireKey& wireKey)
     return key;
 }
 
-std::uint32_t LoadFailureCode(LoadPinCode /*code*/) { return ToResultValue(ResultCode::Failed); }
+std::uint32_t LoadFailureCode(LoadPinCode /*code*/) { return static_cast<std::uint32_t>(ResultCode::Failed); }
 
 }  // namespace
 
-UC::Status TaskWorker::ValidateDependencies() const
-{
-    if (deps_.request_queue == nullptr || deps_.trans_handle_queue == nullptr ||
-        deps_.metadata == nullptr || deps_.buffer_manager == nullptr ||
-        deps_.transport == nullptr || deps_.response_writer == nullptr ||
-        deps_.default_dump_ttl_ms == 0) {
-        return UC::Status::InvalidParam("TaskWorker dependencies are incomplete");
-    }
-    return UC::Status::OK();
-}
-
 void TaskWorker::Run(const std::atomic_bool& stop)
 {
-    const auto validation = ValidateDependencies();
-    if (validation.Failure()) {
-        UC_ERROR_UNLIMITED("TaskWorker cannot start: {}", validation);
-        return;
-    }
-    // On stop, finish requests already accepted before the receiver was closed.
-    while (true) {
-        RequestPtr request;
-        if (deps_.request_queue->TryPop(request)) {
-            const auto status = ProcessOneRequest(std::move(request));
-            if (status.Failure()) { UC_ERROR("TaskWorker ProcessOneRequest failed: {}", status); }
-            continue;
-        }
-        if (stop.load(std::memory_order_acquire)) { break; }
-        std::this_thread::sleep_for(kTaskWorkerIdleWait);
-    }
+    g_services.request_queue->ConsumerLoop(stop, [this](RequestPtr request) {
+        const auto status = ProcessOneRequest(std::move(request));
+        if (status.Failure()) { UC_ERROR("TaskWorker ProcessOneRequest failed: {}", status); }
+    });
 }
 
 UC::Status TaskWorker::ProcessOneRequest(RequestPtr request)
 {
-    if (!request) { return UC::Status::InvalidParam("TaskWorker got null request"); }
-
-    switch (RequestOpcode(*request)) {
-        case KvOpcode::Dump: {
-            const auto* dump = dynamic_cast<const KvDumpRequest*>(request.get());
-            if (dump == nullptr) { return UC::Status::InvalidParam("Dump request type mismatch"); }
-            return ProcessDump(*dump);
-        }
-        case KvOpcode::Load: {
-            const auto* load = dynamic_cast<const KvLoadRequest*>(request.get());
-            if (load == nullptr) { return UC::Status::InvalidParam("Load request type mismatch"); }
-            return ProcessLoad(*load);
-        }
-        case KvOpcode::Lookup: {
-            const auto* lookup = dynamic_cast<const KvLookupRequest*>(request.get());
-            if (lookup == nullptr) {
-                return UC::Status::InvalidParam("Lookup request type mismatch");
-            }
-            return ProcessLookup(*lookup);
-        }
+    switch (request->opcode) {
+        case KvOpcode::Dump:
+            return ProcessDump(*dynamic_cast<const KvDumpRequest*>(request.get()));
+        case KvOpcode::Load:
+            return ProcessLoad(*dynamic_cast<const KvLoadRequest*>(request.get()));
+        case KvOpcode::Lookup:
+            return ProcessLookup(*dynamic_cast<const KvLookupRequest*>(request.get()));
         case KvOpcode::None:
-            return UC::Status::InvalidParam("TaskWorker got request with none opcode");
+            break;
     }
-    return UC::Status::InvalidParam("TaskWorker got request with unknown opcode");
+    return UC::Status::InvalidParam("TaskWorker got invalid opcode");
 }
 
 UC::Status TaskWorker::ProcessDump(const KvDumpRequest& request)
 {
-    if (request.batch_size != request.entries.size()) {
-        return UC::Status::InvalidParam("Dump request batch size mismatch");
-    }
-
     const auto now_ms = NowMs();
     const std::uint64_t ttl_ms =
-        request.ttl != 0 ? static_cast<std::uint64_t>(request.ttl) : deps_.default_dump_ttl_ms;
+        request.ttl != 0 ? static_cast<std::uint64_t>(request.ttl) : g_drampool_config.defaultDumpTtlMs;
     const auto expire_at_ms = ExpireAtMs(now_ms, ttl_ms);
-    std::vector<std::uint32_t> results(request.batch_size, ToResultValue(ResultCode::Failed));
+    std::vector<std::uint32_t> results(request.batch_size, static_cast<std::uint32_t>(ResultCode::Ok));
     std::vector<TransferItem> transfer_items;
     std::vector<TransportSegment> segments;
     transfer_items.reserve(request.entries.size());
@@ -147,7 +95,7 @@ UC::Status TaskWorker::ProcessDump(const KvDumpRequest& request)
         const auto& entry = request.entries[index];
         const BlockId key = CopyBlockId(entry.key);
 
-        auto allocated = deps_.buffer_manager->Allocate(entry.len);
+        auto allocated = AllocateBuffer(entry.len);
         if (!allocated.HasValue()) {
             UC_ERROR("Dump[{}] Allocate failed, len={}", index, entry.len);
             break;
@@ -163,17 +111,17 @@ UC::Status TaskWorker::ProcessDump(const KvDumpRequest& request)
         options.expire_at_ms = expire_at_ms;
         options.class_id = slot.class_id;
 
-        const auto reserve = deps_.metadata->ReserveDumpEntry(options);
+        const auto reserve = g_services.metadata->ReserveDumpEntry(options);
         if (reserve.code == ReserveDumpCode::Exists) {
-            const auto freeStatus = deps_.buffer_manager->Free(slot.handle);
+            const auto freeStatus = FreeBuffer(slot.handle);
             if (freeStatus.Failure()) {
                 UC_ERROR("Dump[{}] Free duplicate allocation failed: {}", index, freeStatus);
             }
-            results[index] = ToResultValue(ResultCode::Ok);
+            results[index] = static_cast<std::uint32_t>(ResultCode::Ok);
             continue;
         }
         if (reserve.code != ReserveDumpCode::Reserved) {
-            const auto freeStatus = deps_.buffer_manager->Free(slot.handle);
+            const auto freeStatus = FreeBuffer(slot.handle);
             if (freeStatus.Failure()) {
                 UC_ERROR("Dump[{}] Free failed reservation failed: {}", index, freeStatus);
             }
@@ -199,7 +147,7 @@ UC::Status TaskWorker::ProcessDump(const KvDumpRequest& request)
     }
 
     if (transfer_items.empty()) {
-        return deps_.response_writer->WriteResponse(KvOpcode::Dump, request.resp_addr, results);
+        return WriteResponse(KvOpcode::Dump, request.resp_addr, results);
     }
 
     auto requestContext = std::make_shared<RequestContext>(KvOpcode::Dump, request.resp_addr,
@@ -214,14 +162,14 @@ UC::Status TaskWorker::ProcessDump(const KvDumpRequest& request)
     op.direction = TransportDirection::ReadRemoteToLocal;
     op.segments = std::move(segments);
 
-    auto submitted = deps_.transport->SubmitAsync(op);
+    auto submitted = g_services.transport->SubmitAsync(op);
     if (!submitted.HasValue()) {
         UC_ERROR("Dump SubmitAsync failed, items={}", transfer_items.size());
         RollbackDumpItems(transfer_items);
         for (const auto& item : transfer_items) {
-            results[item.request_index] = ToResultValue(ResultCode::Failed);
+            results[item.request_index] = static_cast<std::uint32_t>(ResultCode::Failed);
         }
-        return deps_.response_writer->WriteResponse(KvOpcode::Dump, request.resp_addr, results);
+        return WriteResponse(KvOpcode::Dump, request.resp_addr, results);
     }
 
     InflightRecord record;
@@ -235,12 +183,8 @@ UC::Status TaskWorker::ProcessDump(const KvDumpRequest& request)
 
 UC::Status TaskWorker::ProcessLoad(const KvLoadRequest& request)
 {
-    if (request.batch_size != request.entries.size()) {
-        return UC::Status::InvalidParam("Load request batch size mismatch");
-    }
-
     const auto now_ms = NowMs();
-    std::vector<std::uint32_t> results(request.batch_size, ToResultValue(ResultCode::Failed));
+    std::vector<std::uint32_t> results(request.batch_size, static_cast<std::uint32_t>(ResultCode::Failed));
     std::vector<TransferItem> transfer_items;
     std::vector<TransportSegment> segments;
     transfer_items.reserve(request.entries.size());
@@ -249,7 +193,7 @@ UC::Status TaskWorker::ProcessLoad(const KvLoadRequest& request)
     for (std::uint16_t index = 0; index < request.batch_size; ++index) {
         const auto& entry = request.entries[index];
         const BlockId key = CopyBlockId(entry.key);
-        auto pin = deps_.metadata->LookupAndPinLoad(key, now_ms);
+        auto pin = g_services.metadata->LookupAndPinLoad(key, now_ms);
         if (pin.code != LoadPinCode::Pinned) {
             results[index] = LoadFailureCode(pin.code);
             UC_ERROR("Load[{}] LookupAndPinLoad failed, code={}", index,
@@ -257,7 +201,7 @@ UC::Status TaskWorker::ProcessLoad(const KvLoadRequest& request)
             continue;
         }
         if (entry.len > pin.len) {
-            const auto releaseStatus = deps_.metadata->ReleaseLoadIo(key);
+            const auto releaseStatus = g_services.metadata->ReleaseLoadIo(key);
             if (releaseStatus.Failure()) {
                 UC_ERROR("Load[{}] ReleaseLoadIo after len mismatch failed: {}", index,
                          releaseStatus);
@@ -283,7 +227,7 @@ UC::Status TaskWorker::ProcessLoad(const KvLoadRequest& request)
     }
 
     if (transfer_items.empty()) {
-        return deps_.response_writer->WriteResponse(KvOpcode::Load, request.resp_addr, results);
+        return WriteResponse(KvOpcode::Load, request.resp_addr, results);
     }
 
     auto requestContext = std::make_shared<RequestContext>(KvOpcode::Load, request.resp_addr,
@@ -298,14 +242,14 @@ UC::Status TaskWorker::ProcessLoad(const KvLoadRequest& request)
     op.direction = TransportDirection::WriteLocalToRemote;
     op.segments = std::move(segments);
 
-    auto submitted = deps_.transport->SubmitAsync(op);
+    auto submitted = g_services.transport->SubmitAsync(op);
     if (!submitted.HasValue()) {
         UC_ERROR("Load SubmitAsync failed, items={}", transfer_items.size());
         UnpinLoadItems(transfer_items);
         for (const auto& item : transfer_items) {
-            results[item.request_index] = ToResultValue(ResultCode::Failed);
+            results[item.request_index] = static_cast<std::uint32_t>(ResultCode::Failed);
         }
-        return deps_.response_writer->WriteResponse(KvOpcode::Load, request.resp_addr, results);
+        return WriteResponse(KvOpcode::Load, request.resp_addr, results);
     }
 
     InflightRecord record;
@@ -319,15 +263,11 @@ UC::Status TaskWorker::ProcessLoad(const KvLoadRequest& request)
 
 UC::Status TaskWorker::ProcessLookup(const KvLookupRequest& request)
 {
-    if (request.batch_size != request.entries.size()) {
-        return UC::Status::InvalidParam("Lookup request batch size mismatch");
-    }
-
     const auto now_ms = NowMs();
     std::uint32_t prefix_count = 0;
     for (std::uint16_t index = 0; index < request.batch_size; ++index) {
         const BlockId key = CopyBlockId(request.entries[index].key);
-        const auto code = deps_.metadata->LookupReady(key, now_ms);
+        const auto code = g_services.metadata->LookupReady(key, now_ms);
         if (code == LookupCode::Ready) {
             ++prefix_count;
             continue;
@@ -335,7 +275,7 @@ UC::Status TaskWorker::ProcessLookup(const KvLookupRequest& request)
         break;
     }
 
-    return deps_.response_writer->WriteResponse(KvOpcode::Lookup, request.resp_addr,
+    return WriteResponse(KvOpcode::Lookup, request.resp_addr,
                                                 {prefix_count});
 }
 
@@ -343,12 +283,12 @@ void TaskWorker::RollbackDumpItems(const std::vector<TransferItem>& items)
 {
     for (const auto& item : items) {
         // Remove metadata first so no index can retain a freed buffer address.
-        const auto abortStatus = deps_.metadata->AbortDump(item.key);
+        const auto abortStatus = g_services.metadata->AbortDump(item.key);
         if (abortStatus.Failure()) {
             UC_ERROR("RollbackDumpItems AbortDump failed: {}", abortStatus);
             continue;
         }
-        const auto freeStatus = deps_.buffer_manager->Free(item.buffer_handle);
+        const auto freeStatus = FreeBuffer(item.buffer_handle);
         if (freeStatus.Failure()) { UC_ERROR("RollbackDumpItems Free failed: {}", freeStatus); }
     }
 }
@@ -356,7 +296,7 @@ void TaskWorker::RollbackDumpItems(const std::vector<TransferItem>& items)
 void TaskWorker::UnpinLoadItems(const std::vector<TransferItem>& items)
 {
     for (const auto& item : items) {
-        const auto status = deps_.metadata->ReleaseLoadIo(item.key);
+        const auto status = g_services.metadata->ReleaseLoadIo(item.key);
         if (status.Failure()) { UC_ERROR("UnpinLoadItems ReleaseLoadIo failed: {}", status); }
     }
 }
@@ -364,7 +304,7 @@ void TaskWorker::UnpinLoadItems(const std::vector<TransferItem>& items)
 UC::Status TaskWorker::SubmitInflight(InflightRecord&& record)
 {
     // TaskWorker is the sole producer; CompletionPoller is the sole consumer.
-    deps_.trans_handle_queue->Push(std::move(record));
+    g_services.trans_handle_queue->Push(std::move(record));
     return UC::Status::OK();
 }
 

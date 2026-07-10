@@ -49,9 +49,6 @@ enum class ResultCode : std::uint32_t {
     Failed = 1,
 };
 
-inline constexpr std::uint32_t ToResultValue(ResultCode code) noexcept
-{ return static_cast<std::uint32_t>(code); }
-
 struct FinalResponse {
     KvOpcode opcode{KvOpcode::None};
     std::uint64_t response_addr{0};
@@ -92,7 +89,7 @@ public:
         if (completed_[requestIndex]) { return UC::Status::DuplicateKey(); }
 
         completed_[requestIndex] = true;
-        results_[requestIndex] = ToResultValue(result);
+        results_[requestIndex] = static_cast<std::uint32_t>(result);
         --remaining_;
 
         if (remaining_ == 0 && !responseClaimed_) {
@@ -130,5 +127,20 @@ struct InflightRecord {
 };
 
 using TransHandleQueue = UC::SpscRingQueue<InflightRecord>;
+
+class MetadataIndex;
+class BufferManager;
+class TransportManager;
+
+struct DramPoolServices {
+    MetadataIndex*     metadata{nullptr};
+    std::vector<BufferManager*> buffer_managers{};
+    TransportManager*  transport{nullptr};
+    ProtocolManager*   protocol_mgr{nullptr};
+    RequestQueue*       request_queue{nullptr};
+    TransHandleQueue*   trans_handle_queue{nullptr};
+};
+
+inline DramPoolServices g_services{};
 
 }  // namespace UC::DRAMPOOL

@@ -98,11 +98,11 @@ public:
 class KvRequest {
 public:
     virtual ~KvRequest() = default;
+    KvOpcode opcode{KvOpcode::None};
 };
 
 class KvDumpRequest : public KvRequest {
 public:
-    KvOpcode opcode{KvOpcode::None};
     std::uint64_t resp_addr{0};
     std::uint16_t batch_size{0};
     std::uint32_t ttl{0};
@@ -111,7 +111,6 @@ public:
 
 class KvLoadRequest : public KvRequest {
 public:
-    KvOpcode opcode{KvOpcode::None};
     std::uint64_t resp_addr{0};
     std::uint16_t batch_size{0};
     std::vector<KvLoadEntry> entries;
@@ -119,7 +118,6 @@ public:
 
 class KvLookupRequest : public KvRequest {
 public:
-    KvOpcode opcode{KvOpcode::None};
     std::uint64_t resp_addr{0};
     std::uint16_t batch_size{0};
     std::vector<KvLookupEntry> entries;

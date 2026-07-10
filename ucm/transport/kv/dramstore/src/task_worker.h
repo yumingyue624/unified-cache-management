@@ -24,28 +24,16 @@
 #include <atomic>
 #include <cstdint>
 #include <vector>
-#include "drampool_fake_deps.h"
 #include "drampool_types.h"
 #include "kv_protocol.h"
 #include "status/status.h"
 
 namespace UC::DRAMPOOL {
 
-struct TaskWorkerDeps {
-    RequestQueue* request_queue{nullptr};
-    TransHandleQueue* trans_handle_queue{nullptr};
-    MetadataIndex* metadata{nullptr};
-    BufferManager* buffer_manager{nullptr};
-    TransportManager* transport{nullptr};
-    ResponseWriter* response_writer{nullptr};
-    std::uint64_t default_dump_ttl_ms{0};
-};
-
 class TaskWorker final {
 public:
-    TaskWorker(TaskWorkerDeps deps) : deps_(deps) {}
+    TaskWorker() = default;
 
-    UC::Status ValidateDependencies() const;
     void Run(const std::atomic_bool& stop);
     UC::Status ProcessOneRequest(RequestPtr request);
 
@@ -57,8 +45,6 @@ private:
     void RollbackDumpItems(const std::vector<TransferItem>& items);
     void UnpinLoadItems(const std::vector<TransferItem>& items);
     UC::Status SubmitInflight(InflightRecord&& record);
-
-    TaskWorkerDeps deps_;
 };
 
 }  // namespace UC::DRAMPOOL

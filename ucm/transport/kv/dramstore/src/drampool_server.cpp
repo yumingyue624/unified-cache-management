@@ -88,6 +88,15 @@ UC::Status DramPoolServer::Init(const DramPoolConfig& config)
                                  error.what());
     }
 
+    g_services.request_queue = &requestQueue_;
+    g_services.trans_handle_queue = &transHandleQueue_;
+    g_services.metadata = metadataIndex_.get();
+    g_services.buffer_managers.clear();
+    for (auto& bm : bufferManagers_) {
+        g_services.buffer_managers.push_back(bm.get());
+    }
+    g_services.transport = transportManager_.get();
+
     state_ = ServerState::Initialized;
     return UC::Status::OK();
 }
@@ -176,14 +185,17 @@ UC::Status DramPoolServer::InstallDataTransport()
 
 UC::Status DramPoolServer::InitBufferMgr()
 {
-    bufferManager_ = std::make_unique<FakeBufferManager>();
+    for (const auto blockSize : config_.poolBlockSizes) {
+        bufferManagers_.push_back(std::make_unique<FakeBufferManager>(
+            static_cast<std::uint32_t>(blockSize)));
+    }
     RecordLifecycleEvent("InitBufferMgr");
     return UC::Status::OK();
 }
 
 UC::Status DramPoolServer::RegisterBufferMemory()
 {
-    if (!bufferManager_ || !transportManager_) {
+    if (bufferManagers_.empty() || !transportManager_) {
         return UC::Status::InvalidParam("buffer registration dependencies are not initialized");
     }
     RecordLifecycleEvent("RegisterBufferMemory");
@@ -200,7 +212,7 @@ UC::Status DramPoolServer::InitMetadataIndex()
 UC::Status DramPoolServer::InitProtocol()
 {
     protocolManager_ = std::make_unique<ProtocolManager>();
-    responseWriter_ = std::make_unique<FakeResponseWriter>();
+    g_services.protocol_mgr = protocolManager_.get();
     RecordLifecycleEvent("InitProtocol");
     return UC::Status::OK();
 }
@@ -215,20 +227,8 @@ UC::Status DramPoolServer::InitQueues()
 
 UC::Status DramPoolServer::StartCompletionPoller()
 {
-    if (!metadataIndex_ || !bufferManager_ || !transportManager_ || !responseWriter_) {
-        return UC::Status::InvalidParam("CompletionPoller dependencies are not initialized");
-    }
-
-    CompletionPollerOptions options;
-    options.drain_budget = config_.pollerDrainBudget;
-    options.scan_budget = config_.pollerScanBudget;
-    options.max_pending = config_.pollerMaxPending;
-    options.operation_timeout_ms = config_.opTimeoutMs;
-    options.idle_wait_us = config_.pollerIdleWaitUs;
     try {
-        completionPoller_ =
-            std::make_unique<CompletionPoller>(transHandleQueue_, *metadataIndex_, *bufferManager_,
-                                               *transportManager_, *responseWriter_, options);
+        completionPoller_ = std::make_unique<CompletionPoller>();
         completionPollerStop_.store(false, std::memory_order_release);
         completionPollerThread_ = std::thread(&DramPoolServer::CompletionPollerLoop, this);
         RecordLifecycleEvent("StartCompletionPoller");
@@ -241,22 +241,8 @@ UC::Status DramPoolServer::StartCompletionPoller()
 
 UC::Status DramPoolServer::StartTaskWorker()
 {
-    TaskWorkerDeps deps;
-    deps.request_queue = &requestQueue_;
-    deps.trans_handle_queue = &transHandleQueue_;
-    deps.metadata = metadataIndex_.get();
-    deps.buffer_manager = bufferManager_.get();
-    deps.transport = transportManager_.get();
-    deps.response_writer = responseWriter_.get();
-    deps.default_dump_ttl_ms = config_.defaultDumpTtlMs;
-    taskWorker_ = std::make_unique<TaskWorker>(deps);
-    const auto validation = taskWorker_->ValidateDependencies();
-    if (validation.Failure()) {
-        taskWorker_.reset();
-        return validation;
-    }
-
     try {
+        taskWorker_ = std::make_unique<TaskWorker>();
         taskWorkerStop_.store(false, std::memory_order_release);
         taskWorkerThread_ = std::thread(&DramPoolServer::TaskWorkerLoop, this);
         RecordLifecycleEvent("StartTaskWorker");
@@ -341,7 +327,7 @@ void DramPoolServer::StopGCThread()
 
 void DramPoolServer::UnregisterBufferMemory()
 {
-    bufferManager_.reset();
+    bufferManagers_.clear();
     RecordLifecycleEvent("UnregisterBufferMemory");
 }
 
@@ -395,11 +381,11 @@ void DramPoolServer::ResetInitializedComponents()
 {
     completionPoller_.reset();
     taskWorker_.reset();
-    responseWriter_.reset();
     protocolManager_.reset();
     metadataIndex_.reset();
-    bufferManager_.reset();
+    bufferManagers_.clear();
     transportManager_.reset();
+    g_services = {};
 }
 
 }  // namespace UC::DRAMPOOL

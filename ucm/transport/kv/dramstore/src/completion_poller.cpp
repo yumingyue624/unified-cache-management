@@ -11,6 +11,7 @@
 #include <stdexcept>
 #include <thread>
 #include <utility>
+#include "drampool_config.h"
 #include "logger.h"
 
 namespace UC::DRAMPOOL {
@@ -27,26 +28,6 @@ bool IsSuccessful(TransportStatus status) { return status == TransportStatus::Su
 
 }  // namespace
 
-CompletionPoller::CompletionPoller(TransHandleQueue& ingress, MetadataIndex& metadata,
-                                   BufferManager& bufferManager, TransportManager& transport,
-                                   ResponseWriter& responseWriter, CompletionPollerOptions options)
-    : ingress_(ingress),
-      metadata_(metadata),
-      bufferManager_(bufferManager),
-      transport_(transport),
-      responseWriter_(responseWriter),
-      options_(options)
-{
-    if (options_.drain_budget == 0 || options_.scan_budget == 0 || options_.max_pending == 0 ||
-        options_.operation_timeout_ms == 0 || options_.idle_wait_us == 0) {
-        throw std::invalid_argument("CompletionPoller options must be positive");
-    }
-    if (options_.max_pending < options_.drain_budget ||
-        options_.max_pending < options_.scan_budget) {
-        throw std::invalid_argument("CompletionPoller max_pending is smaller than a work budget");
-    }
-}
-
 void CompletionPoller::Run(const std::atomic_bool& stop) noexcept
 {
     try {
@@ -62,7 +43,7 @@ void CompletionPoller::Run(const std::atomic_bool& stop) noexcept
             if (stop.load(std::memory_order_acquire) && drained == 0 && pending_.empty()) { break; }
 
             if (drained == 0 && !stateChanged) {
-                std::this_thread::sleep_for(std::chrono::microseconds(options_.idle_wait_us));
+                std::this_thread::sleep_for(std::chrono::microseconds(g_drampool_config.pollerIdleWaitUs));
             }
         }
     } catch (const std::exception& error) {
@@ -81,9 +62,9 @@ void CompletionPoller::RequestCancelAll() noexcept
 std::size_t CompletionPoller::DrainNewHandles()
 {
     std::size_t drained = 0;
-    while (drained < options_.drain_budget && pending_.size() < options_.max_pending) {
+    while (drained < g_drampool_config.pollerDrainBudget && pending_.size() < g_drampool_config.pollerMaxPending) {
         InflightRecord record;
-        if (!ingress_.TryPop(record)) { break; }
+        if (!g_services.trans_handle_queue->TryPop(record)) { break; }
         pending_.emplace_back(std::move(record));
         ++drained;
     }
@@ -93,7 +74,7 @@ std::size_t CompletionPoller::DrainNewHandles()
 
 bool CompletionPoller::PollFirstBatch()
 {
-    const std::size_t scanCount = std::min(options_.scan_budget, pending_.size());
+    const std::size_t scanCount = std::min(g_drampool_config.pollerScanBudget, pending_.size());
     auto iter = pending_.begin();
     bool stateChanged = false;
 
@@ -109,7 +90,7 @@ bool CompletionPoller::PollFirstBatch()
             continue;
         }
 
-        auto queried = transport_.QueryStatus(iter->handle);
+        auto queried = g_services.transport->QueryStatus(iter->handle);
         if (!queried.HasValue()) {
             UC_ERROR("CompletionPoller QueryStatus failed, handle={}, error={}", iter->handle.value,
                      queried.Error());
@@ -153,7 +134,7 @@ bool CompletionPoller::PollFirstBatch()
 bool CompletionPoller::RequestCancel(InflightRecord& record)
 {
     // Cancel is asynchronous; keep the record until QueryStatus returns a terminal state.
-    const auto status = transport_.Cancel(record.handle);
+    const auto status = g_services.transport->Cancel(record.handle);
     if (status.Failure()) {
         UC_ERROR("CompletionPoller Cancel failed, handle={}, error={}", record.handle.value,
                  status);
@@ -171,7 +152,7 @@ void CompletionPoller::ApplyTerminal(InflightRecord& record, TransportStatus ter
         // Settle metadata and buffer ownership before completing the request item.
         if (record.opcode == KvOpcode::Dump) {
             if (IsSuccessful(terminalStatus)) {
-                const auto status = metadata_.PublishDump(item.key);
+                const auto status = g_services.metadata->PublishDump(item.key);
                 if (status.Success()) {
                     result = ResultCode::Ok;
                 } else {
@@ -179,9 +160,9 @@ void CompletionPoller::ApplyTerminal(InflightRecord& record, TransportStatus ter
                              record.handle.value, status);
                 }
             } else {
-                const auto abortStatus = metadata_.AbortDump(item.key);
+                const auto abortStatus = g_services.metadata->AbortDump(item.key);
                 if (abortStatus.Success()) {
-                    const auto freeStatus = bufferManager_.Free(item.buffer_handle);
+                    const auto freeStatus = FreeBuffer(item.buffer_handle);
                     if (freeStatus.Failure()) {
                         UC_ERROR(
                             "CompletionPoller Free failed after DUMP abort, handle={}, error={}",
@@ -193,7 +174,7 @@ void CompletionPoller::ApplyTerminal(InflightRecord& record, TransportStatus ter
                 }
             }
         } else if (record.opcode == KvOpcode::Load) {
-            const auto releaseStatus = metadata_.ReleaseLoadIo(item.key);
+            const auto releaseStatus = g_services.metadata->ReleaseLoadIo(item.key);
             if (releaseStatus.Failure()) {
                 UC_ERROR("CompletionPoller ReleaseLoadIo failed, handle={}, error={}",
                          record.handle.value, releaseStatus);
@@ -218,7 +199,7 @@ void CompletionPoller::ApplyTerminal(InflightRecord& record, TransportStatus ter
         }
         if (!finalResponse.has_value()) { continue; }
 
-        const auto responseStatus = responseWriter_.WriteResponse(
+        const auto responseStatus = WriteResponse(
             finalResponse->opcode, finalResponse->response_addr, finalResponse->results);
         if (responseStatus.Failure()) {
             UC_ERROR("CompletionPoller WriteResponse failed, handle={}, error={}",
@@ -229,7 +210,7 @@ void CompletionPoller::ApplyTerminal(InflightRecord& record, TransportStatus ter
 
 bool CompletionPoller::TryReleaseHandle(InflightRecord& record)
 {
-    const auto status = transport_.ReleaseHandle(record.handle);
+    const auto status = g_services.transport->ReleaseHandle(record.handle);
     if (status.Failure()) {
         UC_ERROR("CompletionPoller ReleaseHandle failed, handle={}, error={}", record.handle.value,
                  status);
@@ -241,7 +222,7 @@ bool CompletionPoller::TryReleaseHandle(InflightRecord& record)
 bool CompletionPoller::OperationTimedOut(const InflightRecord& record, std::uint64_t nowMs) const
 {
     if (nowMs < record.submit_ms) { return false; }
-    return nowMs - record.submit_ms >= options_.operation_timeout_ms;
+    return nowMs - record.submit_ms >= g_drampool_config.opTimeoutMs;
 }
 
 }  // namespace UC::DRAMPOOL
