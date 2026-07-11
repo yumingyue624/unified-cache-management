@@ -35,23 +35,22 @@ inline constexpr std::uint32_t kDefaultPollerDrainBudget = 64;
 inline constexpr std::uint32_t kDefaultPollerScanBudget = 64;
 inline constexpr std::uint32_t kDefaultPollerMaxPending = 1024 * 1024;
 inline constexpr std::uint32_t kDefaultPollerIdleWaitUs = 100;
-
-struct CommandLineOptions {
-    std::string configPath;
-    bool showHelp{false};
-};
+inline constexpr std::uint64_t kMillisecondsPerMinute = 60'000;
+inline constexpr std::uint64_t kDefaultTtlMinutes = 120;
+inline constexpr std::uint64_t kDefaultDumpTtlMs =
+    kDefaultTtlMinutes * kMillisecondsPerMinute;
 
 struct DramPoolConfig {
-    std::string listenAddr{"127.0.0.1:9000"};
+    std::string listenAddr;
     std::vector<std::string> nics{};
     std::uint64_t poolSizeGb{0};
-    std::vector<std::uint64_t> poolBlockSizes{4096};
-    std::vector<std::uint32_t> poolBlockProportions{100};
-    std::uint64_t defaultDumpTtlMs{7200000};
+    std::vector<std::uint64_t> poolBlockSizes{};
+    std::vector<std::uint32_t> poolBlockProportions{};
+    std::uint64_t defaultDumpTtlMs{kDefaultDumpTtlMs};
 
     std::string serverId{"drampool-0"};
     std::string transportMode{"hixl"};
-    std::string transportManagerAddr{"127.0.0.1:9100"};
+    std::string transportManagerAddr;
     std::string transportLocalEngine{"drampool-0"};
     std::int32_t transportDeviceId{0};
 
@@ -80,8 +79,7 @@ struct DramPoolConfig {
 inline DramPoolConfig g_drampool_config{};
 
 std::string BuildUsage(const char* program);
-UC::Status ParseCommandLine(int argc, char** argv, CommandLineOptions& options);
-UC::Expected<DramPoolConfig> LoadDramPoolConfig(const std::string& configPath);
+UC::Status ParseCommandLine(int argc, char** argv, DramPoolConfig& config);
 UC::Status ValidateDramPoolConfig(const DramPoolConfig& config);
 
 }  // namespace UC::DRAMPOOL

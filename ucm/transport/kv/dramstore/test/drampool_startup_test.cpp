@@ -1,8 +1,6 @@
 #include <algorithm>
 #include <chrono>
 #include <csignal>
-#include <cstdio>
-#include <fstream>
 #include <future>
 #include <gtest/gtest.h>
 #include <string>
@@ -20,13 +18,14 @@ DramPoolConfig MakeValidConfig()
     DramPoolConfig config;
     config.serverId = "drampool-test";
     config.listenAddr = "127.0.0.1:19000";
-    config.transportMode = "hixl";
-    config.transportManagerAddr = "127.0.0.1:19001";
-    config.transportLocalEngine = "drampool-test";
-    config.transportDeviceId = 0;
+    config.nics = {"mlx5_0", "mlx5_1"};
     config.poolSizeGb = 1;
     config.poolBlockSizes = {4096, 8192};
     config.poolBlockProportions = {70, 30};
+    config.transportMode = "hixl";
+    config.transportManagerAddr = config.listenAddr;
+    config.transportLocalEngine = "drampool-test";
+    config.transportDeviceId = 0;
     config.metadataShards = 4;
     config.requestQueueDepth = 128;
     config.handleQueueDepth = 128;
@@ -57,157 +56,99 @@ bool ContainsInOrder(const std::vector<std::string>& events,
 }
 #endif
 
-std::string WriteConfigFile(const std::string& name, const std::string& content)
-{
-    std::ofstream out{name};
-    out << content;
-    return name;
-}
-
-std::string ValidConfigText()
-{
-    return "server.id = drampool-0\n"
-           "listen.addr = 127.0.0.1:9000\n"
-           "transport.mode = hixl\n"
-           "transport.manager_addr = 127.0.0.1:19001\n"
-           "transport.local_engine = drampool-0\n"
-           "transport.device_id = 0\n"
-           "pool.size_gb = 1\n"
-           "pool.block_sizes = 4096,8192\n"
-           "pool.block_proportions = 70,30\n"
-           "metadata.shards = 8\n"
-           "queue.request_depth = 256\n"
-           "queue.handle_depth = 256\n"
-           "poller.drain_budget = 64\n"
-           "poller.scan_budget = 64\n"
-           "poller.max_pending = 1024\n"
-           "poller.idle_wait_us = 100\n"
-           "gc.enabled = true\n"
-           "gc.interval_ms = 1000\n"
-           "op.timeout_ms = 5000\n"
-           "shutdown.timeout_ms = 30000\n"
-           "log.level = INFO\n"
-           "log.dir = ./logs\n";
-}
-
 }  // namespace
 
-TEST(DramPoolConfigTest, ParsesLongShortAndEqualsConfigFlags)
+TEST(DramPoolConfigTest, ParsesLaunchOptions)
 {
-    {
-        const char* argv[] = {"drampool", "--config", "long.conf"};
-        CommandLineOptions options;
-        auto status = ParseCommandLine(3, const_cast<char**>(argv), options);
-        ASSERT_TRUE(status.Success()) << status.ToString();
-        EXPECT_EQ(options.configPath, "long.conf");
-        EXPECT_FALSE(options.showHelp);
-    }
-    {
-        const char* argv[] = {"drampool", "-c", "short.conf"};
-        CommandLineOptions options;
-        auto status = ParseCommandLine(3, const_cast<char**>(argv), options);
-        ASSERT_TRUE(status.Success()) << status.ToString();
-        EXPECT_EQ(options.configPath, "short.conf");
-    }
-    {
-        const char* argv[] = {"drampool", "--config=equals.conf"};
-        CommandLineOptions options;
-        auto status = ParseCommandLine(2, const_cast<char**>(argv), options);
-        ASSERT_TRUE(status.Success()) << status.ToString();
-        EXPECT_EQ(options.configPath, "equals.conf");
-    }
+    const char* argv[] = {
+        "drampool",
+        "--addr",
+        "127.0.0.1:9000",
+        "--nics",
+        "mlx5_0",
+        "mlx5_1",
+        "--pool-size-gb",
+        "128",
+        "--kvcache-block-sizes",
+        "4096",
+        "8192",
+        "--kvcache-block-proportions",
+        "1",
+        "3",
+        "--ttl-minutes=30",
+    };
+    DramPoolConfig config;
+
+    const auto status = ParseCommandLine(15, const_cast<char**>(argv), config);
+
+    ASSERT_TRUE(status.Success()) << status.ToString();
+    EXPECT_EQ(config.listenAddr, "127.0.0.1:9000");
+    EXPECT_EQ(config.transportManagerAddr, config.listenAddr);
+    EXPECT_EQ(config.nics, (std::vector<std::string>{"mlx5_0", "mlx5_1"}));
+    EXPECT_EQ(config.poolSizeGb, 128U);
+    EXPECT_EQ(config.poolBlockSizes, (std::vector<std::uint64_t>{4096, 8192}));
+    EXPECT_EQ(config.poolBlockProportions, (std::vector<std::uint32_t>{1, 3}));
+    EXPECT_EQ(config.defaultDumpTtlMs, 30U * kMillisecondsPerMinute);
 }
 
-TEST(DramPoolConfigTest, HandlesHelpAndInvalidCommandLines)
+TEST(DramPoolConfigTest, DefaultsBlockProportionsAndTtl)
+{
+    const char* argv[] = {
+        "drampool",
+        "--addr=127.0.0.1:9000",
+        "--nics=mlx5_0",
+        "--pool-size-gb=64",
+        "--kvcache-block-sizes=4096",
+        "8192",
+    };
+    DramPoolConfig config;
+
+    const auto status = ParseCommandLine(6, const_cast<char**>(argv), config);
+
+    ASSERT_TRUE(status.Success()) << status.ToString();
+    EXPECT_EQ(config.poolBlockProportions, (std::vector<std::uint32_t>{1, 1}));
+    EXPECT_EQ(config.defaultDumpTtlMs, kDefaultDumpTtlMs);
+}
+
+TEST(DramPoolConfigTest, RejectsInvalidCommandLines)
 {
     {
         const char* argv[] = {"drampool", "--help"};
-        CommandLineOptions options;
-        auto status = ParseCommandLine(2, const_cast<char**>(argv), options);
-        ASSERT_TRUE(status.Success()) << status.ToString();
-        EXPECT_TRUE(options.showHelp);
+        DramPoolConfig config;
+        EXPECT_TRUE(ParseCommandLine(2, const_cast<char**>(argv), config).Failure());
     }
     {
         const char* argv[] = {"drampool"};
-        CommandLineOptions options;
-        EXPECT_TRUE(ParseCommandLine(1, const_cast<char**>(argv), options).Failure());
+        DramPoolConfig config;
+        EXPECT_TRUE(ParseCommandLine(1, const_cast<char**>(argv), config).Failure());
     }
     {
-        const char* argv[] = {"drampool", "--config"};
-        CommandLineOptions options;
-        EXPECT_TRUE(ParseCommandLine(2, const_cast<char**>(argv), options).Failure());
+        const char* argv[] = {"drampool", "--addr", "127.0.0.1:9000", "--pool-size-gb", "1",
+                              "--kvcache-block-sizes", "4096"};
+        DramPoolConfig config;
+        EXPECT_TRUE(ParseCommandLine(7, const_cast<char**>(argv), config).Failure());
     }
     {
-        const char* argv[] = {"drampool", "--unknown"};
-        CommandLineOptions options;
-        EXPECT_TRUE(ParseCommandLine(2, const_cast<char**>(argv), options).Failure());
-    }
-}
-
-TEST(DramPoolConfigTest, LoadsKeyValueConfigAndPreservesExtraKeys)
-{
-    const std::string path = WriteConfigFile("drampool_startup_valid.conf",
-                                             ValidConfigText() + "future.option = value\n");
-
-    auto loaded = LoadDramPoolConfig(path);
-    std::remove(path.c_str());
-
-    ASSERT_TRUE(loaded.HasValue()) << loaded.Error().ToString();
-    const auto& config = loaded.Value();
-    EXPECT_EQ(config.serverId, "drampool-0");
-    EXPECT_EQ(config.poolBlockSizes.size(), 2U);
-    EXPECT_EQ(config.poolBlockProportions[1], 30U);
-    EXPECT_EQ(config.metadataShards, 8U);
-    EXPECT_EQ(config.pollerIdleWaitUs, 100U);
-    EXPECT_EQ(config.logLevel, "info");
-    ASSERT_EQ(config.extra.count("future.option"), 1U);
-    EXPECT_EQ(config.extra.at("future.option"), "value");
-}
-
-TEST(DramPoolConfigTest, LoadsDefaultsAndBoolVariants)
-{
-    const std::string path = WriteConfigFile("drampool_startup_defaults.conf",
-                                             "pool.size_gb = 1\n"
-                                             "gc.enabled = off\n"
-                                             "log.level = WARN\n");
-    auto loaded = LoadDramPoolConfig(path);
-    std::remove(path.c_str());
-
-    ASSERT_TRUE(loaded.HasValue()) << loaded.Error().ToString();
-    EXPECT_EQ(loaded.Value().serverId, "drampool-0");
-    EXPECT_FALSE(loaded.Value().gcEnabled);
-    EXPECT_EQ(loaded.Value().gcIntervalMs, 1000U);
-    EXPECT_EQ(loaded.Value().logLevel, "warn");
-}
-
-TEST(DramPoolConfigTest, RejectsMalformedConfigFiles)
-{
-    {
-        const std::string path =
-            WriteConfigFile("drampool_startup_missing_equal.conf", "bad line\n");
-        auto loaded = LoadDramPoolConfig(path);
-        std::remove(path.c_str());
-        EXPECT_FALSE(loaded.HasValue());
+        const char* argv[] = {"drampool", "--config", "legacy.conf"};
+        DramPoolConfig config;
+        EXPECT_TRUE(ParseCommandLine(3, const_cast<char**>(argv), config).Failure());
     }
     {
-        const std::string path = WriteConfigFile("drampool_startup_empty_key.conf", " = value\n");
-        auto loaded = LoadDramPoolConfig(path);
-        std::remove(path.c_str());
-        EXPECT_FALSE(loaded.HasValue());
+        const char* argv[] = {
+            "drampool", "--addr", "127.0.0.1:9000", "--nics", "mlx5_0", "--pool-size-gb",
+            "1",        "--kvcache-block-sizes", "4096", "8192",
+            "--kvcache-block-proportions", "1", "--ttl-minutes", "0",
+        };
+        DramPoolConfig config;
+        EXPECT_TRUE(ParseCommandLine(14, const_cast<char**>(argv), config).Failure());
     }
     {
-        const std::string path =
-            WriteConfigFile("drampool_startup_bad_number.conf", "pool.size_gb = nope\n");
-        auto loaded = LoadDramPoolConfig(path);
-        std::remove(path.c_str());
-        EXPECT_FALSE(loaded.HasValue());
-    }
-    {
-        const std::string path = WriteConfigFile("drampool_startup_bad_bool.conf",
-                                                 "pool.size_gb = 1\ngc.enabled = maybe\n");
-        auto loaded = LoadDramPoolConfig(path);
-        std::remove(path.c_str());
-        EXPECT_FALSE(loaded.HasValue());
+        const char* argv[] = {
+            "drampool", "--addr", "127.0.0.1:9000", "--nics", "mlx5_0", "--pool-size-gb=-1",
+            "--kvcache-block-sizes", "4096",
+        };
+        DramPoolConfig config;
+        EXPECT_TRUE(ParseCommandLine(8, const_cast<char**>(argv), config).Failure());
     }
 }
 
@@ -221,6 +162,7 @@ TEST(DramPoolConfigTest, RejectsInvalidCoreConfig)
 
     expectInvalid([](DramPoolConfig& config) { config.serverId.clear(); });
     expectInvalid([](DramPoolConfig& config) { config.listenAddr.clear(); });
+    expectInvalid([](DramPoolConfig& config) { config.nics.clear(); });
     expectInvalid([](DramPoolConfig& config) { config.transportMode = "udp"; });
     expectInvalid([](DramPoolConfig& config) { config.transportManagerAddr.clear(); });
     expectInvalid([](DramPoolConfig& config) { config.transportLocalEngine.clear(); });
@@ -231,6 +173,7 @@ TEST(DramPoolConfigTest, RejectsInvalidCoreConfig)
     expectInvalid([](DramPoolConfig& config) { config.poolBlockProportions.clear(); });
     expectInvalid([](DramPoolConfig& config) { config.poolBlockProportions[0] = 0; });
     expectInvalid([](DramPoolConfig& config) { config.poolBlockProportions = {100}; });
+    expectInvalid([](DramPoolConfig& config) { config.defaultDumpTtlMs = 0; });
     expectInvalid([](DramPoolConfig& config) { config.metadataShards = 0; });
     expectInvalid([](DramPoolConfig& config) { config.requestQueueDepth = 1; });
     expectInvalid([](DramPoolConfig& config) { config.handleQueueDepth = 1; });
@@ -251,7 +194,7 @@ TEST(DramPoolConfigTest, AcceptsGcDisabledWithHixlTransport)
     auto config = MakeValidConfig();
     config.gcEnabled = false;
     config.gcIntervalMs = 0;
-    auto status = ValidateDramPoolConfig(config);
+    const auto status = ValidateDramPoolConfig(config);
     EXPECT_TRUE(status.Success()) << status.ToString();
 }
 
@@ -325,20 +268,20 @@ TEST(DramPoolServerTest, GcDisabledSkipsGcThreadLifecycleEvents)
 }
 #endif
 
-TEST(DramPoolDaemonTest, ReturnsForHelpAndInvalidConfig)
+TEST(DramPoolDaemonTest, ReturnsForInvalidArguments)
 {
-    {
-        const char* argv[] = {"drampool", "--help"};
-        DramPoolDaemon daemon;
-        EXPECT_EQ(daemon.Run(2, const_cast<char**>(argv)), 0);
-    }
     {
         const char* argv[] = {"drampool"};
         DramPoolDaemon daemon;
         EXPECT_EQ(daemon.Run(1, const_cast<char**>(argv)), 1);
     }
     {
-        const char* argv[] = {"drampool", "--config", "missing-drampool.conf"};
+        const char* argv[] = {"drampool", "--help"};
+        DramPoolDaemon daemon;
+        EXPECT_EQ(daemon.Run(2, const_cast<char**>(argv)), 1);
+    }
+    {
+        const char* argv[] = {"drampool", "--config", "legacy.conf"};
         DramPoolDaemon daemon;
         EXPECT_EQ(daemon.Run(3, const_cast<char**>(argv)), 1);
     }
@@ -347,13 +290,14 @@ TEST(DramPoolDaemonTest, ReturnsForHelpAndInvalidConfig)
 #if defined(UCM_DRAMPOOL_RUNTIME_INTEGRATION_TESTS)
 TEST(DramPoolDaemonTest, RunsUntilSigint)
 {
-    const std::string path =
-        WriteConfigFile("drampool_daemon_valid.conf", ValidConfigText() + "gc.interval_ms = 10\n");
-    const char* argv[] = {"drampool", "--config", "drampool_daemon_valid.conf"};
+    const char* argv[] = {
+        "drampool", "--addr", "127.0.0.1:9000", "--nics", "mlx5_0", "--pool-size-gb",
+        "1",        "--kvcache-block-sizes", "4096", "8192", "--ttl-minutes", "120",
+    };
 
     auto result = std::async(std::launch::async, [&argv]() {
         DramPoolDaemon daemon;
-        return daemon.Run(3, const_cast<char**>(argv));
+        return daemon.Run(12, const_cast<char**>(argv));
     });
 
     std::this_thread::sleep_for(std::chrono::milliseconds(250));
@@ -361,7 +305,6 @@ TEST(DramPoolDaemonTest, RunsUntilSigint)
 
     ASSERT_EQ(result.wait_for(std::chrono::seconds(5)), std::future_status::ready);
     EXPECT_EQ(result.get(), 0);
-    std::remove(path.c_str());
 }
 #endif
 

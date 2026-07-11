@@ -26,7 +26,6 @@
 #include <csignal>
 #include <iostream>
 #include <thread>
-#include <utility>
 #include "logger.h"
 
 namespace UC::DRAMPOOL {
@@ -42,24 +41,12 @@ std::atomic_bool DramPoolDaemon::shutdownRequested_{false};
 
 int DramPoolDaemon::Run(int argc, char** argv)
 {
-    CommandLineOptions options;
-    auto status = ParseCommandLine(argc, argv, options);
+    DramPoolConfig config;
+    auto status = ParseCommandLine(argc, argv, config);
     if (status.Failure()) {
         std::cerr << status.ToString() << "\n" << BuildUsage(argc > 0 ? argv[0] : "drampool");
         return 1;
     }
-    if (options.showHelp) {
-        std::cout << BuildUsage(argc > 0 ? argv[0] : "drampool");
-        return 0;
-    }
-
-    auto loadedConfig = LoadDramPoolConfig(options.configPath);
-    if (!loadedConfig) {
-        std::cerr << loadedConfig.Error().ToString() << "\n";
-        return 1;
-    }
-
-    const auto config = std::move(loadedConfig).Value();
     status = SetupLogger(config);
     if (status.Failure()) {
         std::cerr << status.ToString() << "\n";

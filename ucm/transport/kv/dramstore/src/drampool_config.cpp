@@ -24,14 +24,17 @@
 #include "drampool_config.h"
 #include <algorithm>
 #include <cctype>
-#include <fstream>
 #include <limits>
-#include <sstream>
 #include <stdexcept>
+#include <string>
 #include <utility>
+#include <vector>
 
 namespace UC::DRAMPOOL {
 namespace {
+
+bool IsLongOption(const std::string& value)
+{ return value.size() > 2 && value.rfind("--", 0) == 0; }
 
 std::string Trim(const std::string& value)
 {
@@ -48,20 +51,11 @@ std::string ToLower(std::string value)
     return value;
 }
 
-std::vector<std::string> Split(const std::string& value, char delimiter)
-{
-    std::vector<std::string> parts;
-    std::stringstream stream{value};
-    std::string part;
-    while (std::getline(stream, part, delimiter)) {
-        part = Trim(part);
-        if (!part.empty()) { parts.emplace_back(std::move(part)); }
-    }
-    return parts;
-}
-
 std::uint64_t ParseUint64(const std::string& value)
 {
+    if (value.empty() || value.front() == '-') {
+        throw std::invalid_argument("expected an unsigned integer");
+    }
     std::size_t parsed = 0;
     const auto number = std::stoull(value, &parsed, 0);
     if (parsed != value.size()) { throw std::invalid_argument("trailing characters"); }
@@ -77,86 +71,72 @@ std::uint32_t ParseUint32(const std::string& value)
     return static_cast<std::uint32_t>(number);
 }
 
-bool ParseBool(std::string value)
+UC::Status ReadSingleValue(const std::string& option, bool hasInlineValue,
+                           const std::string& inlineValue, int argc, char** argv, int& index,
+                           std::string& value)
 {
-    value = ToLower(Trim(value));
-    if (value == "1" || value == "true" || value == "yes" || value == "on") { return true; }
-    if (value == "0" || value == "false" || value == "no" || value == "off") { return false; }
-    throw std::invalid_argument("invalid bool");
+    if (hasInlineValue) {
+        if (inlineValue.empty()) {
+            return UC::Status::InvalidParam("{} requires a value", option);
+        }
+        value = inlineValue;
+        return UC::Status::OK();
+    }
+
+    if (++index >= argc || argv[index] == nullptr || IsLongOption(argv[index])) {
+        return UC::Status::InvalidParam("{} requires a value", option);
+    }
+    value = argv[index];
+    if (value.empty()) { return UC::Status::InvalidParam("{} requires a value", option); }
+    return UC::Status::OK();
 }
 
-std::vector<std::uint64_t> ParseUint64List(const std::string& value)
+UC::Status ReadListValues(const std::string& option, bool hasInlineValue,
+                          const std::string& inlineValue, int argc, char** argv, int& index,
+                          std::vector<std::string>& values)
 {
-    std::vector<std::uint64_t> result;
-    for (const auto& part : Split(value, ',')) { result.emplace_back(ParseUint64(part)); }
-    return result;
+    values.clear();
+    if (hasInlineValue) {
+        if (inlineValue.empty()) {
+            return UC::Status::InvalidParam("{} requires at least one value", option);
+        }
+        values.emplace_back(inlineValue);
+    }
+
+    while (index + 1 < argc && argv[index + 1] != nullptr && !IsLongOption(argv[index + 1])) {
+        const std::string value = argv[++index];
+        if (value.empty()) { return UC::Status::InvalidParam("{} has an empty value", option); }
+        values.emplace_back(value);
+    }
+    if (values.empty()) {
+        return UC::Status::InvalidParam("{} requires at least one value", option);
+    }
+    return UC::Status::OK();
 }
 
-std::vector<std::uint32_t> ParseUint32List(const std::string& value)
-{
-    std::vector<std::uint32_t> result;
-    for (const auto& part : Split(value, ',')) { result.emplace_back(ParseUint32(part)); }
-    return result;
-}
-
-UC::Status ApplyConfigValue(DramPoolConfig& config, const std::string& key,
-                            const std::string& value)
+UC::Status ParseBlockSizes(const std::vector<std::string>& values,
+                           std::vector<std::uint64_t>& sizes)
 {
     try {
-        if (key == "server.id") {
-            config.serverId = value;
-        } else if (key == "listen.addr") {
-            config.listenAddr = value;
-        } else if (key == "transport.mode") {
-            config.transportMode = ToLower(value);
-        } else if (key == "transport.manager_addr") {
-            config.transportManagerAddr = value;
-        } else if (key == "transport.local_engine") {
-            config.transportLocalEngine = value;
-        } else if (key == "transport.device_id") {
-            const auto deviceId = ParseUint32(value);
-            if (deviceId > static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max())) {
-                throw std::out_of_range("int32 overflow");
-            }
-            config.transportDeviceId = static_cast<std::int32_t>(deviceId);
-        } else if (key == "pool.size_gb") {
-            config.poolSizeGb = ParseUint64(value);
-        } else if (key == "pool.block_sizes") {
-            config.poolBlockSizes = ParseUint64List(value);
-        } else if (key == "pool.block_proportions") {
-            config.poolBlockProportions = ParseUint32List(value);
-        } else if (key == "metadata.shards") {
-            config.metadataShards = ParseUint32(value);
-        } else if (key == "queue.request_depth") {
-            config.requestQueueDepth = ParseUint32(value);
-        } else if (key == "queue.handle_depth") {
-            config.handleQueueDepth = ParseUint32(value);
-        } else if (key == "poller.drain_budget") {
-            config.pollerDrainBudget = ParseUint32(value);
-        } else if (key == "poller.scan_budget") {
-            config.pollerScanBudget = ParseUint32(value);
-        } else if (key == "poller.max_pending") {
-            config.pollerMaxPending = ParseUint32(value);
-        } else if (key == "poller.idle_wait_us") {
-            config.pollerIdleWaitUs = ParseUint32(value);
-        } else if (key == "gc.enabled") {
-            config.gcEnabled = ParseBool(value);
-        } else if (key == "gc.interval_ms") {
-            config.gcIntervalMs = ParseUint32(value);
-        } else if (key == "op.timeout_ms") {
-            config.opTimeoutMs = ParseUint32(value);
-        } else if (key == "shutdown.timeout_ms") {
-            config.shutdownTimeoutMs = ParseUint32(value);
-        } else if (key == "log.level") {
-            config.logLevel = ToLower(value);
-        } else if (key == "log.dir") {
-            config.logDir = value;
-        } else {
-            config.extra[key] = value;
-        }
-    } catch (const std::exception& e) {
-        return UC::Status::InvalidParam("invalid config value, key={}, value={}, error={}", key,
-                                        value, e.what());
+        sizes.clear();
+        sizes.reserve(values.size());
+        for (const auto& value : values) { sizes.emplace_back(ParseUint64(value)); }
+    } catch (const std::exception& error) {
+        return UC::Status::InvalidParam("invalid --kvcache-block-sizes value: {}", error.what());
+    }
+    return UC::Status::OK();
+}
+
+UC::Status ParseBlockProportions(const std::vector<std::string>& values,
+                                 std::vector<std::uint32_t>& proportions)
+{
+    try {
+        proportions.clear();
+        proportions.reserve(values.size());
+        for (const auto& value : values) { proportions.emplace_back(ParseUint32(value)); }
+    } catch (const std::exception& error) {
+        return UC::Status::InvalidParam(
+            "invalid --kvcache-block-proportions value: {}", error.what());
     }
     return UC::Status::OK();
 }
@@ -179,79 +159,141 @@ UC::Status RequireAtLeast(const char* name, std::uint64_t value, std::uint64_t m
 
 std::string BuildUsage(const char* program)
 {
-    std::string name = program == nullptr ? "drampool" : program;
+    const std::string name = program == nullptr ? "drampool" : program;
     return "Usage: " + name +
-           " --config <path>\n"
-           "Options:\n"
-           "  -c, --config <path>  Path to DramPool key=value config file.\n"
-           "  -h, --help           Show this help message.\n";
+           " --addr <IP>:<PORT> --nics <NAME>... --pool-size-gb <SIZE>"
+           " --kvcache-block-sizes <SIZE>... [options]\n"
+           "Required options:\n"
+           "  --addr <IP>:<PORT>                 DramPool control-service address.\n"
+           "  --nics <NAME>...                   RDMA NIC names for pinned memory registration.\n"
+           "  --pool-size-gb <SIZE>              Local DRAM capacity contributed to the pool.\n"
+           "  --kvcache-block-sizes <SIZE>...    Supported fixed KVCache block sizes.\n"
+           "Optional options:\n"
+           "  --kvcache-block-proportions <P>... Relative capacity per block size; defaults to 1:1.\n"
+           "  --ttl-minutes <MINUTES>            Absolute block lifetime; defaults to 120.\n";
 }
 
-UC::Status ParseCommandLine(int argc, char** argv, CommandLineOptions& options)
+UC::Status ParseCommandLine(int argc, char** argv, DramPoolConfig& config)
 {
-    options = CommandLineOptions{};
+    config = DramPoolConfig{};
+
+    bool hasAddr = false;
+    bool hasNics = false;
+    bool hasPoolSize = false;
+    bool hasBlockSizes = false;
+    bool hasBlockProportions = false;
+    bool hasTtl = false;
+
     for (int index = 1; index < argc; ++index) {
-        const std::string arg = argv[index] == nullptr ? "" : argv[index];
-        if (arg == "-h" || arg == "--help") {
-            options.showHelp = true;
-            return UC::Status::OK();
+        const std::string argument = argv[index] == nullptr ? "" : argv[index];
+        if (!IsLongOption(argument)) {
+            return UC::Status::InvalidParam("unexpected argument: {}", argument);
         }
-        if (arg == "-c" || arg == "--config") {
-            if (index + 1 >= argc) { return UC::Status::InvalidParam("{} requires a path", arg); }
-            options.configPath = argv[++index];
+
+        const auto equals = argument.find('=');
+        const std::string option = argument.substr(0, equals);
+        const bool hasInlineValue = equals != std::string::npos;
+        const std::string inlineValue =
+            hasInlineValue ? argument.substr(equals + 1) : std::string{};
+        std::string value;
+        std::vector<std::string> values;
+        auto status = UC::Status::OK();
+
+        if (option == "--addr") {
+            if (hasAddr) { return UC::Status::InvalidParam("--addr may be specified once"); }
+            status = ReadSingleValue(option, hasInlineValue, inlineValue, argc, argv, index, value);
+            if (status.Failure()) { return status; }
+            config.listenAddr = value;
+            config.transportManagerAddr = value;
+            hasAddr = true;
             continue;
         }
-        constexpr const char* kConfigPrefix = "--config=";
-        if (arg.rfind(kConfigPrefix, 0) == 0) {
-            options.configPath = arg.substr(std::string{kConfigPrefix}.size());
+        if (option == "--nics") {
+            if (hasNics) { return UC::Status::InvalidParam("--nics may be specified once"); }
+            status = ReadListValues(option, hasInlineValue, inlineValue, argc, argv, index, values);
+            if (status.Failure()) { return status; }
+            config.nics = std::move(values);
+            hasNics = true;
             continue;
         }
-        return UC::Status::InvalidParam("unknown argument: {}", arg);
-    }
-    if (options.configPath.empty()) { return UC::Status::InvalidParam("missing --config <path>"); }
-    return UC::Status::OK();
-}
-
-UC::Expected<DramPoolConfig> LoadDramPoolConfig(const std::string& configPath)
-{
-    std::ifstream configFile{configPath};
-    if (!configFile.is_open()) {
-        return UC::Status::Error("failed to open DramPool config, path=" + configPath);
-    }
-
-    DramPoolConfig config;
-    std::string line;
-    std::uint32_t lineNo = 0;
-    while (std::getline(configFile, line)) {
-        ++lineNo;
-        line = Trim(line);
-        if (line.empty() || line[0] == '#') { continue; }
-
-        const auto pos = line.find('=');
-        if (pos == std::string::npos) {
-            return UC::Status::InvalidParam("invalid config line {}, missing '='", lineNo);
+        if (option == "--pool-size-gb") {
+            if (hasPoolSize) {
+                return UC::Status::InvalidParam("--pool-size-gb may be specified once");
+            }
+            status = ReadSingleValue(option, hasInlineValue, inlineValue, argc, argv, index, value);
+            if (status.Failure()) { return status; }
+            try {
+                config.poolSizeGb = ParseUint64(value);
+            } catch (const std::exception& error) {
+                return UC::Status::InvalidParam("invalid --pool-size-gb value: {}", error.what());
+            }
+            hasPoolSize = true;
+            continue;
         }
-
-        const auto key = Trim(line.substr(0, pos));
-        const auto value = Trim(line.substr(pos + 1));
-        if (key.empty()) {
-            return UC::Status::InvalidParam("invalid config line {}, empty key", lineNo);
+        if (option == "--kvcache-block-sizes") {
+            if (hasBlockSizes) {
+                return UC::Status::InvalidParam("--kvcache-block-sizes may be specified once");
+            }
+            status = ReadListValues(option, hasInlineValue, inlineValue, argc, argv, index, values);
+            if (status.Failure()) { return status; }
+            status = ParseBlockSizes(values, config.poolBlockSizes);
+            if (status.Failure()) { return status; }
+            hasBlockSizes = true;
+            continue;
         }
-
-        auto status = ApplyConfigValue(config, key, value);
-        if (status.Failure()) { return status; }
+        if (option == "--kvcache-block-proportions") {
+            if (hasBlockProportions) {
+                return UC::Status::InvalidParam(
+                    "--kvcache-block-proportions may be specified once");
+            }
+            status = ReadListValues(option, hasInlineValue, inlineValue, argc, argv, index, values);
+            if (status.Failure()) { return status; }
+            status = ParseBlockProportions(values, config.poolBlockProportions);
+            if (status.Failure()) { return status; }
+            hasBlockProportions = true;
+            continue;
+        }
+        if (option == "--ttl-minutes") {
+            if (hasTtl) {
+                return UC::Status::InvalidParam("--ttl-minutes may be specified once");
+            }
+            status = ReadSingleValue(option, hasInlineValue, inlineValue, argc, argv, index, value);
+            if (status.Failure()) { return status; }
+            try {
+                const auto ttlMinutes = ParseUint64(value);
+                if (ttlMinutes == 0 ||
+                    ttlMinutes > std::numeric_limits<std::uint64_t>::max() /
+                                     kMillisecondsPerMinute) {
+                    return UC::Status::InvalidParam("--ttl-minutes must be a positive value");
+                }
+                config.defaultDumpTtlMs = ttlMinutes * kMillisecondsPerMinute;
+            } catch (const std::exception& error) {
+                return UC::Status::InvalidParam("invalid --ttl-minutes value: {}", error.what());
+            }
+            hasTtl = true;
+            continue;
+        }
+        return UC::Status::InvalidParam("unknown argument: {}", argument);
     }
 
-    auto status = ValidateDramPoolConfig(config);
-    if (status.Failure()) { return status; }
-    return std::move(config);
+    if (!hasAddr || !hasNics || !hasPoolSize || !hasBlockSizes) {
+        return UC::Status::InvalidParam(
+            "--addr, --nics, --pool-size-gb, and --kvcache-block-sizes are required");
+    }
+    if (!hasBlockProportions) {
+        // Each configured block size receives an equal capacity share by default.
+        config.poolBlockProportions.assign(config.poolBlockSizes.size(), 1);
+    }
+    return ValidateDramPoolConfig(config);
 }
 
 UC::Status ValidateDramPoolConfig(const DramPoolConfig& config)
 {
     if (Trim(config.serverId).empty()) { return UC::Status::InvalidParam("server.id is required"); }
-    if (Trim(config.listenAddr).empty()) {
-        return UC::Status::InvalidParam("listen.addr is required");
+    if (Trim(config.listenAddr).empty()) { return UC::Status::InvalidParam("--addr is required"); }
+    if (config.nics.empty()) { return UC::Status::InvalidParam("--nics must not be empty"); }
+    for (const auto& nic : config.nics) {
+        if (Trim(nic).empty()) { return UC::Status::InvalidParam("--nics contains an empty name"); }
     }
 
     const auto transportMode = ToLower(config.transportMode);
@@ -268,26 +310,28 @@ UC::Status ValidateDramPoolConfig(const DramPoolConfig& config)
         return UC::Status::InvalidParam("transport.device_id must not be negative");
     }
 
-    auto status = RequirePositive("pool.size_gb", config.poolSizeGb);
+    auto status = RequirePositive("--pool-size-gb", config.poolSizeGb);
     if (status.Failure()) { return status; }
     if (config.poolBlockSizes.empty()) {
-        return UC::Status::InvalidParam("pool.block_sizes must not be empty");
+        return UC::Status::InvalidParam("--kvcache-block-sizes must not be empty");
     }
     if (config.poolBlockProportions.empty()) {
-        return UC::Status::InvalidParam("pool.block_proportions must not be empty");
+        return UC::Status::InvalidParam("--kvcache-block-proportions must not be empty");
     }
     if (config.poolBlockSizes.size() != config.poolBlockProportions.size()) {
         return UC::Status::InvalidParam(
-            "pool.block_sizes and pool.block_proportions must have the same length");
+            "--kvcache-block-sizes and --kvcache-block-proportions must have the same length");
     }
     for (const auto blockSize : config.poolBlockSizes) {
-        status = RequirePositive("pool.block_sizes item", blockSize);
+        status = RequirePositive("--kvcache-block-sizes item", blockSize);
         if (status.Failure()) { return status; }
     }
     for (const auto proportion : config.poolBlockProportions) {
-        status = RequirePositive("pool.block_proportions item", proportion);
+        status = RequirePositive("--kvcache-block-proportions item", proportion);
         if (status.Failure()) { return status; }
     }
+    status = RequirePositive("--ttl-minutes", config.defaultDumpTtlMs);
+    if (status.Failure()) { return status; }
 
     status = RequirePositive("metadata.shards", config.metadataShards);
     if (status.Failure()) { return status; }
