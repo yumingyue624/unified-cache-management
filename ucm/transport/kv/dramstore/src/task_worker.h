@@ -32,12 +32,13 @@ namespace UC::DRAMPOOL {
 
 class TaskWorker final {
 public:
-    TaskWorker() = default;
+    explicit TaskWorker(DramPoolRuntime& runtime) : runtime_(runtime) {}
 
     void Run(const std::atomic_bool& stop);
     UC::Status ProcessOneRequest(RequestTaskPtr task);
 
 private:
+    UC::Status EnsurePeerReady(const transport::ManagerID& targetManager);
     UC::Status ProcessDump(const KvDumpRequest& request, const transport::ManagerID& peerManagerId);
     UC::Status ProcessLoad(const KvLoadRequest& request, const transport::ManagerID& peerManagerId);
     UC::Status ProcessLookup(const KvLookupRequest& request,
@@ -46,6 +47,8 @@ private:
     void RollbackDumpItems(const std::vector<TransferItem>& items);
     void UnpinLoadItems(const std::vector<TransferItem>& items);
     UC::Status SubmitInflight(InflightRecord&& record);
+
+    DramPoolRuntime& runtime_;
 };
 
 }  // namespace UC::DRAMPOOL

@@ -67,18 +67,17 @@ private:
         Stopped,
     };
 
-    UC::Status InitDataTransportManager();
-    UC::Status InstallDataTransport();
-    UC::Status InitBufferMgr();
-    UC::Status RegisterBufferMemory();
-    UC::Status InitMetadataIndex();
+    UC::Status InitMemoryPool();
+    UC::Status InitMetadata();
     UC::Status InitProtocol();
     UC::Status InitQueues();
+    UC::Status StartTransportService();
+    UC::Status CreateRuntimeContext();
 
+    UC::Status StartListeningService();
     UC::Status StartCompletionPoller();
     UC::Status StartTaskWorker();
     UC::Status StartGCThread();
-    UC::Status StartRequestChannelAndReceiver();
 
     void SetServiceReady(bool ready);
     void StopReceiver();
@@ -115,6 +114,7 @@ private:
     std::vector<std::unique_ptr<BufferManager>> bufferManagers_;
     std::unique_ptr<MetadataIndex> metadataIndex_;
     std::unique_ptr<ProtocolManager> protocolManager_;
+    std::unique_ptr<DramPoolRuntime> runtime_;
     std::unique_ptr<TaskWorker> taskWorker_;
     std::unique_ptr<CompletionPoller> completionPoller_;
 

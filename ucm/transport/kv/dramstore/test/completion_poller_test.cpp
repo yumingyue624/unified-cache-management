@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <functional>
 #include <gtest/gtest.h>
+#include <memory>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -49,6 +50,8 @@ class CompletionPollerTest : public ::testing::Test {
 protected:
     void SetUp() override
     {
+        savedConfig_ = g_config;
+        requestQueue_.Setup(kQueueCapacity);
         ingress_.Setup(kQueueCapacity);
         ASSERT_EQ(manager_.InstallTransport(testTransport_, transport::InitAttrs{}),
                   transport::Status::Ok);
@@ -59,19 +62,22 @@ protected:
         g_config.pollerIdleWaitUs = kTestIdleWaitUs;
         g_config.opTimeoutMs = kTestOperationTimeoutMs;
 
-        g_services.metadata = &metadata_;
-        g_services.buffer_managers = {&buffers_};
-        g_services.transport = &manager_;
-        g_services.protocol_mgr = &protocols_;
-        g_services.trans_handle_queue = &ingress_;
+        bufferManagers_.push_back(std::make_unique<FakeBufferManager>(kValueLength));
+        buffers_ = static_cast<FakeBufferManager*>(bufferManagers_.front().get());
+        runtime_ = std::make_unique<DramPoolRuntime>(metadata_, bufferManagers_, manager_,
+                                                     protocols_, requestQueue_, ingress_);
     }
 
-    void TearDown() override { g_services = {}; }
+    void TearDown() override
+    {
+        runtime_.reset();
+        g_config = std::move(savedConfig_);
+    }
 
     InflightRecord MakeDumpRecord(std::uint8_t keySuffix, std::uint64_t responseAddr,
                                   TransportHandle& handleOut)
     {
-        auto allocated = buffers_.Allocate(kValueLength);
+        auto allocated = buffers_->Allocate(kValueLength);
         EXPECT_TRUE(allocated.HasValue());
         auto slot = std::move(allocated).Value();
 
@@ -117,12 +123,16 @@ protected:
     static constexpr std::size_t kDrainBudget = 8;
     static constexpr std::size_t kHeadScanBudget = 2;
 
+    RequestQueue requestQueue_;
     TransHandleQueue ingress_;
     FakeMetadataIndex metadata_;
-    FakeBufferManager buffers_{kValueLength};
+    BufferManagerList bufferManagers_;
+    FakeBufferManager* buffers_{nullptr};
     ProtocolManager protocols_;
     std::shared_ptr<TEST::TestTransport> testTransport_{TEST::MakeTestTransport()};
     transport::TransportManager manager_{"127.0.0.1:28000"};
+    std::unique_ptr<DramPoolRuntime> runtime_;
+    DramPoolConfig savedConfig_;
 };
 
 TEST_F(CompletionPollerTest, ScansOnlyConfiguredHeadWindowAndThenPublishesAll)
@@ -140,7 +150,7 @@ TEST_F(CompletionPollerTest, ScansOnlyConfiguredHeadWindowAndThenPublishesAll)
     ingress_.Push(std::move(second));
     ingress_.Push(std::move(third));
 
-    CompletionPoller poller;
+    CompletionPoller poller(*runtime_);
     std::atomic_bool stop{false};
     std::thread pollerThread([&]() { poller.Run(stop); });
 
@@ -183,14 +193,14 @@ TEST_F(CompletionPollerTest, TimeoutWaitsForTerminalThenAbortsDump)
     ASSERT_TRUE(testTransport_->SetStatus(handle, transport::TransferStatus::Waiting));
     ingress_.Push(std::move(record));
 
-    CompletionPoller poller;
+    CompletionPoller poller(*runtime_);
     std::atomic_bool stop{false};
     std::thread pollerThread([&]() { poller.Run(stop); });
 
     ASSERT_TRUE(WaitUntil([&]() { return testTransport_->QueryCount(handle) > 0; }));
     EXPECT_EQ(metadata_.LookupReady(MakeKey(7), std::chrono::system_clock::now()),
               LookupCode::NotReady);
-    EXPECT_EQ(buffers_.ActiveAllocationCount(), 1U);
+    EXPECT_EQ(buffers_->ActiveAllocationCount(), 1U);
 
     ASSERT_TRUE(testTransport_->SetStatus(handle, transport::TransferStatus::Completed));
     const bool completed = WaitUntil([&]() { return testTransport_->SyncExecutionCount() == 1; });
@@ -200,7 +210,7 @@ TEST_F(CompletionPollerTest, TimeoutWaitsForTerminalThenAbortsDump)
     EXPECT_TRUE(completed);
     EXPECT_EQ(metadata_.LookupReady(MakeKey(7), std::chrono::system_clock::now()),
               LookupCode::NotFound);
-    EXPECT_EQ(buffers_.ActiveAllocationCount(), 0U);
+    EXPECT_EQ(buffers_->ActiveAllocationCount(), 0U);
     EXPECT_EQ(testTransport_->ActiveTransferCount(), 0U);
 }
 

@@ -16,7 +16,7 @@ namespace UC::DRAMPOOL {
 
 class CompletionPoller final {
 public:
-    CompletionPoller() = default;
+    explicit CompletionPoller(DramPoolRuntime& runtime) : runtime_(runtime) {}
 
     void Run(const std::atomic_bool& stop) noexcept;
     void RequestDrainAllAsFailed() noexcept;
@@ -31,6 +31,7 @@ private:
     void ApplyTerminal(InflightRecord& record, transport::TransferStatus terminalStatus);
     bool OperationTimedOut(const InflightRecord& record, std::uint64_t nowMs) const;
 
+    DramPoolRuntime& runtime_;
     std::deque<InflightRecord> pending_;
     std::atomic_bool failAllRequested_{false};
     std::atomic_bool healthy_{true};

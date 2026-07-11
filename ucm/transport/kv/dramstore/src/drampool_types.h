@@ -144,15 +144,28 @@ using TransHandleQueue = UC::SpscRingQueue<InflightRecord>;
 class MetadataIndex;
 class BufferManager;
 
-struct DramPoolServices {
-    MetadataIndex* metadata{nullptr};
-    std::vector<BufferManager*> buffer_managers{};
-    transport::TransportManager* transport{nullptr};
-    ProtocolManager* protocol_mgr{nullptr};
-    RequestQueue* request_queue{nullptr};
-    TransHandleQueue* trans_handle_queue{nullptr};
-};
+using BufferManagerList = std::vector<std::unique_ptr<BufferManager>>;
 
-inline DramPoolServices g_services{};
+// Non-owning runtime view. DramPoolServer owns every referenced component.
+struct DramPoolRuntime {
+    DramPoolRuntime(MetadataIndex& metadataRef, BufferManagerList& bufferManagersRef,
+                    transport::TransportManager& transportRef, ProtocolManager& protocolRef,
+                    RequestQueue& requestQueueRef, TransHandleQueue& transHandleQueueRef)
+        : metadata(metadataRef),
+          bufferManagers(bufferManagersRef),
+          transport(transportRef),
+          protocol(protocolRef),
+          requestQueue(requestQueueRef),
+          transHandleQueue(transHandleQueueRef)
+    {
+    }
+
+    MetadataIndex& metadata;
+    BufferManagerList& bufferManagers;
+    transport::TransportManager& transport;
+    ProtocolManager& protocol;
+    RequestQueue& requestQueue;
+    TransHandleQueue& transHandleQueue;
+};
 
 }  // namespace UC::DRAMPOOL

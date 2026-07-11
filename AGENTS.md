@@ -18,3 +18,5 @@
 - `g_config` is the sole process-wide DramPool configuration. In production it is populated by `ParseCommandLine()` before `DramPoolServer::Init()` and is read-only thereafter.
 - Do not add per-server configuration copies, configuration injection paths, or multi-server support unless the user explicitly changes this architecture.
 - `ParseCommandLine()` performs the complete launch-configuration validation. Do not duplicate that same validation in `DramPoolServer::Init()`.
+- `DramPoolServer` owns all mutable runtime components. `DramPoolRuntime` is its non-owning internal context and is passed by reference to Worker and Poller; do not add a global service locator such as `g_services`.
+- Server initialization creates only local memory, metadata, protocol, and queue state. `Start()` starts transport, creates `DramPoolRuntime`, starts internal workers, then starts the listener last.

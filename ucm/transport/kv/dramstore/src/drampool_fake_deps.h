@@ -275,10 +275,10 @@ private:
     std::unordered_map<std::uint64_t, std::unique_ptr<std::uint8_t[]>> allocations_;
 };
 
-inline UC::Expected<BufferSlot> AllocateBuffer(std::uint32_t len);
-inline UC::Status FreeBuffer(const BufferHandle& handle);
+inline UC::Expected<BufferSlot> AllocateBuffer(DramPoolRuntime& runtime, std::uint32_t len);
+inline UC::Status FreeBuffer(DramPoolRuntime& runtime, const BufferHandle& handle);
 
-inline UC::Status WriteResponse(KvOpcode opcode, std::uint64_t resp_addr,
+inline UC::Status WriteResponse(DramPoolRuntime& runtime, KvOpcode opcode, std::uint64_t resp_addr,
                                 const transport::ManagerID& peer_manager_id,
                                 const std::vector<std::uint32_t>& results)
 {
@@ -286,11 +286,11 @@ inline UC::Status WriteResponse(KvOpcode opcode, std::uint64_t resp_addr,
         return UC::Status::InvalidParam("response peer_manager_id is empty");
     }
     const auto len = static_cast<std::uint32_t>(results.size() * sizeof(std::uint32_t));
-    auto allocated = AllocateBuffer(len);
+    auto allocated = AllocateBuffer(runtime, len);
     if (!allocated.HasValue()) { return allocated.Error(); }
     auto slot = std::move(allocated).Value();
 
-    const auto protocol_status = g_services.protocol_mgr->PackResponse(
+    const auto protocol_status = runtime.protocol.PackResponse(
         reinterpret_cast<void*>(slot.addr), opcode, KvResponse{results});
     UC::Status status =
         protocol_status.ok() ? UC::Status::OK() : UC::Status::Error(protocol_status.message);
@@ -301,18 +301,19 @@ inline UC::Status WriteResponse(KvOpcode opcode, std::uint64_t resp_addr,
         operation.target_manager = peer_manager_id;
         operation.ops.push_back(
             transport::Segment{reinterpret_cast<void*>(slot.addr), resp_addr, len});
-        status = ToUcStatus(g_services.transport->ExecuteSync(operation), "ExecuteSync response");
+        status = ToUcStatus(runtime.transport.ExecuteSync(operation), "ExecuteSync response");
     }
 
-    const auto free_status = FreeBuffer(slot.handle);
+    const auto free_status = FreeBuffer(runtime, slot.handle);
     return status.Failure() ? status : free_status;
 }
 
-inline UC::Expected<BufferSlot> AllocateBuffer(std::uint32_t len)
+inline UC::Expected<BufferSlot> AllocateBuffer(DramPoolRuntime& runtime, std::uint32_t len)
 {
-    for (std::size_t i = 0; i < g_services.buffer_managers.size(); ++i) {
-        if (g_services.buffer_managers[i]->SlotSize() >= len) {
-            auto result = g_services.buffer_managers[i]->Allocate(len);
+    for (std::size_t i = 0; i < runtime.bufferManagers.size(); ++i) {
+        auto& bufferManager = *runtime.bufferManagers[i];
+        if (bufferManager.SlotSize() >= len) {
+            auto result = bufferManager.Allocate(len);
             if (result.HasValue()) {
                 result.Value().class_id = static_cast<std::uint32_t>(i);
                 result.Value().handle.class_id = static_cast<std::uint32_t>(i);
@@ -320,11 +321,11 @@ inline UC::Expected<BufferSlot> AllocateBuffer(std::uint32_t len)
                 memory.addr = reinterpret_cast<void*>(result.Value().addr);
                 memory.length = result.Value().len;
                 memory.type = transport::MemoryType::Host;
-                auto register_status = g_services.transport->RegisterMemory(
+                auto register_status = runtime.transport.RegisterMemory(
                     memory, result.Value().handle.memory_handle);
                 if (register_status != transport::Status::Ok) {
                     const auto handle = result.Value().handle;
-                    (void)g_services.buffer_managers[i]->Free(handle);
+                    (void)bufferManager.Free(handle);
                     return ToUcStatus(register_status, "RegisterMemory");
                 }
             }
@@ -334,14 +335,14 @@ inline UC::Expected<BufferSlot> AllocateBuffer(std::uint32_t len)
     return UC::Status::Error("no buffer pool fits len=" + std::to_string(len));
 }
 
-inline UC::Status FreeBuffer(const BufferHandle& handle)
+inline UC::Status FreeBuffer(DramPoolRuntime& runtime, const BufferHandle& handle)
 {
-    if (handle.class_id < g_services.buffer_managers.size()) {
+    if (handle.class_id < runtime.bufferManagers.size()) {
         if (handle.memory_handle != transport::kInvalidMemoryHandle) {
             // Unregister may fail after TransportManager::Shutdown; the host buffer is still freed.
-            (void)g_services.transport->UnregisterMemory(handle.memory_handle);
+            (void)runtime.transport.UnregisterMemory(handle.memory_handle);
         }
-        return g_services.buffer_managers[handle.class_id]->Free(handle);
+        return runtime.bufferManagers[handle.class_id]->Free(handle);
     }
     return UC::Status::NotFound();
 }

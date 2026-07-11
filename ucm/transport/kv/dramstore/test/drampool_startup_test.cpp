@@ -234,17 +234,16 @@ TEST(DramPoolServerTest, StartsReceiverLastAndStopsReceiverFirst)
 
     const auto events = server.LifecycleEvents();
     const std::vector<std::string> startupOrder = {
-        "InitDataTransportManager",
-        "InstallDataTransport",
-        "InitBufferMgr",
-        "RegisterBufferMemory",
-        "InitMetadataIndex",
+        "InitMemoryPool",
+        "InitMetadata",
         "InitProtocol",
         "InitQueues",
+        "StartTransportService",
+        "CreateRuntimeContext",
         "StartCompletionPoller",
         "StartTaskWorker",
         "StartGCThread",
-        "StartRequestChannelAndReceiver",
+        "StartListeningService",
         "SetServiceReady(true)",
     };
     EXPECT_TRUE(ContainsInOrder(events, startupOrder));
@@ -275,7 +274,7 @@ TEST(DramPoolServerTest, GcDisabledSkipsGcThreadLifecycleEvents)
     EXPECT_EQ(std::find(events.begin(), events.end(), "StopGCThread"), events.end());
     EXPECT_TRUE(
         ContainsInOrder(events, {"StartCompletionPoller", "StartTaskWorker",
-                                 "StartRequestChannelAndReceiver", "SetServiceReady(true)"}));
+                                 "StartListeningService", "SetServiceReady(true)"}));
 }
 #endif
 

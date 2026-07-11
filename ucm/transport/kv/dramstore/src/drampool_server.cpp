@@ -24,10 +24,46 @@
 #include "drampool_server.h"
 #include <chrono>
 #include <exception>
+#include <type_traits>
+#include <utility>
 #include "logger.h"
 #include "task_worker.h"
 
 namespace UC::DRAMPOOL {
+namespace {
+
+template <typename Callback>
+class ScopeExit final {
+public:
+    explicit ScopeExit(Callback callback) : callback_(std::move(callback)) {}
+    ~ScopeExit()
+    {
+        if (active_) { callback_(); }
+    }
+
+    ScopeExit(const ScopeExit&) = delete;
+    ScopeExit& operator=(const ScopeExit&) = delete;
+
+    ScopeExit(ScopeExit&& other) noexcept(std::is_nothrow_move_constructible_v<Callback>)
+        : callback_(std::move(other.callback_)), active_(std::exchange(other.active_, false))
+    {
+    }
+
+    void Release() noexcept { active_ = false; }
+
+private:
+    Callback callback_;
+    bool active_{true};
+};
+
+template <typename Callback>
+auto MakeScopeExit(Callback&& callback)
+{
+    return ScopeExit<std::decay_t<Callback>>(std::forward<Callback>(callback));
+}
+
+}  // namespace
+
 DramPoolServer::DramPoolServer() = default;
 
 DramPoolServer::~DramPoolServer() { Stop(); }
@@ -40,56 +76,20 @@ UC::Status DramPoolServer::Init()
             "DramPoolServer cannot be initialized in its current state");
     }
 
+    // Build local state only; externally visible services start in Start().
+    auto rollback = MakeScopeExit([this]() { ResetInitializedComponents(); });
     try {
-        auto status = InitDataTransportManager();
-        if (status.Failure()) {
-            ResetInitializedComponents();
-            return status;
-        }
-        status = InstallDataTransport();
-        if (status.Failure()) {
-            ResetInitializedComponents();
-            return status;
-        }
-        status = InitBufferMgr();
-        if (status.Failure()) {
-            ResetInitializedComponents();
-            return status;
-        }
-        status = RegisterBufferMemory();
-        if (status.Failure()) {
-            ResetInitializedComponents();
-            return status;
-        }
-        status = InitMetadataIndex();
-        if (status.Failure()) {
-            ResetInitializedComponents();
-            return status;
-        }
-        status = InitProtocol();
-        if (status.Failure()) {
-            ResetInitializedComponents();
-            return status;
-        }
-        status = InitQueues();
-        if (status.Failure()) {
-            ResetInitializedComponents();
-            return status;
-        }
+        if (auto status = InitMemoryPool(); status.Failure()) { return status; }
+        if (auto status = InitMetadata(); status.Failure()) { return status; }
+        if (auto status = InitProtocol(); status.Failure()) { return status; }
+        if (auto status = InitQueues(); status.Failure()) { return status; }
     } catch (const std::exception& error) {
-        ResetInitializedComponents();
         return UC::Status::Error(std::string{"DramPoolServer initialization failed: "} +
                                  error.what());
     }
 
-    g_services.request_queue = &requestQueue_;
-    g_services.trans_handle_queue = &transHandleQueue_;
-    g_services.metadata = metadataIndex_.get();
-    g_services.buffer_managers.clear();
-    for (auto& bm : bufferManagers_) { g_services.buffer_managers.push_back(bm.get()); }
-    g_services.transport = transportManager_.get();
-
     state_ = ServerState::Initialized;
+    rollback.Release();
     return UC::Status::OK();
 }
 
@@ -101,29 +101,20 @@ UC::Status DramPoolServer::Start()
     }
     state_ = ServerState::Starting;
 
-    // Start internal threads before the receiver makes the service externally visible.
-    auto status = StartCompletionPoller();
-    if (status.Failure()) {
-        StopLocked();
-        return status;
+    auto rollback = MakeScopeExit([this]() { StopLocked(); });
+    try {
+        if (auto status = StartTransportService(); status.Failure()) { return status; }
+        if (auto status = CreateRuntimeContext(); status.Failure()) { return status; }
+        if (auto status = StartCompletionPoller(); status.Failure()) { return status; }
+        if (auto status = StartTaskWorker(); status.Failure()) { return status; }
+        if (auto status = StartGCThread(); status.Failure()) { return status; }
+        if (auto status = StartListeningService(); status.Failure()) { return status; }
+        SetServiceReady(true);
+        state_ = ServerState::Ready;
+    } catch (const std::exception& error) {
+        return UC::Status::Error(std::string{"DramPoolServer start failed: "} + error.what());
     }
-    status = StartTaskWorker();
-    if (status.Failure()) {
-        StopLocked();
-        return status;
-    }
-    status = StartGCThread();
-    if (status.Failure()) {
-        StopLocked();
-        return status;
-    }
-    status = StartRequestChannelAndReceiver();
-    if (status.Failure()) {
-        StopLocked();
-        return status;
-    }
-    SetServiceReady(true);
-    state_ = ServerState::Ready;
+    rollback.Release();
     return UC::Status::OK();
 }
 
@@ -144,6 +135,7 @@ void DramPoolServer::StopLocked()
     MarkInflightTransportsFailed();
     StopCompletionPoller();
     StopGCThread();
+    runtime_.reset();
     UnregisterBufferMemory();
     DestroyMetadataIndex();
     ResetInitializedComponents();
@@ -159,69 +151,26 @@ std::vector<std::string> DramPoolServer::LifecycleEvents() const
     return lifecycleEvents_;
 }
 
-UC::Status DramPoolServer::InitDataTransportManager()
-{
-    transportManager_ =
-        std::make_unique<transport::TransportManager>(g_config.addr);
-    const auto status = transportManager_->Init();
-    if (status != transport::Status::Ok) {
-        transportManager_.reset();
-        return ToUcStatus(status, "TransportManager::Init");
-    }
-    RecordLifecycleEvent("InitDataTransportManager");
-    return UC::Status::OK();
-}
-
-UC::Status DramPoolServer::InstallDataTransport()
-{
-    if (!transportManager_) {
-        return UC::Status::InvalidParam("TransportManager is not initialized");
-    }
-    // Runtime transport selection is owned by the server and driven by its configuration.
-    transport::HixlInitAttrs attrs;
-    attrs.local_engine = g_config.transportLocalEngine;
-    attrs.device_id = g_config.transportDeviceId;
-    attrs.connect_timeout_ms = static_cast<std::int32_t>(g_config.opTimeoutMs);
-    attrs.transfer_timeout_ms = static_cast<std::int32_t>(g_config.opTimeoutMs);
-    const auto status =
-        transportManager_->InstallTransport(transport::TransportProtocol::Hixl, attrs);
-    if (status != transport::Status::Ok) {
-        return ToUcStatus(status, "TransportManager::InstallTransport");
-    }
-    RecordLifecycleEvent("InstallDataTransport");
-    return UC::Status::OK();
-}
-
-UC::Status DramPoolServer::InitBufferMgr()
+UC::Status DramPoolServer::InitMemoryPool()
 {
     for (const auto blockSize : g_config.poolBlockSizes) {
         bufferManagers_.push_back(
             std::make_unique<FakeBufferManager>(static_cast<std::uint32_t>(blockSize)));
     }
-    RecordLifecycleEvent("InitBufferMgr");
+    RecordLifecycleEvent("InitMemoryPool");
     return UC::Status::OK();
 }
 
-UC::Status DramPoolServer::RegisterBufferMemory()
-{
-    if (bufferManagers_.empty() || !transportManager_) {
-        return UC::Status::InvalidParam("buffer registration dependencies are not initialized");
-    }
-    RecordLifecycleEvent("RegisterBufferMemory");
-    return UC::Status::OK();
-}
-
-UC::Status DramPoolServer::InitMetadataIndex()
+UC::Status DramPoolServer::InitMetadata()
 {
     metadataIndex_ = std::make_unique<FakeMetadataIndex>();
-    RecordLifecycleEvent("InitMetadataIndex");
+    RecordLifecycleEvent("InitMetadata");
     return UC::Status::OK();
 }
 
 UC::Status DramPoolServer::InitProtocol()
 {
     protocolManager_ = std::make_unique<ProtocolManager>();
-    g_services.protocol_mgr = protocolManager_.get();
     RecordLifecycleEvent("InitProtocol");
     return UC::Status::OK();
 }
@@ -234,10 +183,53 @@ UC::Status DramPoolServer::InitQueues()
     return UC::Status::OK();
 }
 
+UC::Status DramPoolServer::StartTransportService()
+{
+    transportManager_ = std::make_unique<transport::TransportManager>(g_config.addr);
+    auto status = transportManager_->Init();
+    if (status != transport::Status::Ok) {
+        transportManager_.reset();
+        return ToUcStatus(status, "TransportManager::Init");
+    }
+
+    transport::HixlInitAttrs attrs;
+    attrs.local_engine = g_config.transportLocalEngine;
+    attrs.device_id = g_config.transportDeviceId;
+    attrs.connect_timeout_ms = static_cast<std::int32_t>(g_config.opTimeoutMs);
+    attrs.transfer_timeout_ms = static_cast<std::int32_t>(g_config.opTimeoutMs);
+    status = transportManager_->InstallTransport(transport::TransportProtocol::Hixl, attrs);
+    if (status != transport::Status::Ok) {
+        return ToUcStatus(status, "TransportManager::InstallTransport");
+    }
+    if (bufferManagers_.empty()) {
+        return UC::Status::InvalidParam("memory pool is not initialized");
+    }
+    RecordLifecycleEvent("StartTransportService");
+    return UC::Status::OK();
+}
+
+UC::Status DramPoolServer::CreateRuntimeContext()
+{
+    if (!metadataIndex_ || !protocolManager_ || !transportManager_) {
+        return UC::Status::InvalidParam("DramPool runtime dependencies are not initialized");
+    }
+    try {
+        runtime_ = std::make_unique<DramPoolRuntime>(*metadataIndex_, bufferManagers_,
+                                                      *transportManager_, *protocolManager_,
+                                                      requestQueue_, transHandleQueue_);
+    } catch (const std::exception& error) {
+        return UC::Status::Error(std::string{"failed to create DramPool runtime: "} +
+                                 error.what());
+    }
+    RecordLifecycleEvent("CreateRuntimeContext");
+    return UC::Status::OK();
+}
+
 UC::Status DramPoolServer::StartCompletionPoller()
 {
+    if (!runtime_) { return UC::Status::InvalidParam("DramPool runtime is not initialized"); }
     try {
-        completionPoller_ = std::make_unique<CompletionPoller>();
+        completionPoller_ = std::make_unique<CompletionPoller>(*runtime_);
         completionPollerStop_.store(false, std::memory_order_release);
         completionPollerThread_ = std::thread(&DramPoolServer::CompletionPollerLoop, this);
         RecordLifecycleEvent("StartCompletionPoller");
@@ -250,8 +242,9 @@ UC::Status DramPoolServer::StartCompletionPoller()
 
 UC::Status DramPoolServer::StartTaskWorker()
 {
+    if (!runtime_) { return UC::Status::InvalidParam("DramPool runtime is not initialized"); }
     try {
-        taskWorker_ = std::make_unique<TaskWorker>();
+        taskWorker_ = std::make_unique<TaskWorker>(*runtime_);
         taskWorkerStop_.store(false, std::memory_order_release);
         taskWorkerThread_ = std::thread(&DramPoolServer::TaskWorkerLoop, this);
         RecordLifecycleEvent("StartTaskWorker");
@@ -275,14 +268,14 @@ UC::Status DramPoolServer::StartGCThread()
     return UC::Status::OK();
 }
 
-UC::Status DramPoolServer::StartRequestChannelAndReceiver()
+UC::Status DramPoolServer::StartListeningService()
 {
     try {
         receiverStop_.store(false, std::memory_order_release);
         receiverThread_ = std::thread(&DramPoolServer::ReceiverLoop, this);
-        RecordLifecycleEvent("StartRequestChannelAndReceiver");
+        RecordLifecycleEvent("StartListeningService");
     } catch (const std::exception& e) {
-        return UC::Status::Error(std::string{"failed to start Receiver: "} + e.what());
+        return UC::Status::Error(std::string{"failed to start listening service: "} + e.what());
     }
     return UC::Status::OK();
 }
@@ -395,13 +388,13 @@ void DramPoolServer::RecordLifecycleEvent(const std::string& event)
 
 void DramPoolServer::ResetInitializedComponents()
 {
+    runtime_.reset();
     completionPoller_.reset();
     taskWorker_.reset();
     protocolManager_.reset();
     metadataIndex_.reset();
     transportManager_.reset();
     bufferManagers_.clear();
-    g_services = {};
 }
 
 }  // namespace UC::DRAMPOOL

@@ -66,7 +66,7 @@ std::size_t CompletionPoller::DrainNewHandles()
     std::size_t drained = 0;
     while (drained < g_config.pollerDrainBudget && pending_.size() < g_config.pollerMaxPending) {
         InflightRecord record;
-        if (!g_services.trans_handle_queue->TryPop(record)) { break; }
+        if (!runtime_.transHandleQueue.TryPop(record)) { break; }
         pending_.emplace_back(std::move(record));
         ++drained;
     }
@@ -84,7 +84,7 @@ bool CompletionPoller::PollFirstBatch()
     // Scan only this head snapshot. Erase never pulls extra work into this round.
     for (std::size_t scanned = 0; scanned < scanCount; ++scanned) {
         transport::TransferStatus transportStatus = transport::TransferStatus::Failed;
-        const auto queryStatus = g_services.transport->GetStatus(iter->handle, transportStatus);
+        const auto queryStatus = runtime_.transport.GetStatus(iter->handle, transportStatus);
         if (queryStatus != transport::Status::Ok) {
             // GetStatus removes failed handles, so an API failure is also terminal.
             UC_ERROR("CompletionPoller GetStatus failed, handle={}", iter->handle);
@@ -123,7 +123,7 @@ void CompletionPoller::ApplyTerminal(InflightRecord& record,
         // Settle metadata and buffer ownership before completing the request item.
         if (record.opcode == KvOpcode::Dump) {
             if (IsSuccessful(terminalStatus)) {
-                const auto status = g_services.metadata->PublishDump(item.key);
+                const auto status = runtime_.metadata.PublishDump(item.key);
                 if (status.Success()) {
                     result = ResultCode::Ok;
                 } else {
@@ -131,9 +131,9 @@ void CompletionPoller::ApplyTerminal(InflightRecord& record,
                              record.handle, status);
                 }
             } else {
-                const auto abortStatus = g_services.metadata->AbortDump(item.key);
+                const auto abortStatus = runtime_.metadata.AbortDump(item.key);
                 if (abortStatus.Success()) {
-                    const auto freeStatus = FreeBuffer(item.buffer_handle);
+                    const auto freeStatus = FreeBuffer(runtime_, item.buffer_handle);
                     if (freeStatus.Failure()) {
                         UC_ERROR(
                             "CompletionPoller Free failed after DUMP abort, handle={}, error={}",
@@ -145,7 +145,7 @@ void CompletionPoller::ApplyTerminal(InflightRecord& record,
                 }
             }
         } else if (record.opcode == KvOpcode::Load) {
-            const auto releaseStatus = g_services.metadata->ReleaseLoadIo(item.key);
+            const auto releaseStatus = runtime_.metadata.ReleaseLoadIo(item.key);
             if (releaseStatus.Failure()) {
                 UC_ERROR("CompletionPoller ReleaseLoadIo failed, handle={}, error={}",
                          record.handle, releaseStatus);
@@ -170,7 +170,7 @@ void CompletionPoller::ApplyTerminal(InflightRecord& record,
         if (!finalResponse.has_value()) { continue; }
 
         const auto responseStatus =
-            WriteResponse(finalResponse->opcode, finalResponse->response_addr,
+            WriteResponse(runtime_, finalResponse->opcode, finalResponse->response_addr,
                           finalResponse->peer_manager_id, finalResponse->results);
         if (responseStatus.Failure()) {
             UC_ERROR("CompletionPoller WriteResponse failed, handle={}, error={}", record.handle,

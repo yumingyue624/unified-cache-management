@@ -59,28 +59,27 @@ BlockId CopyBlockId(const WireKey& wireKey)
 std::uint32_t LoadFailureCode(LoadPinCode /*code*/)
 { return static_cast<std::uint32_t>(ResultCode::Failed); }
 
-UC::Status EnsurePeerReady(const transport::ManagerID& targetManager)
-{
-    auto status = g_services.transport->Connect(transport::TransportProtocol::Hixl, targetManager);
-    if (status == transport::Status::Ok) { return UC::Status::OK(); }
-
-    status = g_services.transport->ExchangeMetadata(targetManager);
-    if (status != transport::Status::Ok) {
-        return ToUcStatus(status, "TransportManager::ExchangeMetadata");
-    }
-    return ToUcStatus(
-        g_services.transport->Connect(transport::TransportProtocol::Hixl, targetManager),
-        "TransportManager::Connect");
-}
-
 }  // namespace
 
 void TaskWorker::Run(const std::atomic_bool& stop)
 {
-    g_services.request_queue->ConsumerLoop(stop, [this](RequestTaskPtr task) {
+    runtime_.requestQueue.ConsumerLoop(stop, [this](RequestTaskPtr task) {
         const auto status = ProcessOneRequest(std::move(task));
         if (status.Failure()) { UC_ERROR("TaskWorker ProcessOneRequest failed: {}", status); }
     });
+}
+
+UC::Status TaskWorker::EnsurePeerReady(const transport::ManagerID& targetManager)
+{
+    auto status = runtime_.transport.Connect(transport::TransportProtocol::Hixl, targetManager);
+    if (status == transport::Status::Ok) { return UC::Status::OK(); }
+
+    status = runtime_.transport.ExchangeMetadata(targetManager);
+    if (status != transport::Status::Ok) {
+        return ToUcStatus(status, "TransportManager::ExchangeMetadata");
+    }
+    return ToUcStatus(runtime_.transport.Connect(transport::TransportProtocol::Hixl, targetManager),
+                      "TransportManager::Connect");
 }
 
 UC::Status TaskWorker::ProcessOneRequest(RequestTaskPtr task)
@@ -122,7 +121,7 @@ UC::Status TaskWorker::ProcessDump(const KvDumpRequest& request,
         const auto& entry = request.entries[index];
         const BlockId key = CopyBlockId(entry.key);
 
-        auto allocated = AllocateBuffer(entry.len);
+        auto allocated = AllocateBuffer(runtime_, entry.len);
         if (!allocated.HasValue()) {
             UC_ERROR("Dump[{}] Allocate failed, len={}", index, entry.len);
             break;
@@ -131,7 +130,7 @@ UC::Status TaskWorker::ProcessDump(const KvDumpRequest& request,
 
         if (slot.handle.value > std::numeric_limits<std::uint32_t>::max()) {
             UC_ERROR("Dump[{}] buffer slot id exceeds Entry::slot", index);
-            (void)FreeBuffer(slot.handle);
+            (void)FreeBuffer(runtime_, slot.handle);
             break;
         }
 
@@ -144,10 +143,9 @@ UC::Status TaskWorker::ProcessDump(const KvDumpRequest& request,
         metadataEntry->lifeTimeout = lifeTimeout;
         metadataEntry->position = entry.idx;
 
-        const auto reserve =
-            g_services.metadata->ReserveDumpEntry(metadataEntry, slot.handle);
+        const auto reserve = runtime_.metadata.ReserveDumpEntry(metadataEntry, slot.handle);
         if (reserve.code == ReserveDumpCode::Exists) {
-            const auto freeStatus = FreeBuffer(slot.handle);
+            const auto freeStatus = FreeBuffer(runtime_, slot.handle);
             if (freeStatus.Failure()) {
                 UC_ERROR("Dump[{}] Free duplicate allocation failed: {}", index, freeStatus);
             }
@@ -155,7 +153,7 @@ UC::Status TaskWorker::ProcessDump(const KvDumpRequest& request,
             continue;
         }
         if (reserve.code != ReserveDumpCode::Reserved) {
-            const auto freeStatus = FreeBuffer(slot.handle);
+            const auto freeStatus = FreeBuffer(runtime_, slot.handle);
             if (freeStatus.Failure()) {
                 UC_ERROR("Dump[{}] Free failed reservation failed: {}", index, freeStatus);
             }
@@ -181,7 +179,7 @@ UC::Status TaskWorker::ProcessDump(const KvDumpRequest& request,
     }
 
     if (transfer_items.empty()) {
-        return WriteResponse(KvOpcode::Dump, request.resp_addr, peerManagerId, results);
+        return WriteResponse(runtime_, KvOpcode::Dump, request.resp_addr, peerManagerId, results);
     }
 
     auto requestContext = std::make_shared<RequestContext>(KvOpcode::Dump, request.resp_addr,
@@ -198,14 +196,14 @@ UC::Status TaskWorker::ProcessDump(const KvDumpRequest& request,
     operation.ops = std::move(segments);
 
     TransportHandle handle = transport::kInvalidTransferHandle;
-    const auto submit_status = g_services.transport->ExecuteAsync(operation, handle);
+    const auto submit_status = runtime_.transport.ExecuteAsync(operation, handle);
     if (submit_status != transport::Status::Ok || handle == transport::kInvalidTransferHandle) {
         UC_ERROR("Dump SubmitAsync failed, items={}", transfer_items.size());
         RollbackDumpItems(transfer_items);
         for (const auto& item : transfer_items) {
             results[item.request_index] = static_cast<std::uint32_t>(ResultCode::Failed);
         }
-        return WriteResponse(KvOpcode::Dump, request.resp_addr, peerManagerId, results);
+        return WriteResponse(runtime_, KvOpcode::Dump, request.resp_addr, peerManagerId, results);
     }
 
     InflightRecord record;
@@ -231,7 +229,7 @@ UC::Status TaskWorker::ProcessLoad(const KvLoadRequest& request,
     for (std::uint16_t index = 0; index < request.batch_size; ++index) {
         const auto& entry = request.entries[index];
         const BlockId key = CopyBlockId(entry.key);
-        auto pin = g_services.metadata->LookupAndPinLoad(key, now);
+        auto pin = runtime_.metadata.LookupAndPinLoad(key, now);
         if (pin.code != LoadPinCode::Pinned) {
             results[index] = LoadFailureCode(pin.code);
             UC_ERROR("Load[{}] LookupAndPinLoad failed, code={}", index,
@@ -239,7 +237,7 @@ UC::Status TaskWorker::ProcessLoad(const KvLoadRequest& request,
             continue;
         }
         if (entry.len > pin.len) {
-            const auto releaseStatus = g_services.metadata->ReleaseLoadIo(key);
+            const auto releaseStatus = runtime_.metadata.ReleaseLoadIo(key);
             if (releaseStatus.Failure()) {
                 UC_ERROR("Load[{}] ReleaseLoadIo after len mismatch failed: {}", index,
                          releaseStatus);
@@ -265,7 +263,7 @@ UC::Status TaskWorker::ProcessLoad(const KvLoadRequest& request,
     }
 
     if (transfer_items.empty()) {
-        return WriteResponse(KvOpcode::Load, request.resp_addr, peerManagerId, results);
+        return WriteResponse(runtime_, KvOpcode::Load, request.resp_addr, peerManagerId, results);
     }
 
     auto requestContext = std::make_shared<RequestContext>(KvOpcode::Load, request.resp_addr,
@@ -282,14 +280,14 @@ UC::Status TaskWorker::ProcessLoad(const KvLoadRequest& request,
     operation.ops = std::move(segments);
 
     TransportHandle handle = transport::kInvalidTransferHandle;
-    const auto submit_status = g_services.transport->ExecuteAsync(operation, handle);
+    const auto submit_status = runtime_.transport.ExecuteAsync(operation, handle);
     if (submit_status != transport::Status::Ok || handle == transport::kInvalidTransferHandle) {
         UC_ERROR("Load SubmitAsync failed, items={}", transfer_items.size());
         UnpinLoadItems(transfer_items);
         for (const auto& item : transfer_items) {
             results[item.request_index] = static_cast<std::uint32_t>(ResultCode::Failed);
         }
-        return WriteResponse(KvOpcode::Load, request.resp_addr, peerManagerId, results);
+        return WriteResponse(runtime_, KvOpcode::Load, request.resp_addr, peerManagerId, results);
     }
 
     InflightRecord record;
@@ -308,7 +306,7 @@ UC::Status TaskWorker::ProcessLookup(const KvLookupRequest& request,
     std::uint32_t prefix_count = 0;
     for (std::uint16_t index = 0; index < request.batch_size; ++index) {
         const BlockId key = CopyBlockId(request.entries[index].key);
-        const auto code = g_services.metadata->LookupReady(key, now);
+        const auto code = runtime_.metadata.LookupReady(key, now);
         if (code == LookupCode::Ready) {
             ++prefix_count;
             continue;
@@ -316,19 +314,20 @@ UC::Status TaskWorker::ProcessLookup(const KvLookupRequest& request,
         break;
     }
 
-    return WriteResponse(KvOpcode::Lookup, request.resp_addr, peerManagerId, {prefix_count});
+    return WriteResponse(runtime_, KvOpcode::Lookup, request.resp_addr, peerManagerId,
+                         {prefix_count});
 }
 
 void TaskWorker::RollbackDumpItems(const std::vector<TransferItem>& items)
 {
     for (const auto& item : items) {
         // Remove metadata first so no index can retain a freed buffer address.
-        const auto abortStatus = g_services.metadata->AbortDump(item.key);
+        const auto abortStatus = runtime_.metadata.AbortDump(item.key);
         if (abortStatus.Failure()) {
             UC_ERROR("RollbackDumpItems AbortDump failed: {}", abortStatus);
             continue;
         }
-        const auto freeStatus = FreeBuffer(item.buffer_handle);
+        const auto freeStatus = FreeBuffer(runtime_, item.buffer_handle);
         if (freeStatus.Failure()) { UC_ERROR("RollbackDumpItems Free failed: {}", freeStatus); }
     }
 }
@@ -336,7 +335,7 @@ void TaskWorker::RollbackDumpItems(const std::vector<TransferItem>& items)
 void TaskWorker::UnpinLoadItems(const std::vector<TransferItem>& items)
 {
     for (const auto& item : items) {
-        const auto status = g_services.metadata->ReleaseLoadIo(item.key);
+        const auto status = runtime_.metadata.ReleaseLoadIo(item.key);
         if (status.Failure()) { UC_ERROR("UnpinLoadItems ReleaseLoadIo failed: {}", status); }
     }
 }
@@ -344,7 +343,7 @@ void TaskWorker::UnpinLoadItems(const std::vector<TransferItem>& items)
 UC::Status TaskWorker::SubmitInflight(InflightRecord&& record)
 {
     // TaskWorker is the sole producer; CompletionPoller is the sole consumer.
-    g_services.trans_handle_queue->Push(std::move(record));
+    runtime_.transHandleQueue.Push(std::move(record));
     return UC::Status::OK();
 }
 
