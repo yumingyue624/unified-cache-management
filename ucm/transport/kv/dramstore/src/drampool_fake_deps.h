@@ -29,6 +29,7 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
+#include "drampool_buffer.h"
 #include "drampool_transport.h"
 #include "drampool_types.h"
 #include "entry.h"
@@ -37,15 +38,7 @@
 
 namespace UC::DRAMPOOL {
 
-// Temporary contracts for modules not landed yet. Real implementations can
-// replace the fake classes without changing TaskWorker or CompletionPoller.
-
-struct BufferSlot {
-    BufferHandle handle;
-    std::uint64_t addr{0};
-    std::uint32_t len{0};
-    std::uint32_t class_id{0};
-};
+// Temporary metadata contract until the metadata-index module lands.
 
 enum class ReserveDumpCode {
     Reserved = 0,
@@ -99,15 +92,6 @@ public:
     virtual UC::Status PublishDump(const BlockId& key) = 0;
     virtual UC::Status AbortDump(const BlockId& key) = 0;
     virtual UC::Status ReleaseLoadIo(const BlockId& key) = 0;
-};
-
-class BufferManager {
-public:
-    virtual ~BufferManager() = default;
-
-    virtual std::uint32_t SlotSize() const = 0;
-    virtual UC::Expected<BufferSlot> Allocate(std::uint32_t len) = 0;
-    virtual UC::Status Free(BufferHandle handle) = 0;
 };
 
 class FakeMetadataIndex final : public MetadataIndex {
@@ -232,52 +216,6 @@ private:
     std::unordered_map<BlockId, BufferHandle, UC::Detail::BlockIdHasher> bufferHandles_;
 };
 
-class FakeBufferManager final : public BufferManager {
-public:
-    explicit FakeBufferManager(std::uint32_t slotSize) : slotSize_(slotSize) {}
-
-    std::uint32_t SlotSize() const override { return slotSize_; }
-
-    UC::Expected<BufferSlot> Allocate(std::uint32_t len) override
-    {
-        if (len == 0) { return UC::Status::InvalidParam("buffer length must be positive"); }
-        auto storage = std::make_unique<std::uint8_t[]>(len);
-
-        std::lock_guard<std::mutex> guard(mutex_);
-        const std::uint64_t id = nextId_++;
-        BufferSlot slot;
-        slot.handle = BufferHandle{id, 0};
-        slot.addr = reinterpret_cast<std::uintptr_t>(storage.get());
-        slot.len = len;
-        allocations_.emplace(id, std::move(storage));
-        return std::move(slot);
-    }
-
-    UC::Status Free(BufferHandle handle) override
-    {
-        std::lock_guard<std::mutex> guard(mutex_);
-        if (!handle.Valid() || allocations_.erase(handle.value) != 1) {
-            return UC::Status::NotFound();
-        }
-        return UC::Status::OK();
-    }
-
-    std::size_t ActiveAllocationCount() const
-    {
-        std::lock_guard<std::mutex> guard(mutex_);
-        return allocations_.size();
-    }
-
-private:
-    std::uint32_t slotSize_{0};
-    mutable std::mutex mutex_;
-    std::uint64_t nextId_{1};
-    std::unordered_map<std::uint64_t, std::unique_ptr<std::uint8_t[]>> allocations_;
-};
-
-inline UC::Expected<BufferSlot> AllocateBuffer(DramPoolRuntime& runtime, std::uint32_t len);
-inline UC::Status FreeBuffer(DramPoolRuntime& runtime, const BufferHandle& handle);
-
 inline UC::Status WriteResponse(DramPoolRuntime& runtime, KvOpcode opcode, std::uint64_t resp_addr,
                                 const transport::ManagerID& peer_manager_id,
                                 const std::vector<std::uint32_t>& results)
@@ -306,45 +244,6 @@ inline UC::Status WriteResponse(DramPoolRuntime& runtime, KvOpcode opcode, std::
 
     const auto free_status = FreeBuffer(runtime, slot.handle);
     return status.Failure() ? status : free_status;
-}
-
-inline UC::Expected<BufferSlot> AllocateBuffer(DramPoolRuntime& runtime, std::uint32_t len)
-{
-    for (std::size_t i = 0; i < runtime.bufferManagers.size(); ++i) {
-        auto& bufferManager = *runtime.bufferManagers[i];
-        if (bufferManager.SlotSize() >= len) {
-            auto result = bufferManager.Allocate(len);
-            if (result.HasValue()) {
-                result.Value().class_id = static_cast<std::uint32_t>(i);
-                result.Value().handle.class_id = static_cast<std::uint32_t>(i);
-                transport::MemoryRegion memory;
-                memory.addr = reinterpret_cast<void*>(result.Value().addr);
-                memory.length = result.Value().len;
-                memory.type = transport::MemoryType::Host;
-                auto register_status = runtime.transport.RegisterMemory(
-                    memory, result.Value().handle.memory_handle);
-                if (register_status != transport::Status::Ok) {
-                    const auto handle = result.Value().handle;
-                    (void)bufferManager.Free(handle);
-                    return ToUcStatus(register_status, "RegisterMemory");
-                }
-            }
-            return result;
-        }
-    }
-    return UC::Status::Error("no buffer pool fits len=" + std::to_string(len));
-}
-
-inline UC::Status FreeBuffer(DramPoolRuntime& runtime, const BufferHandle& handle)
-{
-    if (handle.class_id < runtime.bufferManagers.size()) {
-        if (handle.memory_handle != transport::kInvalidMemoryHandle) {
-            // Unregister may fail after TransportManager::Shutdown; the host buffer is still freed.
-            (void)runtime.transport.UnregisterMemory(handle.memory_handle);
-        }
-        return runtime.bufferManagers[handle.class_id]->Free(handle);
-    }
-    return UC::Status::NotFound();
 }
 
 }  // namespace UC::DRAMPOOL

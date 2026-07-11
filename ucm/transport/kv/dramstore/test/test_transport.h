@@ -113,6 +113,12 @@ public:
         return transfers_.size();
     }
 
+    std::size_t ActiveMemoryCount() const
+    {
+        std::lock_guard<std::mutex> guard(mutex_);
+        return memories_.size();
+    }
+
     std::size_t SyncExecutionCount() const
     {
         std::lock_guard<std::mutex> guard(mutex_);

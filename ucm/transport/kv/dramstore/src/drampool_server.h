@@ -111,12 +111,13 @@ private:
     RequestQueue requestQueue_;
     TransHandleQueue transHandleQueue_;
     std::unique_ptr<transport::TransportManager> transportManager_;
-    std::vector<std::unique_ptr<BufferManager>> bufferManagers_;
+    BufferPoolList bufferPools_;
     std::unique_ptr<MetadataIndex> metadataIndex_;
     std::unique_ptr<ProtocolManager> protocolManager_;
     std::unique_ptr<DramPoolRuntime> runtime_;
     std::unique_ptr<TaskWorker> taskWorker_;
     std::unique_ptr<CompletionPoller> completionPoller_;
+    bool aclRuntimeOwned_{false};
 
     mutable std::mutex controlMutex_;
     ServerState state_{ServerState::New};

@@ -10,6 +10,7 @@
 #include <utility>
 #include <vector>
 #include "drampool_config.h"
+#include "test_buffer_pool.h"
 #include "test_transport.h"
 
 namespace UC::DRAMPOOL {
@@ -62,9 +63,9 @@ protected:
         g_config.pollerIdleWaitUs = kTestIdleWaitUs;
         g_config.opTimeoutMs = kTestOperationTimeoutMs;
 
-        bufferManagers_.push_back(std::make_unique<FakeBufferManager>(kValueLength));
-        buffers_ = static_cast<FakeBufferManager*>(bufferManagers_.front().get());
-        runtime_ = std::make_unique<DramPoolRuntime>(metadata_, bufferManagers_, manager_,
+        bufferPools_.push_back(
+            std::make_unique<TEST::TestBufferPool>(kValueLength, kQueueCapacity));
+        runtime_ = std::make_unique<DramPoolRuntime>(metadata_, bufferPools_, manager_,
                                                      protocols_, requestQueue_, ingress_);
     }
 
@@ -77,7 +78,7 @@ protected:
     InflightRecord MakeDumpRecord(std::uint8_t keySuffix, std::uint64_t responseAddr,
                                   TransportHandle& handleOut)
     {
-        auto allocated = buffers_->Allocate(kValueLength);
+        auto allocated = AllocateBuffer(*runtime_, kValueLength);
         EXPECT_TRUE(allocated.HasValue());
         auto slot = std::move(allocated).Value();
 
@@ -126,8 +127,7 @@ protected:
     RequestQueue requestQueue_;
     TransHandleQueue ingress_;
     FakeMetadataIndex metadata_;
-    BufferManagerList bufferManagers_;
-    FakeBufferManager* buffers_{nullptr};
+    BufferPoolList bufferPools_;
     ProtocolManager protocols_;
     std::shared_ptr<TEST::TestTransport> testTransport_{TEST::MakeTestTransport()};
     transport::TransportManager manager_{"127.0.0.1:28000"};
@@ -200,7 +200,7 @@ TEST_F(CompletionPollerTest, TimeoutWaitsForTerminalThenAbortsDump)
     ASSERT_TRUE(WaitUntil([&]() { return testTransport_->QueryCount(handle) > 0; }));
     EXPECT_EQ(metadata_.LookupReady(MakeKey(7), std::chrono::system_clock::now()),
               LookupCode::NotReady);
-    EXPECT_EQ(buffers_->ActiveAllocationCount(), 1U);
+    EXPECT_EQ(testTransport_->ActiveMemoryCount(), 1U);
 
     ASSERT_TRUE(testTransport_->SetStatus(handle, transport::TransferStatus::Completed));
     const bool completed = WaitUntil([&]() { return testTransport_->SyncExecutionCount() == 1; });
@@ -210,7 +210,7 @@ TEST_F(CompletionPollerTest, TimeoutWaitsForTerminalThenAbortsDump)
     EXPECT_TRUE(completed);
     EXPECT_EQ(metadata_.LookupReady(MakeKey(7), std::chrono::system_clock::now()),
               LookupCode::NotFound);
-    EXPECT_EQ(buffers_->ActiveAllocationCount(), 0U);
+    EXPECT_EQ(testTransport_->ActiveMemoryCount(), 0U);
     EXPECT_EQ(testTransport_->ActiveTransferCount(), 0U);
 }
 

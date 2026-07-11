@@ -22,8 +22,10 @@
  * SOFTWARE.
  * */
 #include "drampool_server.h"
+#include <acl/acl.h>
 #include <chrono>
 #include <exception>
+#include <string>
 #include <type_traits>
 #include <utility>
 #include "logger.h"
@@ -60,6 +62,25 @@ template <typename Callback>
 auto MakeScopeExit(Callback&& callback)
 {
     return ScopeExit<std::decay_t<Callback>>(std::forward<Callback>(callback));
+}
+
+UC::Status InitializeAclRuntime(std::int32_t deviceId, bool& ownsRuntime)
+{
+    const auto initStatus = aclInit(nullptr);
+    if (initStatus == ACL_SUCCESS) {
+        ownsRuntime = true;
+    } else if (initStatus != ACL_ERROR_REPEAT_INITIALIZE) {
+        return UC::Status::Error("aclInit failed: " + std::to_string(initStatus));
+    }
+
+    const auto setDeviceStatus = aclrtSetDevice(deviceId);
+    if (setDeviceStatus == ACL_SUCCESS) { return UC::Status::OK(); }
+
+    if (ownsRuntime) {
+        (void)aclFinalize();
+        ownsRuntime = false;
+    }
+    return UC::Status::Error("aclrtSetDevice failed: " + std::to_string(setDeviceStatus));
 }
 
 }  // namespace
@@ -153,9 +174,21 @@ std::vector<std::string> DramPoolServer::LifecycleEvents() const
 
 UC::Status DramPoolServer::InitMemoryPool()
 {
-    for (const auto blockSize : g_config.poolBlockSizes) {
-        bufferManagers_.push_back(
-            std::make_unique<FakeBufferManager>(static_cast<std::uint32_t>(blockSize)));
+    if (const auto status = InitializeAclRuntime(g_config.transportDeviceId, aclRuntimeOwned_);
+        status.Failure()) {
+        return status;
+    }
+    constexpr char kBufferPoolNamePrefix[] = "drampool-kvcache-";
+    for (std::size_t index = 0; index < g_config.poolBlockSizes.size(); ++index) {
+        auto bufferPool = std::make_unique<AsuBufferPool>();
+        if (const auto status = bufferPool->Init(
+                kBufferPoolNamePrefix + std::to_string(index),
+                static_cast<std::size_t>(g_config.poolBlockSizes[index]),
+                static_cast<std::size_t>(g_config.poolSlotCounts[index]));
+            status.Failure()) {
+            return status;
+        }
+        bufferPools_.push_back(std::move(bufferPool));
     }
     RecordLifecycleEvent("InitMemoryPool");
     return UC::Status::OK();
@@ -201,7 +234,7 @@ UC::Status DramPoolServer::StartTransportService()
     if (status != transport::Status::Ok) {
         return ToUcStatus(status, "TransportManager::InstallTransport");
     }
-    if (bufferManagers_.empty()) {
+    if (bufferPools_.empty()) {
         return UC::Status::InvalidParam("memory pool is not initialized");
     }
     RecordLifecycleEvent("StartTransportService");
@@ -213,8 +246,11 @@ UC::Status DramPoolServer::CreateRuntimeContext()
     if (!metadataIndex_ || !protocolManager_ || !transportManager_) {
         return UC::Status::InvalidParam("DramPool runtime dependencies are not initialized");
     }
+    if (bufferPools_.empty()) {
+        return UC::Status::InvalidParam("DramPool buffer pools are not initialized");
+    }
     try {
-        runtime_ = std::make_unique<DramPoolRuntime>(*metadataIndex_, bufferManagers_,
+        runtime_ = std::make_unique<DramPoolRuntime>(*metadataIndex_, bufferPools_,
                                                       *transportManager_, *protocolManager_,
                                                       requestQueue_, transHandleQueue_);
     } catch (const std::exception& error) {
@@ -335,7 +371,7 @@ void DramPoolServer::UnregisterBufferMemory()
             UC_ERROR_UNLIMITED("DramPool TransportManager shutdown failed");
         }
     }
-    bufferManagers_.clear();
+    bufferPools_.clear();
     RecordLifecycleEvent("UnregisterBufferMemory");
 }
 
@@ -394,7 +430,12 @@ void DramPoolServer::ResetInitializedComponents()
     protocolManager_.reset();
     metadataIndex_.reset();
     transportManager_.reset();
-    bufferManagers_.clear();
+    bufferPools_.clear();
+    if (aclRuntimeOwned_) {
+        (void)aclrtResetDevice(g_config.transportDeviceId);
+        (void)aclFinalize();
+        aclRuntimeOwned_ = false;
+    }
 }
 
 }  // namespace UC::DRAMPOOL

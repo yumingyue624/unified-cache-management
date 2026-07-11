@@ -53,18 +53,21 @@ if(RUNTIME_ENVIRONMENT STREQUAL "ascend")
               ${ASCEND_ROOT}/arm64-linux/lib64)
     find_path(P2P_HIXL_INCLUDE_DIR NAMES hixl/hixl.h
         HINTS ${HIXL_ROOT}/include ${ASCEND_ROOT}/include)
-    find_library(P2P_HIXL_LIB NAMES hixl
+    find_library(P2P_HIXL_LIB NAMES hixl cann_hixl
         HINTS ${HIXL_ROOT}/lib64 ${HIXL_ROOT}/lib ${ASCEND_ROOT}/lib64)
+    find_library(P2P_METADEF_LIB NAMES metadef
+        HINTS ${ASCEND_ROOT}/lib64 ${ASCEND_ROOT}/aarch64-linux/lib64
+              ${ASCEND_ROOT}/arm64-linux/lib64)
 
     if(NOT P2P_ASCEND_INCLUDE_DIR OR NOT P2P_ASCENDCL_LIB OR
-       NOT P2P_HIXL_INCLUDE_DIR OR NOT P2P_HIXL_LIB)
+       NOT P2P_HIXL_INCLUDE_DIR OR NOT P2P_HIXL_LIB OR NOT P2P_METADEF_LIB)
         message(FATAL_ERROR "Cannot find the ACL/HIXL dependencies required by p2p transport")
     endif()
     list(APPEND P2P_TRANSPORT_SOURCES
         src/one_sided/common/acl_runtime_context.cpp
         src/one_sided/hixl/hixl_transport.cpp)
     list(APPEND P2P_PRIVATE_INCLUDE_DIRS ${P2P_ASCEND_INCLUDE_DIR} ${P2P_HIXL_INCLUDE_DIR})
-    list(APPEND P2P_PRIVATE_LIBRARIES ${P2P_ASCENDCL_LIB} ${P2P_HIXL_LIB})
+    list(APPEND P2P_PRIVATE_LIBRARIES ${P2P_ASCENDCL_LIB} ${P2P_HIXL_LIB} ${P2P_METADEF_LIB})
 endif()
 
 find_package(Threads REQUIRED)

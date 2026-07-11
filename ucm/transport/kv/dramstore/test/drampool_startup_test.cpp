@@ -3,6 +3,7 @@
 #include <csignal>
 #include <future>
 #include <gtest/gtest.h>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <utility>
@@ -37,6 +38,9 @@ DramPoolConfig MakeValidConfig()
     config.gcIntervalMs = 10;
     config.opTimeoutMs = 5000;
     config.shutdownTimeoutMs = 30000;
+    if (const auto status = ResolvePoolSlotCounts(config); status.Failure()) {
+        throw std::runtime_error(status.ToString());
+    }
     return config;
 }
 
@@ -104,6 +108,7 @@ TEST(DramPoolConfigTest, ParsesLaunchOptions)
     EXPECT_EQ(config.poolSizeGb, 128U);
     EXPECT_EQ(config.poolBlockSizes, (std::vector<std::uint64_t>{4096, 8192}));
     EXPECT_EQ(config.poolBlockProportions, (std::vector<std::uint32_t>{1, 3}));
+    EXPECT_EQ(config.poolSlotCounts, (std::vector<std::uint32_t>{8'388'608, 12'582'912}));
     EXPECT_EQ(config.defaultDumpTtlMs, 30U * kMillisecondsPerMinute);
 }
 
@@ -124,6 +129,23 @@ TEST(DramPoolConfigTest, DefaultsBlockProportionsAndTtl)
     ASSERT_TRUE(status.Success()) << status.ToString();
     EXPECT_EQ(config.poolBlockProportions, (std::vector<std::uint32_t>{1, 1}));
     EXPECT_EQ(config.defaultDumpTtlMs, kDefaultDumpTtlMs);
+}
+
+TEST(DramPoolConfigTest, ResolvesGiBSlotCountsWithAlignedStride)
+{
+    const char* argv[] = {
+        "drampool",
+        "--addr=127.0.0.1:9000",
+        "--nics=mlx5_0",
+        "--pool-size-gb=1",
+        "--kvcache-block-sizes=4097",
+    };
+    DramPoolConfig config;
+
+    const auto status = ParseCommandLine(5, const_cast<char**>(argv), config);
+
+    ASSERT_TRUE(status.Success()) << status.ToString();
+    EXPECT_EQ(config.poolSlotCounts, (std::vector<std::uint32_t>{258'111}));
 }
 
 TEST(DramPoolConfigTest, RejectsInvalidCommandLines)

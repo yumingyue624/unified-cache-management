@@ -29,6 +29,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include "asu_transport/buffer_manager.h"
 
 namespace UC::DRAMPOOL {
 namespace {
@@ -283,7 +284,74 @@ UC::Status ParseCommandLine(int argc, char** argv, DramPoolConfig& config)
         // Each configured block size receives an equal capacity share by default.
         config.poolBlockProportions.assign(config.poolBlockSizes.size(), 1);
     }
-    return ValidateDramPoolConfig(config);
+    if (const auto status = ValidateDramPoolConfig(config); status.Failure()) { return status; }
+    return ResolvePoolSlotCounts(config);
+}
+
+UC::Status ResolvePoolSlotCounts(DramPoolConfig& config)
+{
+    config.poolSlotCounts.clear();
+    if (config.poolBlockSizes.size() != config.poolBlockProportions.size()) {
+        return UC::Status::InvalidParam(
+            "--kvcache-block-sizes and --kvcache-block-proportions must have the same length");
+    }
+    if (config.poolSizeGb > std::numeric_limits<std::uint64_t>::max() / kBytesPerGiB) {
+        return UC::Status::InvalidParam("--pool-size-gb is too large");
+    }
+
+    std::uint64_t totalProportion = 0;
+    for (const auto proportion : config.poolBlockProportions) {
+        if (proportion == 0 ||
+            totalProportion > std::numeric_limits<std::uint32_t>::max() - proportion) {
+            return UC::Status::InvalidParam(
+                "sum of --kvcache-block-proportions must be in [1, {}]",
+                std::numeric_limits<std::uint32_t>::max());
+        }
+        totalProportion += proportion;
+    }
+    if (totalProportion == 0) {
+        return UC::Status::InvalidParam("--kvcache-block-proportions must not be empty");
+    }
+
+    const auto totalBytes = config.poolSizeGb * kBytesPerGiB;
+    const auto totalSize = static_cast<std::size_t>(totalBytes);
+    if (static_cast<std::uint64_t>(totalSize) != totalBytes) {
+        return UC::Status::InvalidParam("--pool-size-gb exceeds addressable process memory");
+    }
+
+    std::vector<std::uint32_t> slotCounts;
+    slotCounts.reserve(config.poolBlockSizes.size());
+    const auto wholeShare = totalBytes / totalProportion;
+    const auto remainder = totalBytes % totalProportion;
+    for (std::size_t index = 0; index < config.poolBlockSizes.size(); ++index) {
+        const auto blockSize = config.poolBlockSizes[index];
+        const auto slotCapacity = static_cast<std::size_t>(blockSize);
+        if (blockSize == 0 || blockSize > std::numeric_limits<std::uint32_t>::max() ||
+            static_cast<std::uint64_t>(slotCapacity) != blockSize) {
+            return UC::Status::InvalidParam("--kvcache-block-sizes item is unsupported");
+        }
+
+        if (slotCapacity > std::numeric_limits<std::size_t>::max() -
+                               (UC::ASU::kBufferSlotAddressAlignment - 1)) {
+            return UC::Status::InvalidParam("--kvcache-block-sizes item overflows slot alignment");
+        }
+        const auto slotStride =
+            (slotCapacity + UC::ASU::kBufferSlotAddressAlignment - 1) /
+            UC::ASU::kBufferSlotAddressAlignment * UC::ASU::kBufferSlotAddressAlignment;
+        const auto proportion = static_cast<std::uint64_t>(config.poolBlockProportions[index]);
+        // totalProportion is bounded to uint32_t, so this remainder product cannot overflow.
+        const auto classBytes = wholeShare * proportion + remainder * proportion / totalProportion;
+        const auto slotCount = classBytes / slotStride;
+        if (slotCount == 0 || slotCount >= std::numeric_limits<std::uint32_t>::max()) {
+            return UC::Status::InvalidParam(
+                "pool capacity for --kvcache-block-sizes item {} cannot form a valid slot pool",
+                index);
+        }
+        slotCounts.push_back(static_cast<std::uint32_t>(slotCount));
+    }
+
+    config.poolSlotCounts = std::move(slotCounts);
+    return UC::Status::OK();
 }
 
 UC::Status ValidateDramPoolConfig(const DramPoolConfig& config)

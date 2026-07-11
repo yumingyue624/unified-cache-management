@@ -2,6 +2,7 @@ find_package(Threads REQUIRED)
 
 add_library(drampool_core STATIC
     src/completion_poller.cpp
+    src/drampool_buffer.cpp
     src/drampool_config.cpp
     src/drampool_daemon.cpp
     src/drampool_server.cpp
@@ -23,6 +24,8 @@ target_link_libraries(drampool_core
         infra_template
         infra_thread
         p2p_transport
+        asu_transport
+        asu_ascend_deps
         Threads::Threads
 )
 

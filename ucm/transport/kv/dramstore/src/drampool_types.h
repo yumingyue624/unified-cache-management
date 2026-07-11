@@ -45,6 +45,13 @@ struct BufferHandle {
     bool Valid() const noexcept { return value != 0; }
 };
 
+struct BufferSlot {
+    BufferHandle handle;
+    std::uint64_t addr{0};
+    std::uint32_t len{0};
+    std::uint32_t class_id{0};
+};
+
 using TransportHandle = transport::TransferHandle;
 
 struct TransferItem {
@@ -142,17 +149,17 @@ struct InflightRecord {
 using TransHandleQueue = UC::SpscRingQueue<InflightRecord>;
 
 class MetadataIndex;
-class BufferManager;
+class BufferPool;
 
-using BufferManagerList = std::vector<std::unique_ptr<BufferManager>>;
+using BufferPoolList = std::vector<std::unique_ptr<BufferPool>>;
 
 // Non-owning runtime view. DramPoolServer owns every referenced component.
 struct DramPoolRuntime {
-    DramPoolRuntime(MetadataIndex& metadataRef, BufferManagerList& bufferManagersRef,
+    DramPoolRuntime(MetadataIndex& metadataRef, BufferPoolList& bufferPoolsRef,
                     transport::TransportManager& transportRef, ProtocolManager& protocolRef,
                     RequestQueue& requestQueueRef, TransHandleQueue& transHandleQueueRef)
         : metadata(metadataRef),
-          bufferManagers(bufferManagersRef),
+          bufferPools(bufferPoolsRef),
           transport(transportRef),
           protocol(protocolRef),
           requestQueue(requestQueueRef),
@@ -161,7 +168,7 @@ struct DramPoolRuntime {
     }
 
     MetadataIndex& metadata;
-    BufferManagerList& bufferManagers;
+    BufferPoolList& bufferPools;
     transport::TransportManager& transport;
     ProtocolManager& protocol;
     RequestQueue& requestQueue;

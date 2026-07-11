@@ -74,7 +74,7 @@ target_include_directories(asu_transport
 target_compile_definitions(asu_transport PRIVATE SPDLOG_FMT_EXTERNAL)
 target_link_libraries(asu_transport
     PUBLIC
-        pthread fmt spdlog zlibstatic
+        pthread fmt spdlog zlibstatic infra_thread
     PRIVATE
         asu_ascend_deps
 )

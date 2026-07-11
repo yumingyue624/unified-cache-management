@@ -21,16 +21,15 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  * */
-#include "buffer_manager.h"
+#include "asu_transport/buffer_manager.h"
 #include <acl/acl.h>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
 #include "trans/ascend/ascend_buffer.h"
+#include "trans_provider.h"
 
 namespace UC::ASU {
-
-constexpr std::size_t kSlotAddressAlignment = 64;
 
 bool GetSlotStride(std::size_t capacity, std::size_t& stride)
 {
@@ -42,9 +41,10 @@ bool GetSlotStride(std::size_t capacity, std::size_t& stride)
     // Keep one layout for every memory type by aligning each slot start to a
     // 64-byte boundary.
     constexpr auto kMaxSize = std::numeric_limits<std::size_t>::max();
-    if (capacity > kMaxSize - (kSlotAddressAlignment - 1)) { return false; }
+    if (capacity > kMaxSize - (kBufferSlotAddressAlignment - 1)) { return false; }
 
-    stride = (capacity + kSlotAddressAlignment - 1) / kSlotAddressAlignment * kSlotAddressAlignment;
+    stride = (capacity + kBufferSlotAddressAlignment - 1) / kBufferSlotAddressAlignment *
+             kBufferSlotAddressAlignment;
     return true;
 }
 
@@ -59,7 +59,7 @@ Status BufferManager::BufferRegion::Create(MemoryType type, std::size_t size, Bu
             }
             // HOST has one CPU-visible address, which is also passed to the
             // provider when it registers the region as MEM_HOST.
-            region = {owner, owner.get(), owner.get(), TransProvider::MemType::MEM_HOST};
+            region = {owner, owner.get(), owner.get(), BufferManager::ProviderMemoryType::Host};
             return Status::OK();
         }
         case MemoryType::HOST_PINNED: {
@@ -69,7 +69,7 @@ Status BufferManager::BufferRegion::Create(MemoryType type, std::size_t size, Bu
                 return Status::Error(StatusCode::INTERNAL_ERROR,
                                      "failed to allocate host-pinned memory");
             }
-            region = {owner, owner.get(), deviceAddr, TransProvider::MemType::MEM_DEVICE};
+            region = {owner, owner.get(), deviceAddr, BufferManager::ProviderMemoryType::Device};
             return Status::OK();
         }
         case MemoryType::ASCEND_DEVICE: {
@@ -78,7 +78,7 @@ Status BufferManager::BufferRegion::Create(MemoryType type, std::size_t size, Bu
                 return Status::Error(StatusCode::INTERNAL_ERROR,
                                      "failed to allocate device memory");
             }
-            region = {owner, owner.get(), owner.get(), TransProvider::MemType::MEM_DEVICE};
+            region = {owner, owner.get(), owner.get(), BufferManager::ProviderMemoryType::Device};
             return Status::OK();
         }
         default: return Status::Error(StatusCode::INVALID_ARGUMENT, "unsupported memory type");
@@ -90,7 +90,7 @@ void BufferManager::BufferRegion::Reset()
     owner.reset();
     localAddr = nullptr;
     deviceAddr = nullptr;
-    providerMemType = TransProvider::MemType::MEM_HOST;
+    providerMemType = BufferManager::ProviderMemoryType::Host;
 }
 
 bool IsTransportBufferReady(const ScatterGatherEntry& sge)
@@ -122,6 +122,14 @@ Status BufferManager::Init(std::string name, MemoryType type, std::size_t slot_c
     if (slot_capacity == 0 || slot_num == 0) {
         return Status::Error(StatusCode::INVALID_ARGUMENT,
                              name + ": slot_capacity and slot_num must be non-zero");
+    }
+    if (slot_capacity > std::numeric_limits<std::uint32_t>::max()) {
+        return Status::Error(StatusCode::INVALID_ARGUMENT,
+                             name + ": slot_capacity exceeds ScatterGatherEntry length");
+    }
+    if (slot_num >= IndexPool::npos) {
+        return Status::Error(StatusCode::INVALID_ARGUMENT,
+                             name + ": slot_num exceeds IndexPool capacity");
     }
     std::size_t slotStride = 0;
     if (!GetSlotStride(slot_capacity, slotStride) ||
@@ -169,7 +177,9 @@ Status BufferManager::RegisterMemory()
 {
     std::size_t total = slot_stride_ * slot_num_;
     std::vector<TransProvider::RegisterMemoryDesc> descs{
-        {region_.providerMemType, reinterpret_cast<uintptr_t>(region_.deviceAddr), total,
+        {region_.providerMemType == ProviderMemoryType::Device ? TransProvider::MemType::MEM_DEVICE
+                                                                 : TransProvider::MemType::MEM_HOST,
+         reinterpret_cast<uintptr_t>(region_.deviceAddr), total,
          reinterpret_cast<uintptr_t>(region_.localAddr)}
     };
     std::vector<TransProvider::MemHandle> memHandles;
@@ -246,6 +256,11 @@ bool BufferManager::IsValidPointer(const void* ptr) const
     if (p < base || p >= base + slot_stride_ * slot_num_) { return false; }
     auto offset = static_cast<std::size_t>(p - base);
     return (offset % slot_stride_) == 0;
+}
+
+BufferMemoryView BufferManager::GetMemoryView() const noexcept
+{
+    return {region_.localAddr, region_.deviceAddr, slot_stride_ * slot_num_, memory_type_};
 }
 
 }  // namespace UC::ASU

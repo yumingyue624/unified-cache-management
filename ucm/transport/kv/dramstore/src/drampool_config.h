@@ -35,6 +35,7 @@ inline constexpr std::uint32_t kDefaultPollerDrainBudget = 64;
 inline constexpr std::uint32_t kDefaultPollerScanBudget = 64;
 inline constexpr std::uint32_t kDefaultPollerMaxPending = 1024 * 1024;
 inline constexpr std::uint32_t kDefaultPollerIdleWaitUs = 100;
+inline constexpr std::uint64_t kBytesPerGiB = 1024ULL * 1024ULL * 1024ULL;
 inline constexpr std::uint64_t kMillisecondsPerMinute = 60'000;
 inline constexpr std::uint64_t kDefaultTtlMinutes = 120;
 inline constexpr std::uint64_t kDefaultDumpTtlMs =
@@ -44,9 +45,12 @@ struct DramPoolConfig {
     // Local DramPool service address supplied by --addr.
     std::string addr;
     std::vector<std::string> nics{};
+    // --pool-size-gb follows the project convention: the unit is GiB.
     std::uint64_t poolSizeGb{0};
     std::vector<std::uint64_t> poolBlockSizes{};
     std::vector<std::uint32_t> poolBlockProportions{};
+    // Resolved by ParseCommandLine from poolSizeGb, block sizes, and proportions.
+    std::vector<std::uint32_t> poolSlotCounts{};
     std::uint64_t defaultDumpTtlMs{kDefaultDumpTtlMs};
 
     std::string serverId{"drampool-0"};
@@ -79,5 +83,6 @@ inline DramPoolConfig g_config{};
 std::string BuildUsage(const char* program);
 UC::Status ParseCommandLine(int argc, char** argv, DramPoolConfig& config);
 UC::Status ValidateDramPoolConfig(const DramPoolConfig& config);
+UC::Status ResolvePoolSlotCounts(DramPoolConfig& config);
 
 }  // namespace UC::DRAMPOOL
