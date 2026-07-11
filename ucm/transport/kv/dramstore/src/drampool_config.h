@@ -41,7 +41,8 @@ inline constexpr std::uint64_t kDefaultDumpTtlMs =
     kDefaultTtlMinutes * kMillisecondsPerMinute;
 
 struct DramPoolConfig {
-    std::string listenAddr;
+    // Local DramPool service address supplied by --addr.
+    std::string addr;
     std::vector<std::string> nics{};
     std::uint64_t poolSizeGb{0};
     std::vector<std::uint64_t> poolBlockSizes{};
@@ -50,7 +51,6 @@ struct DramPoolConfig {
 
     std::string serverId{"drampool-0"};
     std::string transportMode{"hixl"};
-    std::string transportManagerAddr;
     std::string transportLocalEngine{"drampool-0"};
     std::int32_t transportDeviceId{0};
 
@@ -73,7 +73,8 @@ struct DramPoolConfig {
     std::unordered_map<std::string, std::string> extra;
 };
 
-inline DramPoolConfig g_drampool_config{};
+// One DramPool daemon runs in each process; startup sets this once before Server::Init().
+inline DramPoolConfig g_config{};
 
 std::string BuildUsage(const char* program);
 UC::Status ParseCommandLine(int argc, char** argv, DramPoolConfig& config);

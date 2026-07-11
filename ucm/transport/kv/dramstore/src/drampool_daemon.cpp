@@ -76,8 +76,7 @@ std::atomic_bool DramPoolDaemon::shutdownRequested_{false};
 
 int DramPoolDaemon::Run(int argc, char** argv)
 {
-    DramPoolConfig config;
-    auto status = ParseCommandLine(argc, argv, config);
+    auto status = ParseCommandLine(argc, argv, g_config);
     if (status.Failure()) {
         std::cerr << status.ToString() << "\n" << BuildUsage(argc > 0 ? argv[0] : "drampool");
         return 1;
@@ -94,7 +93,7 @@ int DramPoolDaemon::Run(int argc, char** argv)
     }
 
     DramPoolServer server;
-    status = server.Init(config);
+    status = server.Init();
     if (status.Failure()) {
         UC_ERROR_UNLIMITED("DramPool server init failed: {}", status);
         return 1;
@@ -106,8 +105,8 @@ int DramPoolDaemon::Run(int argc, char** argv)
         return 1;
     }
 
-    UC_INFO_UNLIMITED("DramPool service ready, server_id={}, listen_addr={}", config.serverId,
-                      config.listenAddr);
+    UC_INFO_UNLIMITED("DramPool service ready, server_id={}, addr={}",
+                      g_config.serverId, g_config.addr);
     WaitForShutdown();
     UC_INFO_UNLIMITED("DramPool shutdown requested");
     server.Stop();

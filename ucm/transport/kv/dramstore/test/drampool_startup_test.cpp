@@ -5,6 +5,7 @@
 #include <gtest/gtest.h>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 #include "drampool_config.h"
 #include "drampool_daemon.h"
@@ -17,13 +18,12 @@ DramPoolConfig MakeValidConfig()
 {
     DramPoolConfig config;
     config.serverId = "drampool-test";
-    config.listenAddr = "127.0.0.1:19000";
+    config.addr = "127.0.0.1:19000";
     config.nics = {"mlx5_0", "mlx5_1"};
     config.poolSizeGb = 1;
     config.poolBlockSizes = {4096, 8192};
     config.poolBlockProportions = {70, 30};
     config.transportMode = "hixl";
-    config.transportManagerAddr = config.listenAddr;
     config.transportLocalEngine = "drampool-test";
     config.transportDeviceId = 0;
     config.metadataShards = 4;
@@ -39,6 +39,25 @@ DramPoolConfig MakeValidConfig()
     config.shutdownTimeoutMs = 30000;
     return config;
 }
+
+#if defined(UCM_DRAMPOOL_RUNTIME_INTEGRATION_TESTS)
+class ScopedDramPoolConfig {
+public:
+    explicit ScopedDramPoolConfig(DramPoolConfig config)
+        : previous_(g_config)
+    {
+        g_config = std::move(config);
+    }
+
+    ~ScopedDramPoolConfig() { g_config = std::move(previous_); }
+
+    ScopedDramPoolConfig(const ScopedDramPoolConfig&) = delete;
+    ScopedDramPoolConfig& operator=(const ScopedDramPoolConfig&) = delete;
+
+private:
+    DramPoolConfig previous_;
+};
+#endif
 
 #if defined(UCM_DRAMPOOL_RUNTIME_INTEGRATION_TESTS)
 bool ContainsInOrder(const std::vector<std::string>& events,
@@ -80,8 +99,7 @@ TEST(DramPoolConfigTest, ParsesLaunchOptions)
     const auto status = ParseCommandLine(15, const_cast<char**>(argv), config);
 
     ASSERT_TRUE(status.Success()) << status.ToString();
-    EXPECT_EQ(config.listenAddr, "127.0.0.1:9000");
-    EXPECT_EQ(config.transportManagerAddr, config.listenAddr);
+    EXPECT_EQ(config.addr, "127.0.0.1:9000");
     EXPECT_EQ(config.nics, (std::vector<std::string>{"mlx5_0", "mlx5_1"}));
     EXPECT_EQ(config.poolSizeGb, 128U);
     EXPECT_EQ(config.poolBlockSizes, (std::vector<std::uint64_t>{4096, 8192}));
@@ -159,10 +177,9 @@ TEST(DramPoolConfigTest, RejectsInvalidCoreConfig)
     };
 
     expectInvalid([](DramPoolConfig& config) { config.serverId.clear(); });
-    expectInvalid([](DramPoolConfig& config) { config.listenAddr.clear(); });
+    expectInvalid([](DramPoolConfig& config) { config.addr.clear(); });
     expectInvalid([](DramPoolConfig& config) { config.nics.clear(); });
     expectInvalid([](DramPoolConfig& config) { config.transportMode = "udp"; });
-    expectInvalid([](DramPoolConfig& config) { config.transportManagerAddr.clear(); });
     expectInvalid([](DramPoolConfig& config) { config.transportLocalEngine.clear(); });
     expectInvalid([](DramPoolConfig& config) { config.transportDeviceId = -1; });
     expectInvalid([](DramPoolConfig& config) { config.poolSizeGb = 0; });
@@ -198,17 +215,14 @@ TEST(DramPoolServerTest, RejectsCallsOutsideValidState)
 {
     DramPoolServer server;
     EXPECT_TRUE(server.Start().Failure());
-
-    auto invalidConfig = MakeValidConfig();
-    invalidConfig.poolSizeGb = 0;
-    EXPECT_TRUE(server.Init(invalidConfig).Failure());
 }
 
 #if defined(UCM_DRAMPOOL_RUNTIME_INTEGRATION_TESTS)
 TEST(DramPoolServerTest, StartsReceiverLastAndStopsReceiverFirst)
 {
+    ScopedDramPoolConfig configScope(MakeValidConfig());
     DramPoolServer server;
-    auto status = server.Init(MakeValidConfig());
+    auto status = server.Init();
     ASSERT_TRUE(status.Success()) << status.ToString();
 
     status = server.Start();
@@ -248,9 +262,10 @@ TEST(DramPoolServerTest, GcDisabledSkipsGcThreadLifecycleEvents)
     auto config = MakeValidConfig();
     config.gcEnabled = false;
     config.gcIntervalMs = 0;
+    ScopedDramPoolConfig configScope(std::move(config));
 
     DramPoolServer server;
-    auto status = server.Init(config);
+    auto status = server.Init();
     ASSERT_TRUE(status.Success()) << status.ToString();
     ASSERT_TRUE(server.Start().Success());
     server.Stop();

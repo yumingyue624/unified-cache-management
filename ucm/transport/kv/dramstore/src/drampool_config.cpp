@@ -203,8 +203,7 @@ UC::Status ParseCommandLine(int argc, char** argv, DramPoolConfig& config)
             if (hasAddr) { return UC::Status::InvalidParam("--addr may be specified once"); }
             status = ReadSingleValue(option, hasInlineValue, inlineValue, argc, argv, index, value);
             if (status.Failure()) { return status; }
-            config.listenAddr = value;
-            config.transportManagerAddr = value;
+            config.addr = value;
             hasAddr = true;
             continue;
         }
@@ -290,7 +289,7 @@ UC::Status ParseCommandLine(int argc, char** argv, DramPoolConfig& config)
 UC::Status ValidateDramPoolConfig(const DramPoolConfig& config)
 {
     if (Trim(config.serverId).empty()) { return UC::Status::InvalidParam("server.id is required"); }
-    if (Trim(config.listenAddr).empty()) { return UC::Status::InvalidParam("--addr is required"); }
+    if (Trim(config.addr).empty()) { return UC::Status::InvalidParam("--addr is required"); }
     if (config.nics.empty()) { return UC::Status::InvalidParam("--nics must not be empty"); }
     for (const auto& nic : config.nics) {
         if (Trim(nic).empty()) { return UC::Status::InvalidParam("--nics contains an empty name"); }
@@ -299,9 +298,6 @@ UC::Status ValidateDramPoolConfig(const DramPoolConfig& config)
     const auto transportMode = ToLower(config.transportMode);
     if (transportMode != "hixl") {
         return UC::Status::InvalidParam("unsupported transport.mode: {}", config.transportMode);
-    }
-    if (Trim(config.transportManagerAddr).empty()) {
-        return UC::Status::InvalidParam("transport.manager_addr is required");
     }
     if (Trim(config.transportLocalEngine).empty()) {
         return UC::Status::InvalidParam("transport.local_engine is required");

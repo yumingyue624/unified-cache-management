@@ -53,11 +53,11 @@ protected:
         ASSERT_EQ(manager_.InstallTransport(testTransport_, transport::InitAttrs{}),
                   transport::Status::Ok);
 
-        g_drampool_config.pollerDrainBudget = kDrainBudget;
-        g_drampool_config.pollerScanBudget = kHeadScanBudget;
-        g_drampool_config.pollerMaxPending = kQueueCapacity;
-        g_drampool_config.pollerIdleWaitUs = kTestIdleWaitUs;
-        g_drampool_config.opTimeoutMs = kTestOperationTimeoutMs;
+        g_config.pollerDrainBudget = kDrainBudget;
+        g_config.pollerScanBudget = kHeadScanBudget;
+        g_config.pollerMaxPending = kQueueCapacity;
+        g_config.pollerIdleWaitUs = kTestIdleWaitUs;
+        g_config.opTimeoutMs = kTestOperationTimeoutMs;
 
         g_services.metadata = &metadata_;
         g_services.buffer_managers = {&buffers_};
@@ -173,9 +173,9 @@ TEST_F(CompletionPollerTest, ScansOnlyConfiguredHeadWindowAndThenPublishesAll)
 
 TEST_F(CompletionPollerTest, TimeoutWaitsForTerminalThenAbortsDump)
 {
-    g_drampool_config.pollerDrainBudget = 1;
-    g_drampool_config.pollerScanBudget = 1;
-    g_drampool_config.opTimeoutMs = 1;
+    g_config.pollerDrainBudget = 1;
+    g_config.pollerScanBudget = 1;
+    g_config.opTimeoutMs = 1;
 
     TransportHandle handle = transport::kInvalidTransferHandle;
     auto record = MakeDumpRecord(7, 107, handle);

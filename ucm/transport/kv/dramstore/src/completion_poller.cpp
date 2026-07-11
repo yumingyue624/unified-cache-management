@@ -45,7 +45,7 @@ void CompletionPoller::Run(const std::atomic_bool& stop) noexcept
 
             if (drained == 0 && !stateChanged) {
                 std::this_thread::sleep_for(
-                    std::chrono::microseconds(g_drampool_config.pollerIdleWaitUs));
+                    std::chrono::microseconds(g_config.pollerIdleWaitUs));
             }
         }
     } catch (const std::exception& error) {
@@ -64,8 +64,7 @@ void CompletionPoller::RequestDrainAllAsFailed() noexcept
 std::size_t CompletionPoller::DrainNewHandles()
 {
     std::size_t drained = 0;
-    while (drained < g_drampool_config.pollerDrainBudget &&
-           pending_.size() < g_drampool_config.pollerMaxPending) {
+    while (drained < g_config.pollerDrainBudget && pending_.size() < g_config.pollerMaxPending) {
         InflightRecord record;
         if (!g_services.trans_handle_queue->TryPop(record)) { break; }
         pending_.emplace_back(std::move(record));
@@ -78,7 +77,7 @@ std::size_t CompletionPoller::DrainNewHandles()
 bool CompletionPoller::PollFirstBatch()
 {
     const std::size_t scanCount =
-        std::min(static_cast<std::size_t>(g_drampool_config.pollerScanBudget), pending_.size());
+        std::min(static_cast<std::size_t>(g_config.pollerScanBudget), pending_.size());
     auto iter = pending_.begin();
     bool stateChanged = false;
 
@@ -183,7 +182,7 @@ void CompletionPoller::ApplyTerminal(InflightRecord& record,
 bool CompletionPoller::OperationTimedOut(const InflightRecord& record, std::uint64_t nowMs) const
 {
     if (nowMs < record.submit_ms) { return false; }
-    return nowMs - record.submit_ms >= g_drampool_config.opTimeoutMs;
+    return nowMs - record.submit_ms >= g_config.opTimeoutMs;
 }
 
 }  // namespace UC::DRAMPOOL

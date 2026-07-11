@@ -109,7 +109,7 @@ UC::Status TaskWorker::ProcessDump(const KvDumpRequest& request,
                                    const transport::ManagerID& peerManagerId)
 {
     const std::uint64_t ttl_ms = request.ttl != 0 ? static_cast<std::uint64_t>(request.ttl)
-                                                  : g_drampool_config.defaultDumpTtlMs;
+                                                  : g_config.defaultDumpTtlMs;
     const auto lifeTimeout = LifeTimeout(ttl_ms);
     std::vector<std::uint32_t> results(request.batch_size,
                                        static_cast<std::uint32_t>(ResultCode::Ok));

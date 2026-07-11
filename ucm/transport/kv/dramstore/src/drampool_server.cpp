@@ -32,21 +32,16 @@ DramPoolServer::DramPoolServer() = default;
 
 DramPoolServer::~DramPoolServer() { Stop(); }
 
-UC::Status DramPoolServer::Init(const DramPoolConfig& config)
+UC::Status DramPoolServer::Init()
 {
     std::lock_guard<std::mutex> controlGuard(controlMutex_);
     if (state_ != ServerState::New) {
         return UC::Status::InvalidParam(
             "DramPoolServer cannot be initialized in its current state");
     }
-    auto status = ValidateDramPoolConfig(config);
-    if (status.Failure()) { return status; }
-
-    config_ = config;
-    g_drampool_config = config;
 
     try {
-        status = InitDataTransportManager();
+        auto status = InitDataTransportManager();
         if (status.Failure()) {
             ResetInitializedComponents();
             return status;
@@ -166,7 +161,8 @@ std::vector<std::string> DramPoolServer::LifecycleEvents() const
 
 UC::Status DramPoolServer::InitDataTransportManager()
 {
-    transportManager_ = std::make_unique<transport::TransportManager>(config_.transportManagerAddr);
+    transportManager_ =
+        std::make_unique<transport::TransportManager>(g_config.addr);
     const auto status = transportManager_->Init();
     if (status != transport::Status::Ok) {
         transportManager_.reset();
@@ -183,10 +179,10 @@ UC::Status DramPoolServer::InstallDataTransport()
     }
     // Runtime transport selection is owned by the server and driven by its configuration.
     transport::HixlInitAttrs attrs;
-    attrs.local_engine = config_.transportLocalEngine;
-    attrs.device_id = config_.transportDeviceId;
-    attrs.connect_timeout_ms = static_cast<std::int32_t>(config_.opTimeoutMs);
-    attrs.transfer_timeout_ms = static_cast<std::int32_t>(config_.opTimeoutMs);
+    attrs.local_engine = g_config.transportLocalEngine;
+    attrs.device_id = g_config.transportDeviceId;
+    attrs.connect_timeout_ms = static_cast<std::int32_t>(g_config.opTimeoutMs);
+    attrs.transfer_timeout_ms = static_cast<std::int32_t>(g_config.opTimeoutMs);
     const auto status =
         transportManager_->InstallTransport(transport::TransportProtocol::Hixl, attrs);
     if (status != transport::Status::Ok) {
@@ -198,7 +194,7 @@ UC::Status DramPoolServer::InstallDataTransport()
 
 UC::Status DramPoolServer::InitBufferMgr()
 {
-    for (const auto blockSize : config_.poolBlockSizes) {
+    for (const auto blockSize : g_config.poolBlockSizes) {
         bufferManagers_.push_back(
             std::make_unique<FakeBufferManager>(static_cast<std::uint32_t>(blockSize)));
     }
@@ -232,8 +228,8 @@ UC::Status DramPoolServer::InitProtocol()
 
 UC::Status DramPoolServer::InitQueues()
 {
-    requestQueue_.Setup(config_.requestQueueDepth);
-    transHandleQueue_.Setup(config_.handleQueueDepth);
+    requestQueue_.Setup(g_config.requestQueueDepth);
+    transHandleQueue_.Setup(g_config.handleQueueDepth);
     RecordLifecycleEvent("InitQueues");
     return UC::Status::OK();
 }
@@ -268,7 +264,7 @@ UC::Status DramPoolServer::StartTaskWorker()
 
 UC::Status DramPoolServer::StartGCThread()
 {
-    if (!config_.gcEnabled) { return UC::Status::OK(); }
+    if (!g_config.gcEnabled) { return UC::Status::OK(); }
     try {
         gcThreadStop_.store(false, std::memory_order_release);
         gcThread_ = std::thread(&DramPoolServer::GCThreadLoop, this);
@@ -335,7 +331,7 @@ void DramPoolServer::StopGCThread()
     gcThreadStop_.store(true, std::memory_order_release);
     stopWaitCv_.notify_all();
     if (gcThread_.joinable()) { gcThread_.join(); }
-    if (config_.gcEnabled) { RecordLifecycleEvent("StopGCThread"); }
+    if (g_config.gcEnabled) { RecordLifecycleEvent("StopGCThread"); }
 }
 
 void DramPoolServer::UnregisterBufferMemory()
@@ -358,7 +354,7 @@ void DramPoolServer::DestroyMetadataIndex()
 
 void DramPoolServer::ReceiverLoop()
 {
-    UC_INFO_UNLIMITED("DramPool Receiver started, listen_addr={}", config_.listenAddr);
+    UC_INFO_UNLIMITED("DramPool Receiver started, addr={}", g_config.addr);
     std::unique_lock<std::mutex> waitLock(stopWaitMutex_);
     stopWaitCv_.wait(waitLock, [this]() { return receiverStop_.load(std::memory_order_acquire); });
     UC_INFO_UNLIMITED("DramPool Receiver stopped");
@@ -380,8 +376,9 @@ void DramPoolServer::CompletionPollerLoop()
 
 void DramPoolServer::GCThreadLoop()
 {
-    UC_INFO_UNLIMITED("DramPool GCThread started, interval_ms={}", config_.gcIntervalMs);
-    const auto interval = std::chrono::milliseconds(config_.gcIntervalMs);
+    UC_INFO_UNLIMITED("DramPool GCThread started, interval_ms={}",
+                      g_config.gcIntervalMs);
+    const auto interval = std::chrono::milliseconds(g_config.gcIntervalMs);
     std::unique_lock<std::mutex> waitLock(stopWaitMutex_);
     while (!gcThreadStop_.load(std::memory_order_acquire)) {
         stopWaitCv_.wait_for(waitLock, interval,

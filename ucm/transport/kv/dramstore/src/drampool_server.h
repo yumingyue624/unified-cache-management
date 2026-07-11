@@ -50,7 +50,7 @@ public:
     DramPoolServer(const DramPoolServer&) = delete;
     DramPoolServer& operator=(const DramPoolServer&) = delete;
 
-    UC::Status Init(const DramPoolConfig& config);
+    UC::Status Init();
     UC::Status Start();
     void Stop();
 
@@ -97,7 +97,6 @@ private:
     void StopLocked();
     void ResetInitializedComponents();
 
-    DramPoolConfig config_;
     std::atomic_bool serviceReady_{false};
 
     std::atomic_bool receiverStop_{true};
