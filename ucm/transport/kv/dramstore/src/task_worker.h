@@ -35,12 +35,13 @@ public:
     TaskWorker() = default;
 
     void Run(const std::atomic_bool& stop);
-    UC::Status ProcessOneRequest(RequestPtr request);
+    UC::Status ProcessOneRequest(RequestTaskPtr task);
 
 private:
-    UC::Status ProcessDump(const KvDumpRequest& request);
-    UC::Status ProcessLoad(const KvLoadRequest& request);
-    UC::Status ProcessLookup(const KvLookupRequest& request);
+    UC::Status ProcessDump(const KvDumpRequest& request, const transport::ManagerID& peerManagerId);
+    UC::Status ProcessLoad(const KvLoadRequest& request, const transport::ManagerID& peerManagerId);
+    UC::Status ProcessLookup(const KvLookupRequest& request,
+                             const transport::ManagerID& peerManagerId);
 
     void RollbackDumpItems(const std::vector<TransferItem>& items);
     void UnpinLoadItems(const std::vector<TransferItem>& items);

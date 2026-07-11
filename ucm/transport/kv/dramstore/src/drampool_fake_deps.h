@@ -21,13 +21,17 @@
  * */
 #pragma once
 
+#include <chrono>
 #include <cstdint>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <unordered_map>
 #include <utility>
 #include <vector>
+#include "drampool_transport.h"
 #include "drampool_types.h"
+#include "entry.h"
 #include "kv_protocol.h"
 #include "status/status.h"
 
@@ -36,37 +40,10 @@ namespace UC::DRAMPOOL {
 // Temporary contracts for modules not landed yet. Real implementations can
 // replace the fake classes without changing TaskWorker or CompletionPoller.
 
-enum class TransportDirection {
-    ReadRemoteToLocal = 0,
-    WriteLocalToRemote = 1,
-};
-
-struct TransportSegment {
-    std::uint64_t local_addr{0};
-    std::uint64_t remote_addr{0};
-    std::uint32_t len{0};
-};
-
-struct TransportOp {
-    KvOpcode opcode{KvOpcode::None};
-    TransportDirection direction{TransportDirection::ReadRemoteToLocal};
-    std::vector<TransportSegment> segments;
-};
-
 struct BufferSlot {
     BufferHandle handle;
     std::uint64_t addr{0};
     std::uint32_t len{0};
-    std::uint32_t class_id{0};
-};
-
-struct EntryCreateOptions {
-    BlockId key{};
-    BufferHandle buffer_handle;
-    std::uint64_t local_addr{0};
-    std::uint32_t len{0};
-    std::uint64_t abs_pos{0};
-    std::uint64_t expire_at_ms{0};
     std::uint32_t class_id{0};
 };
 
@@ -105,22 +82,18 @@ enum class LookupCode {
     Failed = 4,
 };
 
-enum class TransportStatus {
-    Waiting = 0,
-    Success = 1,
-    Failed = 2,
-    Canceled = 3,
-};
-
 class MetadataIndex {
 public:
+    using TimePoint = std::chrono::system_clock::time_point;
+
     virtual ~MetadataIndex() = default;
 
     // Reserve creates an invisible DUMP entry and holds its I/O ownership.
-    virtual ReserveDumpResult ReserveDumpEntry(const EntryCreateOptions& options) = 0;
+    virtual ReserveDumpResult ReserveDumpEntry(const UC::DramStore::EntryPtr& entry,
+                                               const BufferHandle& bufferHandle) = 0;
     // A successful pin must remain valid until ReleaseLoadIo.
-    virtual LoadPinResult LookupAndPinLoad(const BlockId& key, std::uint64_t now_ms) = 0;
-    virtual LookupCode LookupReady(const BlockId& key, std::uint64_t now_ms) = 0;
+    virtual LoadPinResult LookupAndPinLoad(const BlockId& key, TimePoint now) = 0;
+    virtual LookupCode LookupReady(const BlockId& key, TimePoint now) = 0;
 
     // These calls atomically update all metadata indexes and entry state.
     virtual UC::Status PublishDump(const BlockId& key) = 0;
@@ -134,62 +107,73 @@ public:
 
     virtual std::uint32_t SlotSize() const = 0;
     virtual UC::Expected<BufferSlot> Allocate(std::uint32_t len) = 0;
-    virtual void Free(BufferHandle handle) = 0;
-};
-
-class TransportManager {
-public:
-    virtual ~TransportManager() = default;
-
-    virtual UC::Expected<TransportHandle> SubmitAsync(const TransportOp& op) = 0;
-    virtual UC::Expected<TransportStatus> QueryStatus(TransportHandle handle) = 0;
-    // Cancel only requests termination; QueryStatus still owns terminal detection.
-    virtual UC::Status Cancel(TransportHandle handle) = 0;
-    virtual UC::Status ReleaseHandle(TransportHandle handle) = 0;
+    virtual UC::Status Free(BufferHandle handle) = 0;
 };
 
 class FakeMetadataIndex final : public MetadataIndex {
 public:
-    ReserveDumpResult ReserveDumpEntry(const EntryCreateOptions& options) override
+    ReserveDumpResult ReserveDumpEntry(const UC::DramStore::EntryPtr& entry,
+                                       const BufferHandle& bufferHandle) override
     {
+        if (!entry || !bufferHandle.Valid()) {
+            return {ReserveDumpCode::Failed, UC::Status::InvalidParam("invalid DUMP entry")};
+        }
+
         std::lock_guard<std::mutex> guard(mutex_);
-        if (entries_.find(options.key) != entries_.end()) {
+        if (entries_.find(entry->key) != entries_.end()) {
             return {ReserveDumpCode::Exists, UC::Status::DuplicateKey()};
         }
 
-        Entry entry;
-        entry.options = options;
-        entry.io_refcount = 1;
-        entries_.emplace(options.key, std::move(entry));
+        UC::SpinLockGuard entryGuard(entry->lock);
+        if (entry->status != UC::DramStore::EntryStatus::INITIALIZED || entry->refCnt != 0) {
+            return {ReserveDumpCode::Failed,
+                    UC::Status::InvalidParam("DUMP entry is not initialized")};
+        }
+
+        // The initial reference protects the buffer until DUMP reaches a terminal state.
+        entry->refCnt = 1;
+        entries_.emplace(entry->key, entry);
+        bufferHandles_.emplace(entry->key, bufferHandle);
         return {ReserveDumpCode::Reserved, UC::Status::OK()};
     }
 
-    LoadPinResult LookupAndPinLoad(const BlockId& key, std::uint64_t nowMs) override
+    LoadPinResult LookupAndPinLoad(const BlockId& key, TimePoint now) override
     {
         std::lock_guard<std::mutex> guard(mutex_);
         auto iter = entries_.find(key);
         if (iter == entries_.end()) { return {LoadPinCode::NotFound, UC::Status::NotFound()}; }
-        auto& entry = iter->second;
-        if (!entry.ready) { return {LoadPinCode::NotReady, UC::Status::Retry()}; }
-        if (Expired(entry, nowMs)) { return {LoadPinCode::Expired, UC::Status::NotFound()}; }
+        auto& entry = *iter->second;
+        UC::SpinLockGuard entryGuard(entry.lock);
+        if (entry.status != UC::DramStore::EntryStatus::READY) {
+            return {LoadPinCode::NotReady, UC::Status::Retry()};
+        }
+        if (Expired(entry, now)) { return {LoadPinCode::Expired, UC::Status::NotFound()}; }
+        if (entry.size > std::numeric_limits<std::uint32_t>::max()) {
+            return {LoadPinCode::Failed, UC::Status::InvalidParam("entry size exceeds protocol")};
+        }
+        auto handleIter = bufferHandles_.find(key);
+        if (handleIter == bufferHandles_.end()) {
+            return {LoadPinCode::Failed, UC::Status::Error("entry buffer handle is missing")};
+        }
 
-        ++entry.refcount;
-        ++entry.io_refcount;
+        ++entry.refCnt;
         LoadPinResult result;
         result.code = LoadPinCode::Pinned;
-        result.buffer_handle = entry.options.buffer_handle;
-        result.local_addr = entry.options.local_addr;
-        result.len = entry.options.len;
+        result.buffer_handle = handleIter->second;
+        result.local_addr = reinterpret_cast<std::uintptr_t>(entry.addr);
+        result.len = static_cast<std::uint32_t>(entry.size);
         return result;
     }
 
-    LookupCode LookupReady(const BlockId& key, std::uint64_t nowMs) override
+    LookupCode LookupReady(const BlockId& key, TimePoint now) override
     {
         std::lock_guard<std::mutex> guard(mutex_);
         auto iter = entries_.find(key);
         if (iter == entries_.end()) { return LookupCode::NotFound; }
-        if (!iter->second.ready) { return LookupCode::NotReady; }
-        if (Expired(iter->second, nowMs)) { return LookupCode::Expired; }
+        auto& entry = *iter->second;
+        UC::SpinLockGuard entryGuard(entry.lock);
+        if (entry.status != UC::DramStore::EntryStatus::READY) { return LookupCode::NotReady; }
+        if (Expired(entry, now)) { return LookupCode::Expired; }
         return LookupCode::Ready;
     }
 
@@ -198,12 +182,13 @@ public:
         std::lock_guard<std::mutex> guard(mutex_);
         auto iter = entries_.find(key);
         if (iter == entries_.end()) { return UC::Status::NotFound(); }
-        auto& entry = iter->second;
-        if (entry.ready || entry.io_refcount != 1) {
+        auto& entry = *iter->second;
+        UC::SpinLockGuard entryGuard(entry.lock);
+        if (entry.status != UC::DramStore::EntryStatus::INITIALIZED || entry.refCnt != 1) {
             return UC::Status::Error("invalid RESERVED entry while publishing DUMP");
         }
-        entry.ready = true;
-        --entry.io_refcount;
+        entry.status = UC::DramStore::EntryStatus::READY;
+        --entry.refCnt;
         return UC::Status::OK();
     }
 
@@ -212,7 +197,14 @@ public:
         std::lock_guard<std::mutex> guard(mutex_);
         auto iter = entries_.find(key);
         if (iter == entries_.end()) { return UC::Status::NotFound(); }
-        if (iter->second.ready) { return UC::Status::Error("cannot abort a READY entry"); }
+        auto entry = iter->second;
+        UC::SpinLockGuard entryGuard(entry->lock);
+        if (entry->status == UC::DramStore::EntryStatus::READY) {
+            return UC::Status::Error("cannot abort a READY entry");
+        }
+        entry->status = UC::DramStore::EntryStatus::DELETING;
+        entry->refCnt = 0;
+        bufferHandles_.erase(key);
         entries_.erase(iter);
         return UC::Status::OK();
     }
@@ -222,28 +214,22 @@ public:
         std::lock_guard<std::mutex> guard(mutex_);
         auto iter = entries_.find(key);
         if (iter == entries_.end()) { return UC::Status::NotFound(); }
-        auto& entry = iter->second;
-        if (!entry.ready || entry.refcount == 0 || entry.io_refcount == 0) {
-            return UC::Status::Error("invalid LOAD reference counters");
+        auto& entry = *iter->second;
+        UC::SpinLockGuard entryGuard(entry.lock);
+        if (entry.status != UC::DramStore::EntryStatus::READY || entry.refCnt == 0) {
+            return UC::Status::Error("invalid LOAD reference count");
         }
-        --entry.refcount;
-        --entry.io_refcount;
+        --entry.refCnt;
         return UC::Status::OK();
     }
 
 private:
-    struct Entry {
-        EntryCreateOptions options;
-        std::uint32_t refcount{0};
-        std::uint32_t io_refcount{0};
-        bool ready{false};
-    };
-
-    static bool Expired(const Entry& entry, std::uint64_t nowMs)
-    { return entry.options.expire_at_ms != 0 && nowMs >= entry.options.expire_at_ms; }
+    static bool Expired(const UC::DramStore::Entry& entry, TimePoint now)
+    { return entry.lifeTimeout != TimePoint{} && now >= entry.lifeTimeout; }
 
     std::mutex mutex_;
-    std::unordered_map<BlockId, Entry, UC::Detail::BlockIdHasher> entries_;
+    std::unordered_map<BlockId, UC::DramStore::EntryPtr, UC::Detail::BlockIdHasher> entries_;
+    std::unordered_map<BlockId, BufferHandle, UC::Detail::BlockIdHasher> bufferHandles_;
 };
 
 class FakeBufferManager final : public BufferManager {
@@ -289,88 +275,37 @@ private:
     std::unordered_map<std::uint64_t, std::unique_ptr<std::uint8_t[]>> allocations_;
 };
 
-class FakeTransportManager final : public TransportManager {
-public:
-    UC::Expected<TransportHandle> SubmitAsync(const TransportOp& op) override
-    {
-        if (op.segments.empty()) {
-            return UC::Status::InvalidParam("transport operation has no segments");
-        }
-        std::lock_guard<std::mutex> guard(mutex_);
-        TransportHandle handle{nextHandle_++};
-        handles_.emplace(handle.value, TransportStatus::Success);
-        return std::move(handle);
-    }
-
-    UC::Expected<TransportStatus> QueryStatus(TransportHandle handle) override
-    {
-        std::lock_guard<std::mutex> guard(mutex_);
-        auto iter = handles_.find(handle.value);
-        if (iter == handles_.end()) { return UC::Status::NotFound(); }
-        ++queryCounts_[handle.value];
-        auto status = iter->second;
-        return std::move(status);
-    }
-
-    UC::Status Cancel(TransportHandle handle) override
-    {
-        std::lock_guard<std::mutex> guard(mutex_);
-        auto iter = handles_.find(handle.value);
-        if (iter == handles_.end()) { return UC::Status::NotFound(); }
-        if (iter->second == TransportStatus::Waiting) { iter->second = TransportStatus::Canceled; }
-        return UC::Status::OK();
-    }
-
-    UC::Status ReleaseHandle(TransportHandle handle) override
-    {
-        std::lock_guard<std::mutex> guard(mutex_);
-        if (handles_.erase(handle.value) != 1) { return UC::Status::NotFound(); }
-        return UC::Status::OK();
-    }
-
-    UC::Status SetStatus(TransportHandle handle, TransportStatus status)
-    {
-        std::lock_guard<std::mutex> guard(mutex_);
-        auto iter = handles_.find(handle.value);
-        if (iter == handles_.end()) { return UC::Status::NotFound(); }
-        iter->second = status;
-        return UC::Status::OK();
-    }
-
-    std::size_t QueryCount(TransportHandle handle) const
-    {
-        std::lock_guard<std::mutex> guard(mutex_);
-        const auto iter = queryCounts_.find(handle.value);
-        return iter == queryCounts_.end() ? 0 : iter->second;
-    }
-
-    std::size_t ActiveHandleCount() const
-    {
-        std::lock_guard<std::mutex> guard(mutex_);
-        return handles_.size();
-    }
-
-private:
-    mutable std::mutex mutex_;
-    std::uint64_t nextHandle_{1};
-    std::unordered_map<std::uint64_t, TransportStatus> handles_;
-    std::unordered_map<std::uint64_t, std::size_t> queryCounts_;
-};
+inline UC::Expected<BufferSlot> AllocateBuffer(std::uint32_t len);
+inline UC::Status FreeBuffer(const BufferHandle& handle);
 
 inline UC::Status WriteResponse(KvOpcode opcode, std::uint64_t resp_addr,
+                                const transport::ManagerID& peer_manager_id,
                                 const std::vector<std::uint32_t>& results)
 {
-    auto len = results.size() * sizeof(std::uint32_t);
-    std::vector<std::uint8_t> respbuf(len);
-    auto status = g_services.protocol_mgr->PackResponse(respbuf.data(), opcode, KvResponse{results});
-    if (status.Failure()) return status;
+    if (peer_manager_id.empty()) {
+        return UC::Status::InvalidParam("response peer_manager_id is empty");
+    }
+    const auto len = static_cast<std::uint32_t>(results.size() * sizeof(std::uint32_t));
+    auto allocated = AllocateBuffer(len);
+    if (!allocated.HasValue()) { return allocated.Error(); }
+    auto slot = std::move(allocated).Value();
 
-    TransportOp op;
-    op.opcode = opcode;
-    op.direction = TransportDirection::WriteLocalToRemote;
-    op.segments.push_back({reinterpret_cast<std::uint64_t>(respbuf.data()), resp_addr, len});
-    auto submitted = g_services.transport->SubmitAsync(op);
-    return submitted.HasValue() ? UC::Status::OK() : submitted.Error();
+    const auto protocol_status = g_services.protocol_mgr->PackResponse(
+        reinterpret_cast<void*>(slot.addr), opcode, KvResponse{results});
+    UC::Status status =
+        protocol_status.ok() ? UC::Status::OK() : UC::Status::Error(protocol_status.message);
+    if (status.Success()) {
+        transport::Operation operation;
+        operation.opcode = transport::Opcode::Write;
+        operation.direct = transport::OperationDirect::RemoteDeviceHost;
+        operation.target_manager = peer_manager_id;
+        operation.ops.push_back(
+            transport::Segment{reinterpret_cast<void*>(slot.addr), resp_addr, len});
+        status = ToUcStatus(g_services.transport->ExecuteSync(operation), "ExecuteSync response");
+    }
+
+    const auto free_status = FreeBuffer(slot.handle);
+    return status.Failure() ? status : free_status;
 }
 
 inline UC::Expected<BufferSlot> AllocateBuffer(std::uint32_t len)
@@ -381,6 +316,17 @@ inline UC::Expected<BufferSlot> AllocateBuffer(std::uint32_t len)
             if (result.HasValue()) {
                 result.Value().class_id = static_cast<std::uint32_t>(i);
                 result.Value().handle.class_id = static_cast<std::uint32_t>(i);
+                transport::MemoryRegion memory;
+                memory.addr = reinterpret_cast<void*>(result.Value().addr);
+                memory.length = result.Value().len;
+                memory.type = transport::MemoryType::Host;
+                auto register_status = g_services.transport->RegisterMemory(
+                    memory, result.Value().handle.memory_handle);
+                if (register_status != transport::Status::Ok) {
+                    const auto handle = result.Value().handle;
+                    (void)g_services.buffer_managers[i]->Free(handle);
+                    return ToUcStatus(register_status, "RegisterMemory");
+                }
             }
             return result;
         }
@@ -391,6 +337,10 @@ inline UC::Expected<BufferSlot> AllocateBuffer(std::uint32_t len)
 inline UC::Status FreeBuffer(const BufferHandle& handle)
 {
     if (handle.class_id < g_services.buffer_managers.size()) {
+        if (handle.memory_handle != transport::kInvalidMemoryHandle) {
+            // Unregister may fail after TransportManager::Shutdown; the host buffer is still freed.
+            (void)g_services.transport->UnregisterMemory(handle.memory_handle);
+        }
         return g_services.buffer_managers[handle.class_id]->Free(handle);
     }
     return UC::Status::NotFound();

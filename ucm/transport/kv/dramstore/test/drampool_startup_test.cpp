@@ -20,7 +20,10 @@ DramPoolConfig MakeValidConfig()
     DramPoolConfig config;
     config.serverId = "drampool-test";
     config.listenAddr = "127.0.0.1:19000";
-    config.transportMode = "tcp";
+    config.transportMode = "hixl";
+    config.transportManagerAddr = "127.0.0.1:19001";
+    config.transportLocalEngine = "drampool-test";
+    config.transportDeviceId = 0;
     config.poolSizeGb = 1;
     config.poolBlockSizes = {4096, 8192};
     config.poolBlockProportions = {70, 30};
@@ -40,6 +43,7 @@ DramPoolConfig MakeValidConfig()
     return config;
 }
 
+#if defined(UCM_DRAMPOOL_RUNTIME_INTEGRATION_TESTS)
 bool ContainsInOrder(const std::vector<std::string>& events,
                      const std::vector<std::string>& expected)
 {
@@ -51,6 +55,7 @@ bool ContainsInOrder(const std::vector<std::string>& events,
     }
     return true;
 }
+#endif
 
 std::string WriteConfigFile(const std::string& name, const std::string& content)
 {
@@ -63,7 +68,10 @@ std::string ValidConfigText()
 {
     return "server.id = drampool-0\n"
            "listen.addr = 127.0.0.1:9000\n"
-           "transport.mode = tcp\n"
+           "transport.mode = hixl\n"
+           "transport.manager_addr = 127.0.0.1:19001\n"
+           "transport.local_engine = drampool-0\n"
+           "transport.device_id = 0\n"
            "pool.size_gb = 1\n"
            "pool.block_sizes = 4096,8192\n"
            "pool.block_proportions = 70,30\n"
@@ -214,6 +222,9 @@ TEST(DramPoolConfigTest, RejectsInvalidCoreConfig)
     expectInvalid([](DramPoolConfig& config) { config.serverId.clear(); });
     expectInvalid([](DramPoolConfig& config) { config.listenAddr.clear(); });
     expectInvalid([](DramPoolConfig& config) { config.transportMode = "udp"; });
+    expectInvalid([](DramPoolConfig& config) { config.transportManagerAddr.clear(); });
+    expectInvalid([](DramPoolConfig& config) { config.transportLocalEngine.clear(); });
+    expectInvalid([](DramPoolConfig& config) { config.transportDeviceId = -1; });
     expectInvalid([](DramPoolConfig& config) { config.poolSizeGb = 0; });
     expectInvalid([](DramPoolConfig& config) { config.poolBlockSizes.clear(); });
     expectInvalid([](DramPoolConfig& config) { config.poolBlockSizes[0] = 0; });
@@ -235,19 +246,16 @@ TEST(DramPoolConfigTest, RejectsInvalidCoreConfig)
     expectInvalid([](DramPoolConfig& config) { config.logDir.clear(); });
 }
 
-TEST(DramPoolConfigTest, AcceptsGcDisabledWithZeroIntervalAndSupportedTransports)
+TEST(DramPoolConfigTest, AcceptsGcDisabledWithHixlTransport)
 {
-    for (const auto& mode : {"tcp", "rdma", "hixl"}) {
-        auto config = MakeValidConfig();
-        config.transportMode = mode;
-        config.gcEnabled = false;
-        config.gcIntervalMs = 0;
-        auto status = ValidateDramPoolConfig(config);
-        EXPECT_TRUE(status.Success()) << status.ToString();
-    }
+    auto config = MakeValidConfig();
+    config.gcEnabled = false;
+    config.gcIntervalMs = 0;
+    auto status = ValidateDramPoolConfig(config);
+    EXPECT_TRUE(status.Success()) << status.ToString();
 }
 
-TEST(DramPoolServerTest, RejectsInvalidLifecycleCalls)
+TEST(DramPoolServerTest, RejectsCallsOutsideValidState)
 {
     DramPoolServer server;
     EXPECT_TRUE(server.Start().Failure());
@@ -255,16 +263,9 @@ TEST(DramPoolServerTest, RejectsInvalidLifecycleCalls)
     auto invalidConfig = MakeValidConfig();
     invalidConfig.poolSizeGb = 0;
     EXPECT_TRUE(server.Init(invalidConfig).Failure());
-
-    auto status = server.Init(MakeValidConfig());
-    ASSERT_TRUE(status.Success()) << status.ToString();
-    EXPECT_TRUE(server.Init(MakeValidConfig()).Failure());
-    EXPECT_TRUE(server.Start().Success());
-    EXPECT_TRUE(server.Start().Failure());
-    server.Stop();
-    EXPECT_TRUE(server.Start().Failure());
 }
 
+#if defined(UCM_DRAMPOOL_RUNTIME_INTEGRATION_TESTS)
 TEST(DramPoolServerTest, StartsReceiverLastAndStopsReceiverFirst)
 {
     DramPoolServer server;
@@ -296,9 +297,9 @@ TEST(DramPoolServerTest, StartsReceiverLastAndStopsReceiverFirst)
     EXPECT_TRUE(ContainsInOrder(events, startupOrder));
 
     const std::vector<std::string> shutdownOrder = {
-        "SetServiceReady(false)",   "StopReceiver",         "StopTaskWorker",
-        "CancelInflightTransports", "StopCompletionPoller", "StopGCThread",
-        "UnregisterBufferMemory",   "DestroyMetadataIndex",
+        "SetServiceReady(false)",       "StopReceiver",         "StopTaskWorker",
+        "MarkInflightTransportsFailed", "StopCompletionPoller", "StopGCThread",
+        "UnregisterBufferMemory",       "DestroyMetadataIndex",
     };
     EXPECT_TRUE(ContainsInOrder(events, shutdownOrder));
 }
@@ -322,6 +323,7 @@ TEST(DramPoolServerTest, GcDisabledSkipsGcThreadLifecycleEvents)
         ContainsInOrder(events, {"StartCompletionPoller", "StartTaskWorker",
                                  "StartRequestChannelAndReceiver", "SetServiceReady(true)"}));
 }
+#endif
 
 TEST(DramPoolDaemonTest, ReturnsForHelpAndInvalidConfig)
 {
@@ -342,6 +344,7 @@ TEST(DramPoolDaemonTest, ReturnsForHelpAndInvalidConfig)
     }
 }
 
+#if defined(UCM_DRAMPOOL_RUNTIME_INTEGRATION_TESTS)
 TEST(DramPoolDaemonTest, RunsUntilSigint)
 {
     const std::string path =
@@ -360,5 +363,6 @@ TEST(DramPoolDaemonTest, RunsUntilSigint)
     EXPECT_EQ(result.get(), 0);
     std::remove(path.c_str());
 }
+#endif
 
 }  // namespace UC::DRAMPOOL

@@ -49,8 +49,8 @@ constexpr std::size_t kKvHeaderSize =
     sizeof(std::uint8_t) + sizeof(std::uint64_t) + sizeof(std::uint16_t);
 constexpr std::size_t kKvDumpHeaderSize =
     sizeof(std::uint8_t) + sizeof(std::uint64_t) + sizeof(std::uint16_t) + sizeof(std::uint32_t);
-constexpr std::size_t kKvDumpEntrySize = kKvKeySize + sizeof(std::uint64_t) +
-                                         sizeof(std::uint32_t) + sizeof(std::uint32_t);
+constexpr std::size_t kKvDumpEntrySize =
+    kKvKeySize + sizeof(std::uint64_t) + sizeof(std::uint32_t) + sizeof(std::uint32_t);
 constexpr std::size_t kKvLoadEntrySize =
     kKvKeySize + sizeof(std::uint64_t) + sizeof(std::uint32_t) + sizeof(std::uint32_t);
 constexpr std::size_t kKvLookupEntrySize = kKvKeySize;

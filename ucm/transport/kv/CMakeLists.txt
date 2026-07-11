@@ -1,7 +1,11 @@
 add_subdirectory(common)
 
 if(BUILD_UCM_DRAMPOOL)
-    add_subdirectory(dramstore)
+    if(TARGET p2p_transport)
+        add_subdirectory(dramstore)
+    else()
+        message(STATUS "Skipping DramPool: formal p2p transport is unavailable")
+    endif()
 endif()
 
 if(BUILD_UCM_ASU)

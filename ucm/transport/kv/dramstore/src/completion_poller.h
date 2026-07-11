@@ -19,7 +19,7 @@ public:
     CompletionPoller() = default;
 
     void Run(const std::atomic_bool& stop) noexcept;
-    void RequestCancelAll() noexcept;
+    void RequestDrainAllAsFailed() noexcept;
 
     bool Healthy() const noexcept { return healthy_.load(std::memory_order_acquire); }
     std::size_t PendingCount() const noexcept
@@ -28,13 +28,11 @@ public:
 private:
     std::size_t DrainNewHandles();
     bool PollFirstBatch();
-    bool RequestCancel(InflightRecord& record);
-    void ApplyTerminal(InflightRecord& record, TransportStatus terminalStatus);
-    bool TryReleaseHandle(InflightRecord& record);
+    void ApplyTerminal(InflightRecord& record, transport::TransferStatus terminalStatus);
     bool OperationTimedOut(const InflightRecord& record, std::uint64_t nowMs) const;
 
     std::deque<InflightRecord> pending_;
-    std::atomic_bool cancelAllRequested_{false};
+    std::atomic_bool failAllRequested_{false};
     std::atomic_bool healthy_{true};
     std::atomic_size_t pendingCount_{0};
 };

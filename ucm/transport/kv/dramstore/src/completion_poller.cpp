@@ -24,7 +24,8 @@ std::uint64_t SteadyNowMs()
         std::chrono::duration_cast<std::chrono::milliseconds>(now).count());
 }
 
-bool IsSuccessful(TransportStatus status) { return status == TransportStatus::Success; }
+bool IsSuccessful(transport::TransferStatus status)
+{ return status == transport::TransferStatus::Completed; }
 
 }  // namespace
 
@@ -33,8 +34,8 @@ void CompletionPoller::Run(const std::atomic_bool& stop) noexcept
     try {
         while (true) {
             if (stop.load(std::memory_order_acquire)) {
-                // Shutdown requests cancellation, then polls until every handle is terminal.
-                cancelAllRequested_.store(true, std::memory_order_release);
+                // The formal transport has no per-transfer Cancel; drain each handle safely.
+                failAllRequested_.store(true, std::memory_order_release);
             }
 
             const auto drained = DrainNewHandles();
@@ -43,7 +44,8 @@ void CompletionPoller::Run(const std::atomic_bool& stop) noexcept
             if (stop.load(std::memory_order_acquire) && drained == 0 && pending_.empty()) { break; }
 
             if (drained == 0 && !stateChanged) {
-                std::this_thread::sleep_for(std::chrono::microseconds(g_drampool_config.pollerIdleWaitUs));
+                std::this_thread::sleep_for(
+                    std::chrono::microseconds(g_drampool_config.pollerIdleWaitUs));
             }
         }
     } catch (const std::exception& error) {
@@ -56,13 +58,14 @@ void CompletionPoller::Run(const std::atomic_bool& stop) noexcept
     pendingCount_.store(pending_.size(), std::memory_order_release);
 }
 
-void CompletionPoller::RequestCancelAll() noexcept
-{ cancelAllRequested_.store(true, std::memory_order_release); }
+void CompletionPoller::RequestDrainAllAsFailed() noexcept
+{ failAllRequested_.store(true, std::memory_order_release); }
 
 std::size_t CompletionPoller::DrainNewHandles()
 {
     std::size_t drained = 0;
-    while (drained < g_drampool_config.pollerDrainBudget && pending_.size() < g_drampool_config.pollerMaxPending) {
+    while (drained < g_drampool_config.pollerDrainBudget &&
+           pending_.size() < g_drampool_config.pollerMaxPending) {
         InflightRecord record;
         if (!g_services.trans_handle_queue->TryPop(record)) { break; }
         pending_.emplace_back(std::move(record));
@@ -74,77 +77,46 @@ std::size_t CompletionPoller::DrainNewHandles()
 
 bool CompletionPoller::PollFirstBatch()
 {
-    const std::size_t scanCount = std::min(g_drampool_config.pollerScanBudget, pending_.size());
+    const std::size_t scanCount =
+        std::min(static_cast<std::size_t>(g_drampool_config.pollerScanBudget), pending_.size());
     auto iter = pending_.begin();
     bool stateChanged = false;
 
     // Scan only this head snapshot. Erase never pulls extra work into this round.
     for (std::size_t scanned = 0; scanned < scanCount; ++scanned) {
-        if (iter->phase == InflightPhase::AppliedAwaitingRelease) {
-            if (TryReleaseHandle(*iter)) {
-                iter = pending_.erase(iter);
+        transport::TransferStatus transportStatus = transport::TransferStatus::Failed;
+        const auto queryStatus = g_services.transport->GetStatus(iter->handle, transportStatus);
+        if (queryStatus != transport::Status::Ok) {
+            // GetStatus removes failed handles, so an API failure is also terminal.
+            UC_ERROR("CompletionPoller GetStatus failed, handle={}", iter->handle);
+            transportStatus = transport::TransferStatus::Failed;
+        } else if (transportStatus == transport::TransferStatus::Waiting) {
+            const auto nowMs = SteadyNowMs();
+            if ((failAllRequested_.load(std::memory_order_acquire) ||
+                 OperationTimedOut(*iter, nowMs)) &&
+                iter->phase == InflightPhase::Polling) {
+                iter->phase = InflightPhase::TimedOut;
                 stateChanged = true;
-            } else {
-                ++iter;
-            }
-            continue;
-        }
-
-        auto queried = g_services.transport->QueryStatus(iter->handle);
-        if (!queried.HasValue()) {
-            UC_ERROR("CompletionPoller QueryStatus failed, handle={}, error={}", iter->handle.value,
-                     queried.Error());
-            const auto nowMs = SteadyNowMs();
-            if ((cancelAllRequested_.load(std::memory_order_acquire) ||
-                 OperationTimedOut(*iter, nowMs)) &&
-                iter->phase == InflightPhase::Polling) {
-                stateChanged = RequestCancel(*iter) || stateChanged;
-            }
-            ++iter;
-            continue;
-        }
-
-        const auto transportStatus = std::move(queried).Value();
-        if (transportStatus == TransportStatus::Waiting) {
-            const auto nowMs = SteadyNowMs();
-            if ((cancelAllRequested_.load(std::memory_order_acquire) ||
-                 OperationTimedOut(*iter, nowMs)) &&
-                iter->phase == InflightPhase::Polling) {
-                stateChanged = RequestCancel(*iter) || stateChanged;
             }
             ++iter;  // WAITING stays at its current position.
             continue;
         }
 
-        // Apply metadata once; a failed handle release retries without replaying it.
-        ApplyTerminal(*iter, transportStatus);
-        iter->phase = InflightPhase::AppliedAwaitingRelease;
-        stateChanged = true;
-        if (TryReleaseHandle(*iter)) {
-            iter = pending_.erase(iter);
-        } else {
-            ++iter;
+        if (iter->phase == InflightPhase::TimedOut) {
+            transportStatus = transport::TransferStatus::Failed;
         }
+        // Formal GetStatus releases terminal handles; settle business state exactly once.
+        ApplyTerminal(*iter, transportStatus);
+        iter = pending_.erase(iter);
+        stateChanged = true;
     }
 
     pendingCount_.store(pending_.size(), std::memory_order_release);
     return stateChanged;
 }
 
-bool CompletionPoller::RequestCancel(InflightRecord& record)
-{
-    // Cancel is asynchronous; keep the record until QueryStatus returns a terminal state.
-    const auto status = g_services.transport->Cancel(record.handle);
-    if (status.Failure()) {
-        UC_ERROR("CompletionPoller Cancel failed, handle={}, error={}", record.handle.value,
-                 status);
-        return false;
-    }
-    record.phase = InflightPhase::CancelRequested;
-    return true;
-}
-
-void CompletionPoller::ApplyTerminal(InflightRecord& record, TransportStatus terminalStatus)
+void CompletionPoller::ApplyTerminal(InflightRecord& record,
+                                     transport::TransferStatus terminalStatus)
 {
     for (const auto& item : record.transfer_items) {
         ResultCode result = ResultCode::Failed;
@@ -157,7 +129,7 @@ void CompletionPoller::ApplyTerminal(InflightRecord& record, TransportStatus ter
                     result = ResultCode::Ok;
                 } else {
                     UC_ERROR("CompletionPoller PublishDump failed, handle={}, error={}",
-                             record.handle.value, status);
+                             record.handle, status);
                 }
             } else {
                 const auto abortStatus = g_services.metadata->AbortDump(item.key);
@@ -166,26 +138,25 @@ void CompletionPoller::ApplyTerminal(InflightRecord& record, TransportStatus ter
                     if (freeStatus.Failure()) {
                         UC_ERROR(
                             "CompletionPoller Free failed after DUMP abort, handle={}, error={}",
-                            record.handle.value, freeStatus);
+                            record.handle, freeStatus);
                     }
                 } else {
                     UC_ERROR("CompletionPoller AbortDump failed, handle={}, error={}",
-                             record.handle.value, abortStatus);
+                             record.handle, abortStatus);
                 }
             }
         } else if (record.opcode == KvOpcode::Load) {
             const auto releaseStatus = g_services.metadata->ReleaseLoadIo(item.key);
             if (releaseStatus.Failure()) {
                 UC_ERROR("CompletionPoller ReleaseLoadIo failed, handle={}, error={}",
-                         record.handle.value, releaseStatus);
+                         record.handle, releaseStatus);
             } else if (IsSuccessful(terminalStatus)) {
                 result = ResultCode::Ok;
             }
         }
 
         if (!record.request_ctx) {
-            UC_ERROR("CompletionPoller record has no RequestContext, handle={}",
-                     record.handle.value);
+            UC_ERROR("CompletionPoller record has no RequestContext, handle={}", record.handle);
             continue;
         }
 
@@ -193,30 +164,20 @@ void CompletionPoller::ApplyTerminal(InflightRecord& record, TransportStatus ter
         const auto completeStatus =
             record.request_ctx->CompleteItem(item.request_index, result, finalResponse);
         if (completeStatus.Failure()) {
-            UC_ERROR("CompletionPoller CompleteItem failed, handle={}, error={}",
-                     record.handle.value, completeStatus);
+            UC_ERROR("CompletionPoller CompleteItem failed, handle={}, error={}", record.handle,
+                     completeStatus);
             continue;
         }
         if (!finalResponse.has_value()) { continue; }
 
-        const auto responseStatus = WriteResponse(
-            finalResponse->opcode, finalResponse->response_addr, finalResponse->results);
+        const auto responseStatus =
+            WriteResponse(finalResponse->opcode, finalResponse->response_addr,
+                          finalResponse->peer_manager_id, finalResponse->results);
         if (responseStatus.Failure()) {
-            UC_ERROR("CompletionPoller WriteResponse failed, handle={}, error={}",
-                     record.handle.value, responseStatus);
+            UC_ERROR("CompletionPoller WriteResponse failed, handle={}, error={}", record.handle,
+                     responseStatus);
         }
     }
-}
-
-bool CompletionPoller::TryReleaseHandle(InflightRecord& record)
-{
-    const auto status = g_services.transport->ReleaseHandle(record.handle);
-    if (status.Failure()) {
-        UC_ERROR("CompletionPoller ReleaseHandle failed, handle={}, error={}", record.handle.value,
-                 status);
-        return false;
-    }
-    return true;
 }
 
 bool CompletionPoller::OperationTimedOut(const InflightRecord& record, std::uint64_t nowMs) const

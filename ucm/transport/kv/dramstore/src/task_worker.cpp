@@ -22,6 +22,7 @@
 #include "task_worker.h"
 #include <chrono>
 #include <cstring>
+#include <limits>
 #include <thread>
 #include <utility>
 #include "drampool_config.h"
@@ -33,15 +34,18 @@ namespace {
 
 constexpr auto kTaskWorkerIdleWait = std::chrono::microseconds(100);
 
-std::uint64_t NowMs()
+std::uint64_t SteadyNowMs()
 {
     const auto now = std::chrono::steady_clock::now().time_since_epoch();
     return static_cast<std::uint64_t>(
         std::chrono::duration_cast<std::chrono::milliseconds>(now).count());
 }
 
-std::uint64_t ExpireAtMs(std::uint64_t now_ms, std::uint64_t ttl_ms)
-{ return ttl_ms == 0 ? 0 : now_ms + ttl_ms; }
+MetadataIndex::TimePoint LifeTimeout(std::uint64_t ttlMs)
+{
+    return ttlMs == 0 ? MetadataIndex::TimePoint{}
+                      : std::chrono::system_clock::now() + std::chrono::milliseconds(ttlMs);
+}
 
 template <typename WireKey>
 BlockId CopyBlockId(const WireKey& wireKey)
@@ -52,42 +56,65 @@ BlockId CopyBlockId(const WireKey& wireKey)
     return key;
 }
 
-std::uint32_t LoadFailureCode(LoadPinCode /*code*/) { return static_cast<std::uint32_t>(ResultCode::Failed); }
+std::uint32_t LoadFailureCode(LoadPinCode /*code*/)
+{ return static_cast<std::uint32_t>(ResultCode::Failed); }
+
+UC::Status EnsurePeerReady(const transport::ManagerID& targetManager)
+{
+    auto status = g_services.transport->Connect(transport::TransportProtocol::Hixl, targetManager);
+    if (status == transport::Status::Ok) { return UC::Status::OK(); }
+
+    status = g_services.transport->ExchangeMetadata(targetManager);
+    if (status != transport::Status::Ok) {
+        return ToUcStatus(status, "TransportManager::ExchangeMetadata");
+    }
+    return ToUcStatus(
+        g_services.transport->Connect(transport::TransportProtocol::Hixl, targetManager),
+        "TransportManager::Connect");
+}
 
 }  // namespace
 
 void TaskWorker::Run(const std::atomic_bool& stop)
 {
-    g_services.request_queue->ConsumerLoop(stop, [this](RequestPtr request) {
-        const auto status = ProcessOneRequest(std::move(request));
+    g_services.request_queue->ConsumerLoop(stop, [this](RequestTaskPtr task) {
+        const auto status = ProcessOneRequest(std::move(task));
         if (status.Failure()) { UC_ERROR("TaskWorker ProcessOneRequest failed: {}", status); }
     });
 }
 
-UC::Status TaskWorker::ProcessOneRequest(RequestPtr request)
+UC::Status TaskWorker::ProcessOneRequest(RequestTaskPtr task)
 {
+    if (!task || !task->request || task->peer_manager_id.empty()) {
+        return UC::Status::InvalidParam("TaskWorker got an invalid request task");
+    }
+    const auto peer_status = EnsurePeerReady(task->peer_manager_id);
+    if (peer_status.Failure()) { return peer_status; }
+    const auto& peerManagerId = task->peer_manager_id;
+    const auto& request = task->request;
     switch (request->opcode) {
         case KvOpcode::Dump:
-            return ProcessDump(*dynamic_cast<const KvDumpRequest*>(request.get()));
+            return ProcessDump(*dynamic_cast<const KvDumpRequest*>(request.get()), peerManagerId);
         case KvOpcode::Load:
-            return ProcessLoad(*dynamic_cast<const KvLoadRequest*>(request.get()));
+            return ProcessLoad(*dynamic_cast<const KvLoadRequest*>(request.get()), peerManagerId);
         case KvOpcode::Lookup:
-            return ProcessLookup(*dynamic_cast<const KvLookupRequest*>(request.get()));
-        case KvOpcode::None:
-            break;
+            return ProcessLookup(*dynamic_cast<const KvLookupRequest*>(request.get()),
+                                 peerManagerId);
+        case KvOpcode::None: break;
     }
     return UC::Status::InvalidParam("TaskWorker got invalid opcode");
 }
 
-UC::Status TaskWorker::ProcessDump(const KvDumpRequest& request)
+UC::Status TaskWorker::ProcessDump(const KvDumpRequest& request,
+                                   const transport::ManagerID& peerManagerId)
 {
-    const auto now_ms = NowMs();
-    const std::uint64_t ttl_ms =
-        request.ttl != 0 ? static_cast<std::uint64_t>(request.ttl) : g_drampool_config.defaultDumpTtlMs;
-    const auto expire_at_ms = ExpireAtMs(now_ms, ttl_ms);
-    std::vector<std::uint32_t> results(request.batch_size, static_cast<std::uint32_t>(ResultCode::Ok));
+    const std::uint64_t ttl_ms = request.ttl != 0 ? static_cast<std::uint64_t>(request.ttl)
+                                                  : g_drampool_config.defaultDumpTtlMs;
+    const auto lifeTimeout = LifeTimeout(ttl_ms);
+    std::vector<std::uint32_t> results(request.batch_size,
+                                       static_cast<std::uint32_t>(ResultCode::Ok));
     std::vector<TransferItem> transfer_items;
-    std::vector<TransportSegment> segments;
+    std::vector<transport::Segment> segments;
     transfer_items.reserve(request.entries.size());
     segments.reserve(request.entries.size());
 
@@ -102,16 +129,23 @@ UC::Status TaskWorker::ProcessDump(const KvDumpRequest& request)
         }
         auto slot = std::move(allocated).Value();
 
-        EntryCreateOptions options;
-        options.key = key;
-        options.buffer_handle = slot.handle;
-        options.local_addr = slot.addr;
-        options.len = entry.len;
-        options.abs_pos = entry.idx;
-        options.expire_at_ms = expire_at_ms;
-        options.class_id = slot.class_id;
+        if (slot.handle.value > std::numeric_limits<std::uint32_t>::max()) {
+            UC_ERROR("Dump[{}] buffer slot id exceeds Entry::slot", index);
+            (void)FreeBuffer(slot.handle);
+            break;
+        }
 
-        const auto reserve = g_services.metadata->ReserveDumpEntry(options);
+        auto metadataEntry = std::make_shared<UC::DramStore::Entry>();
+        metadataEntry->key = key;
+        metadataEntry->shard = slot.class_id;
+        metadataEntry->slot = static_cast<std::uint32_t>(slot.handle.value);
+        metadataEntry->addr = reinterpret_cast<void*>(slot.addr);
+        metadataEntry->size = entry.len;
+        metadataEntry->lifeTimeout = lifeTimeout;
+        metadataEntry->position = entry.idx;
+
+        const auto reserve =
+            g_services.metadata->ReserveDumpEntry(metadataEntry, slot.handle);
         if (reserve.code == ReserveDumpCode::Exists) {
             const auto freeStatus = FreeBuffer(slot.handle);
             if (freeStatus.Failure()) {
@@ -139,61 +173,65 @@ UC::Status TaskWorker::ProcessDump(const KvDumpRequest& request)
         item.buffer_handle = slot.handle;
         transfer_items.emplace_back(item);
 
-        TransportSegment segment;
-        segment.local_addr = slot.addr;
+        transport::Segment segment;
+        segment.local_addr = reinterpret_cast<void*>(slot.addr);
         segment.remote_addr = entry.addr;
-        segment.len = entry.len;
+        segment.length = entry.len;
         segments.emplace_back(segment);
     }
 
     if (transfer_items.empty()) {
-        return WriteResponse(KvOpcode::Dump, request.resp_addr, results);
+        return WriteResponse(KvOpcode::Dump, request.resp_addr, peerManagerId, results);
     }
 
     auto requestContext = std::make_shared<RequestContext>(KvOpcode::Dump, request.resp_addr,
-                                                           results, transfer_items);
+                                                           peerManagerId, results, transfer_items);
     if (!requestContext->Valid()) {
         RollbackDumpItems(transfer_items);
         return UC::Status::InvalidParam("failed to build DUMP RequestContext");
     }
 
-    TransportOp op;
-    op.opcode = KvOpcode::Dump;
-    op.direction = TransportDirection::ReadRemoteToLocal;
-    op.segments = std::move(segments);
+    transport::Operation operation;
+    operation.opcode = transport::Opcode::Read;
+    operation.direct = transport::OperationDirect::RemoteDeviceHost;
+    operation.target_manager = peerManagerId;
+    operation.ops = std::move(segments);
 
-    auto submitted = g_services.transport->SubmitAsync(op);
-    if (!submitted.HasValue()) {
+    TransportHandle handle = transport::kInvalidTransferHandle;
+    const auto submit_status = g_services.transport->ExecuteAsync(operation, handle);
+    if (submit_status != transport::Status::Ok || handle == transport::kInvalidTransferHandle) {
         UC_ERROR("Dump SubmitAsync failed, items={}", transfer_items.size());
         RollbackDumpItems(transfer_items);
         for (const auto& item : transfer_items) {
             results[item.request_index] = static_cast<std::uint32_t>(ResultCode::Failed);
         }
-        return WriteResponse(KvOpcode::Dump, request.resp_addr, results);
+        return WriteResponse(KvOpcode::Dump, request.resp_addr, peerManagerId, results);
     }
 
     InflightRecord record;
     record.opcode = KvOpcode::Dump;
-    record.handle = std::move(submitted).Value();
+    record.handle = handle;
     record.transfer_items = std::move(transfer_items);
     record.request_ctx = std::move(requestContext);
-    record.submit_ms = NowMs();
+    record.submit_ms = SteadyNowMs();
     return SubmitInflight(std::move(record));
 }
 
-UC::Status TaskWorker::ProcessLoad(const KvLoadRequest& request)
+UC::Status TaskWorker::ProcessLoad(const KvLoadRequest& request,
+                                   const transport::ManagerID& peerManagerId)
 {
-    const auto now_ms = NowMs();
-    std::vector<std::uint32_t> results(request.batch_size, static_cast<std::uint32_t>(ResultCode::Failed));
+    const auto now = std::chrono::system_clock::now();
+    std::vector<std::uint32_t> results(request.batch_size,
+                                       static_cast<std::uint32_t>(ResultCode::Failed));
     std::vector<TransferItem> transfer_items;
-    std::vector<TransportSegment> segments;
+    std::vector<transport::Segment> segments;
     transfer_items.reserve(request.entries.size());
     segments.reserve(request.entries.size());
 
     for (std::uint16_t index = 0; index < request.batch_size; ++index) {
         const auto& entry = request.entries[index];
         const BlockId key = CopyBlockId(entry.key);
-        auto pin = g_services.metadata->LookupAndPinLoad(key, now_ms);
+        auto pin = g_services.metadata->LookupAndPinLoad(key, now);
         if (pin.code != LoadPinCode::Pinned) {
             results[index] = LoadFailureCode(pin.code);
             UC_ERROR("Load[{}] LookupAndPinLoad failed, code={}", index,
@@ -219,55 +257,58 @@ UC::Status TaskWorker::ProcessLoad(const KvLoadRequest& request)
         item.buffer_handle = pin.buffer_handle;
         transfer_items.emplace_back(item);
 
-        TransportSegment segment;
-        segment.local_addr = pin.local_addr;
+        transport::Segment segment;
+        segment.local_addr = reinterpret_cast<void*>(pin.local_addr);
         segment.remote_addr = entry.addr;
-        segment.len = entry.len;
+        segment.length = entry.len;
         segments.emplace_back(segment);
     }
 
     if (transfer_items.empty()) {
-        return WriteResponse(KvOpcode::Load, request.resp_addr, results);
+        return WriteResponse(KvOpcode::Load, request.resp_addr, peerManagerId, results);
     }
 
     auto requestContext = std::make_shared<RequestContext>(KvOpcode::Load, request.resp_addr,
-                                                           results, transfer_items);
+                                                           peerManagerId, results, transfer_items);
     if (!requestContext->Valid()) {
         UnpinLoadItems(transfer_items);
         return UC::Status::InvalidParam("failed to build LOAD RequestContext");
     }
 
-    TransportOp op;
-    op.opcode = KvOpcode::Load;
-    op.direction = TransportDirection::WriteLocalToRemote;
-    op.segments = std::move(segments);
+    transport::Operation operation;
+    operation.opcode = transport::Opcode::Write;
+    operation.direct = transport::OperationDirect::RemoteDeviceHost;
+    operation.target_manager = peerManagerId;
+    operation.ops = std::move(segments);
 
-    auto submitted = g_services.transport->SubmitAsync(op);
-    if (!submitted.HasValue()) {
+    TransportHandle handle = transport::kInvalidTransferHandle;
+    const auto submit_status = g_services.transport->ExecuteAsync(operation, handle);
+    if (submit_status != transport::Status::Ok || handle == transport::kInvalidTransferHandle) {
         UC_ERROR("Load SubmitAsync failed, items={}", transfer_items.size());
         UnpinLoadItems(transfer_items);
         for (const auto& item : transfer_items) {
             results[item.request_index] = static_cast<std::uint32_t>(ResultCode::Failed);
         }
-        return WriteResponse(KvOpcode::Load, request.resp_addr, results);
+        return WriteResponse(KvOpcode::Load, request.resp_addr, peerManagerId, results);
     }
 
     InflightRecord record;
     record.opcode = KvOpcode::Load;
-    record.handle = std::move(submitted).Value();
+    record.handle = handle;
     record.transfer_items = std::move(transfer_items);
     record.request_ctx = std::move(requestContext);
-    record.submit_ms = NowMs();
+    record.submit_ms = SteadyNowMs();
     return SubmitInflight(std::move(record));
 }
 
-UC::Status TaskWorker::ProcessLookup(const KvLookupRequest& request)
+UC::Status TaskWorker::ProcessLookup(const KvLookupRequest& request,
+                                     const transport::ManagerID& peerManagerId)
 {
-    const auto now_ms = NowMs();
+    const auto now = std::chrono::system_clock::now();
     std::uint32_t prefix_count = 0;
     for (std::uint16_t index = 0; index < request.batch_size; ++index) {
         const BlockId key = CopyBlockId(request.entries[index].key);
-        const auto code = g_services.metadata->LookupReady(key, now_ms);
+        const auto code = g_services.metadata->LookupReady(key, now);
         if (code == LookupCode::Ready) {
             ++prefix_count;
             continue;
@@ -275,8 +316,7 @@ UC::Status TaskWorker::ProcessLookup(const KvLookupRequest& request)
         break;
     }
 
-    return WriteResponse(KvOpcode::Lookup, request.resp_addr,
-                                                {prefix_count});
+    return WriteResponse(KvOpcode::Lookup, request.resp_addr, peerManagerId, {prefix_count});
 }
 
 void TaskWorker::RollbackDumpItems(const std::vector<TransferItem>& items)

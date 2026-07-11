@@ -50,7 +50,10 @@ struct DramPoolConfig {
     std::uint64_t defaultDumpTtlMs{7200000};
 
     std::string serverId{"drampool-0"};
-    std::string transportMode{"tcp"};
+    std::string transportMode{"hixl"};
+    std::string transportManagerAddr{"127.0.0.1:9100"};
+    std::string transportLocalEngine{"drampool-0"};
+    std::int32_t transportDeviceId{0};
 
     std::uint32_t metadataShards{1024};
 

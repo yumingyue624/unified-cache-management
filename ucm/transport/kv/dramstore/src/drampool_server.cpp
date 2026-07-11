@@ -24,7 +24,6 @@
 #include "drampool_server.h"
 #include <chrono>
 #include <exception>
-#include <utility>
 #include "logger.h"
 #include "task_worker.h"
 
@@ -92,9 +91,7 @@ UC::Status DramPoolServer::Init(const DramPoolConfig& config)
     g_services.trans_handle_queue = &transHandleQueue_;
     g_services.metadata = metadataIndex_.get();
     g_services.buffer_managers.clear();
-    for (auto& bm : bufferManagers_) {
-        g_services.buffer_managers.push_back(bm.get());
-    }
+    for (auto& bm : bufferManagers_) { g_services.buffer_managers.push_back(bm.get()); }
     g_services.transport = transportManager_.get();
 
     state_ = ServerState::Initialized;
@@ -149,7 +146,7 @@ void DramPoolServer::StopLocked()
     SetServiceReady(false);
     StopReceiver();
     StopTaskWorker();
-    CancelInflightTransports();
+    MarkInflightTransportsFailed();
     StopCompletionPoller();
     StopGCThread();
     UnregisterBufferMemory();
@@ -169,7 +166,12 @@ std::vector<std::string> DramPoolServer::LifecycleEvents() const
 
 UC::Status DramPoolServer::InitDataTransportManager()
 {
-    transportManager_ = std::make_unique<FakeTransportManager>();
+    transportManager_ = std::make_unique<transport::TransportManager>(config_.transportManagerAddr);
+    const auto status = transportManager_->Init();
+    if (status != transport::Status::Ok) {
+        transportManager_.reset();
+        return ToUcStatus(status, "TransportManager::Init");
+    }
     RecordLifecycleEvent("InitDataTransportManager");
     return UC::Status::OK();
 }
@@ -179,6 +181,17 @@ UC::Status DramPoolServer::InstallDataTransport()
     if (!transportManager_) {
         return UC::Status::InvalidParam("TransportManager is not initialized");
     }
+    // Runtime transport selection is owned by the server and driven by its configuration.
+    transport::HixlInitAttrs attrs;
+    attrs.local_engine = config_.transportLocalEngine;
+    attrs.device_id = config_.transportDeviceId;
+    attrs.connect_timeout_ms = static_cast<std::int32_t>(config_.opTimeoutMs);
+    attrs.transfer_timeout_ms = static_cast<std::int32_t>(config_.opTimeoutMs);
+    const auto status =
+        transportManager_->InstallTransport(transport::TransportProtocol::Hixl, attrs);
+    if (status != transport::Status::Ok) {
+        return ToUcStatus(status, "TransportManager::InstallTransport");
+    }
     RecordLifecycleEvent("InstallDataTransport");
     return UC::Status::OK();
 }
@@ -186,8 +199,8 @@ UC::Status DramPoolServer::InstallDataTransport()
 UC::Status DramPoolServer::InitBufferMgr()
 {
     for (const auto blockSize : config_.poolBlockSizes) {
-        bufferManagers_.push_back(std::make_unique<FakeBufferManager>(
-            static_cast<std::uint32_t>(blockSize)));
+        bufferManagers_.push_back(
+            std::make_unique<FakeBufferManager>(static_cast<std::uint32_t>(blockSize)));
     }
     RecordLifecycleEvent("InitBufferMgr");
     return UC::Status::OK();
@@ -300,10 +313,10 @@ void DramPoolServer::StopTaskWorker()
     RecordLifecycleEvent("StopTaskWorker");
 }
 
-void DramPoolServer::CancelInflightTransports()
+void DramPoolServer::MarkInflightTransportsFailed()
 {
-    if (completionPoller_) { completionPoller_->RequestCancelAll(); }
-    RecordLifecycleEvent("CancelInflightTransports");
+    if (completionPoller_) { completionPoller_->RequestDrainAllAsFailed(); }
+    RecordLifecycleEvent("MarkInflightTransportsFailed");
 }
 
 void DramPoolServer::StopCompletionPoller()
@@ -327,6 +340,12 @@ void DramPoolServer::StopGCThread()
 
 void DramPoolServer::UnregisterBufferMemory()
 {
+    if (transportManager_) {
+        const auto status = transportManager_->Shutdown();
+        if (status != transport::Status::Ok) {
+            UC_ERROR_UNLIMITED("DramPool TransportManager shutdown failed");
+        }
+    }
     bufferManagers_.clear();
     RecordLifecycleEvent("UnregisterBufferMemory");
 }
@@ -383,8 +402,8 @@ void DramPoolServer::ResetInitializedComponents()
     taskWorker_.reset();
     protocolManager_.reset();
     metadataIndex_.reset();
-    bufferManagers_.clear();
     transportManager_.reset();
+    bufferManagers_.clear();
     g_services = {};
 }
 

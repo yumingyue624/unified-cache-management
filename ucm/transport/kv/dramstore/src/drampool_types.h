@@ -10,31 +10,42 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <string>
 #include <utility>
 #include <vector>
+#include "core/transport.h"
 #include "kv_protocol.h"
 #include "status/status.h"
 #include "template/spsc_ring_queue.h"
 #include "type/types.h"
 
+namespace transport {
+class TransportManager;
+}
+
 namespace UC::DRAMPOOL {
 
 using BlockId = UC::Detail::BlockId;
 using RequestPtr = std::unique_ptr<KvRequest>;
-using RequestQueue = UC::SpscRingQueue<RequestPtr>;
+
+// Receiver attaches connection context after KvProtocol parses the wire request.
+struct RequestTask {
+    RequestPtr request;
+    transport::ManagerID peer_manager_id;
+};
+
+using RequestTaskPtr = std::unique_ptr<RequestTask>;
+using RequestQueue = UC::SpscRingQueue<RequestTaskPtr>;
 
 struct BufferHandle {
     std::uint64_t value{0};
     std::uint32_t class_id{0};
+    transport::MemoryHandle memory_handle{transport::kInvalidMemoryHandle};
 
     bool Valid() const noexcept { return value != 0; }
 };
 
-struct TransportHandle {
-    std::uint64_t value{0};
-
-    bool Valid() const noexcept { return value != 0; }
-};
+using TransportHandle = transport::TransferHandle;
 
 struct TransferItem {
     std::uint16_t request_index{0};
@@ -52,17 +63,19 @@ enum class ResultCode : std::uint32_t {
 struct FinalResponse {
     KvOpcode opcode{KvOpcode::None};
     std::uint64_t response_addr{0};
+    transport::ManagerID peer_manager_id;
     std::vector<std::uint32_t> results;
 };
 
 // Tracks one batch across asynchronous completions and claims its response once.
 class RequestContext final {
 public:
-    RequestContext(KvOpcode opcode, std::uint64_t responseAddr,
+    RequestContext(KvOpcode opcode, std::uint64_t responseAddr, transport::ManagerID peerManagerId,
                    std::vector<std::uint32_t> initialResults,
                    const std::vector<TransferItem>& pendingItems)
         : opcode_(opcode),
           responseAddr_(responseAddr),
+          peerManagerId_(std::move(peerManagerId)),
           results_(std::move(initialResults)),
           completed_(results_.size(), true)
     {
@@ -94,7 +107,7 @@ public:
 
         if (remaining_ == 0 && !responseClaimed_) {
             responseClaimed_ = true;
-            finalResponse = FinalResponse{opcode_, responseAddr_, results_};
+            finalResponse = FinalResponse{opcode_, responseAddr_, peerManagerId_, results_};
         }
         return UC::Status::OK();
     }
@@ -102,6 +115,7 @@ public:
 private:
     KvOpcode opcode_{KvOpcode::None};
     std::uint64_t responseAddr_{0};
+    transport::ManagerID peerManagerId_;
     std::vector<std::uint32_t> results_;
     std::vector<std::uint8_t> completed_;
     std::size_t remaining_{0};
@@ -112,9 +126,8 @@ private:
 
 enum class InflightPhase : std::uint8_t {
     Polling = 0,
-    CancelRequested = 1,
-    // Business state is settled; only transport-handle release may be retried.
-    AppliedAwaitingRelease = 2,
+    // The transfer must still reach terminal, but its request result is forced to failure.
+    TimedOut = 1,
 };
 
 struct InflightRecord {
@@ -130,15 +143,14 @@ using TransHandleQueue = UC::SpscRingQueue<InflightRecord>;
 
 class MetadataIndex;
 class BufferManager;
-class TransportManager;
 
 struct DramPoolServices {
-    MetadataIndex*     metadata{nullptr};
+    MetadataIndex* metadata{nullptr};
     std::vector<BufferManager*> buffer_managers{};
-    TransportManager*  transport{nullptr};
-    ProtocolManager*   protocol_mgr{nullptr};
-    RequestQueue*       request_queue{nullptr};
-    TransHandleQueue*   trans_handle_queue{nullptr};
+    transport::TransportManager* transport{nullptr};
+    ProtocolManager* protocol_mgr{nullptr};
+    RequestQueue* request_queue{nullptr};
+    TransHandleQueue* trans_handle_queue{nullptr};
 };
 
 inline DramPoolServices g_services{};

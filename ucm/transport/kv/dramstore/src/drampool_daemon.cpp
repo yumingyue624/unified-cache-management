@@ -26,6 +26,7 @@
 #include <csignal>
 #include <iostream>
 #include <thread>
+#include <utility>
 #include "logger.h"
 
 namespace UC::DRAMPOOL {

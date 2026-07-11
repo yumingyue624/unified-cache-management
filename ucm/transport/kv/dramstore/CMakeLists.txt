@@ -12,6 +12,7 @@ add_library(drampool_core STATIC
 target_include_directories(drampool_core
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/ucm/store/dram/cc
         ${CMAKE_SOURCE_DIR}/ucm/store/detail
 )
 
@@ -20,6 +21,8 @@ target_link_libraries(drampool_core
         infra_status
         infra_logger
         infra_template
+        infra_thread
+        p2p_transport
         Threads::Threads
 )
 
@@ -36,6 +39,8 @@ install(TARGETS drampool RUNTIME DESTINATION bin COMPONENT ucm)
 
 if(BUILD_UNIT_TESTS)
     include(GoogleTest)
+    option(BUILD_DRAMPOOL_RUNTIME_INTEGRATION_TESTS
+           "Run DramPool startup tests that require a real Hixl runtime" OFF)
     add_executable(drampool_startup.test
         test/drampool_startup_test.cpp
     )
@@ -45,6 +50,10 @@ if(BUILD_UNIT_TESTS)
             gtest_main
             gtest
     )
+    if(BUILD_DRAMPOOL_RUNTIME_INTEGRATION_TESTS)
+        target_compile_definitions(drampool_startup.test
+            PRIVATE UCM_DRAMPOOL_RUNTIME_INTEGRATION_TESTS=1)
+    endif()
     if(MSVC)
         target_link_options(drampool_startup.test PRIVATE /PROFILE)
     endif()

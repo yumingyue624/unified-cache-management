@@ -109,6 +109,16 @@ UC::Status ApplyConfigValue(DramPoolConfig& config, const std::string& key,
             config.listenAddr = value;
         } else if (key == "transport.mode") {
             config.transportMode = ToLower(value);
+        } else if (key == "transport.manager_addr") {
+            config.transportManagerAddr = value;
+        } else if (key == "transport.local_engine") {
+            config.transportLocalEngine = value;
+        } else if (key == "transport.device_id") {
+            const auto deviceId = ParseUint32(value);
+            if (deviceId > static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max())) {
+                throw std::out_of_range("int32 overflow");
+            }
+            config.transportDeviceId = static_cast<std::int32_t>(deviceId);
         } else if (key == "pool.size_gb") {
             config.poolSizeGb = ParseUint64(value);
         } else if (key == "pool.block_sizes") {
@@ -245,8 +255,17 @@ UC::Status ValidateDramPoolConfig(const DramPoolConfig& config)
     }
 
     const auto transportMode = ToLower(config.transportMode);
-    if (transportMode != "tcp" && transportMode != "rdma" && transportMode != "hixl") {
+    if (transportMode != "hixl") {
         return UC::Status::InvalidParam("unsupported transport.mode: {}", config.transportMode);
+    }
+    if (Trim(config.transportManagerAddr).empty()) {
+        return UC::Status::InvalidParam("transport.manager_addr is required");
+    }
+    if (Trim(config.transportLocalEngine).empty()) {
+        return UC::Status::InvalidParam("transport.local_engine is required");
+    }
+    if (config.transportDeviceId < 0) {
+        return UC::Status::InvalidParam("transport.device_id must not be negative");
     }
 
     auto status = RequirePositive("pool.size_gb", config.poolSizeGb);
@@ -291,6 +310,9 @@ UC::Status ValidateDramPoolConfig(const DramPoolConfig& config)
     }
     status = RequirePositive("op.timeout_ms", config.opTimeoutMs);
     if (status.Failure()) { return status; }
+    if (config.opTimeoutMs > static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max())) {
+        return UC::Status::InvalidParam("op.timeout_ms exceeds transport int32 range");
+    }
     status = RequirePositive("shutdown.timeout_ms", config.shutdownTimeoutMs);
     if (status.Failure()) { return status; }
     if (config.gcEnabled) {

@@ -83,7 +83,7 @@ private:
     void SetServiceReady(bool ready);
     void StopReceiver();
     void StopTaskWorker();
-    void CancelInflightTransports();
+    void MarkInflightTransportsFailed();
     void StopCompletionPoller();
     void StopGCThread();
     void UnregisterBufferMemory();
@@ -112,7 +112,7 @@ private:
 
     RequestQueue requestQueue_;
     TransHandleQueue transHandleQueue_;
-    std::unique_ptr<TransportManager> transportManager_;
+    std::unique_ptr<transport::TransportManager> transportManager_;
     std::vector<std::unique_ptr<BufferManager>> bufferManagers_;
     std::unique_ptr<MetadataIndex> metadataIndex_;
     std::unique_ptr<ProtocolManager> protocolManager_;
