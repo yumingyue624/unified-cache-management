@@ -35,7 +35,7 @@ public:
     int Run(int argc, char** argv);
 
 private:
-    UC::Status SetupLogger(const DramPoolConfig& config);
+    UC::Status SetupLogger();
     UC::Status SetupSignals();
     void WaitForShutdown();
 

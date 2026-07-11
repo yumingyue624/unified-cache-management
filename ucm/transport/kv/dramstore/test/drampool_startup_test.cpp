@@ -37,8 +37,6 @@ DramPoolConfig MakeValidConfig()
     config.gcIntervalMs = 10;
     config.opTimeoutMs = 5000;
     config.shutdownTimeoutMs = 30000;
-    config.logLevel = "info";
-    config.logDir = "./drampool-test-logs";
     return config;
 }
 
@@ -185,8 +183,6 @@ TEST(DramPoolConfigTest, RejectsInvalidCoreConfig)
     expectInvalid([](DramPoolConfig& config) { config.gcIntervalMs = 0; });
     expectInvalid([](DramPoolConfig& config) { config.opTimeoutMs = 0; });
     expectInvalid([](DramPoolConfig& config) { config.shutdownTimeoutMs = 0; });
-    expectInvalid([](DramPoolConfig& config) { config.logLevel = "verbose"; });
-    expectInvalid([](DramPoolConfig& config) { config.logDir.clear(); });
 }
 
 TEST(DramPoolConfigTest, AcceptsGcDisabledWithHixlTransport)

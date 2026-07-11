@@ -70,9 +70,6 @@ struct DramPoolConfig {
     std::uint32_t opTimeoutMs{5000};
     std::uint32_t shutdownTimeoutMs{30000};
 
-    std::string logLevel{"INFO"};
-    std::string logDir{"./logs"};
-
     std::unordered_map<std::string, std::string> extra;
 };
 

@@ -364,12 +364,6 @@ UC::Status ValidateDramPoolConfig(const DramPoolConfig& config)
         if (status.Failure()) { return status; }
     }
 
-    const auto logLevel = ToLower(config.logLevel);
-    if (logLevel != "debug" && logLevel != "info" && logLevel != "warn" && logLevel != "error" &&
-        logLevel != "critical") {
-        return UC::Status::InvalidParam("unsupported log.level: {}", config.logLevel);
-    }
-    if (Trim(config.logDir).empty()) { return UC::Status::InvalidParam("log.dir is required"); }
     return UC::Status::OK();
 }
 

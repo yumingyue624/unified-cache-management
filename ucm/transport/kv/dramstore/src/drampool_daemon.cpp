@@ -22,18 +22,53 @@
  * SOFTWARE.
  * */
 #include "drampool_daemon.h"
+#include <cerrno>
 #include <chrono>
 #include <csignal>
+#include <cstdlib>
 #include <iostream>
+#include <limits>
+#include <string>
 #include <thread>
 #include "logger.h"
 
 namespace UC::DRAMPOOL {
 namespace {
 
-constexpr int kDefaultLogFileCount = 3;
-constexpr int kDefaultLogFileSizeMb = 64;
+constexpr char kUcmLogPathEnv[] = "UCM_LOG_PATH";
+constexpr char kUcmLogMaxFilesEnv[] = "UCM_LOG_MAX_FILES";
+constexpr char kUcmLogMaxSizeEnv[] = "UCM_LOG_MAX_SIZE";
+constexpr char kDefaultLogPath[] = "log";
+constexpr int kDefaultLogFileCount = 10;
+constexpr int kDefaultLogFileSizeMb = 5;
 constexpr auto kShutdownPollInterval = std::chrono::milliseconds(100);
+
+std::string ReadEnvironment(const char* name)
+{
+    const char* value = std::getenv(name);
+    return value == nullptr ? std::string{} : value;
+}
+
+std::string ReadEnvironmentString(const char* name, const char* defaultValue)
+{
+    const auto value = ReadEnvironment(name);
+    return value.empty() ? defaultValue : value;
+}
+
+int ReadPositiveEnvironmentInt(const char* name, int defaultValue)
+{
+    const auto value = ReadEnvironment(name);
+    if (value.empty()) { return defaultValue; }
+
+    char* end = nullptr;
+    errno = 0;
+    const auto parsed = std::strtol(value.c_str(), &end, 10);
+    if (errno != 0 || end == value.c_str() || *end != '\0' || parsed <= 0 ||
+        parsed > std::numeric_limits<int>::max()) {
+        return defaultValue;
+    }
+    return static_cast<int>(parsed);
+}
 
 }  // namespace
 
@@ -47,7 +82,7 @@ int DramPoolDaemon::Run(int argc, char** argv)
         std::cerr << status.ToString() << "\n" << BuildUsage(argc > 0 ? argv[0] : "drampool");
         return 1;
     }
-    status = SetupLogger(config);
+    status = SetupLogger();
     if (status.Failure()) {
         std::cerr << status.ToString() << "\n";
         return 1;
@@ -80,9 +115,13 @@ int DramPoolDaemon::Run(int argc, char** argv)
     return 0;
 }
 
-UC::Status DramPoolDaemon::SetupLogger(const DramPoolConfig& config)
+UC::Status DramPoolDaemon::SetupLogger()
 {
-    UC::Logger::Setup(config.logDir, kDefaultLogFileCount, kDefaultLogFileSizeMb);
+    // Match UCM's process-wide environment contract; UC_LOGGER_LEVEL is read by UC::Logger.
+    const auto logPath = ReadEnvironmentString(kUcmLogPathEnv, kDefaultLogPath);
+    const auto maxFiles = ReadPositiveEnvironmentInt(kUcmLogMaxFilesEnv, kDefaultLogFileCount);
+    const auto maxSize = ReadPositiveEnvironmentInt(kUcmLogMaxSizeEnv, kDefaultLogFileSizeMb);
+    UC::Logger::Setup(logPath, maxFiles, maxSize);
     return UC::Status::OK();
 }
 
