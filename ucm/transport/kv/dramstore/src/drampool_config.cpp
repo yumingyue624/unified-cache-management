@@ -24,15 +24,18 @@
 #include "drampool_config.h"
 #include <algorithm>
 #include <cctype>
+#include <cstddef>
 #include <limits>
 #include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
-#include "asu_transport/buffer_manager.h"
 
 namespace UC::DRAMPOOL {
 namespace {
+
+// Must match the fixed slot layout used by BufferManager.
+constexpr std::size_t kSlotAlignment = 64;
 
 bool IsLongOption(const std::string& value)
 { return value.size() > 2 && value.rfind("--", 0) == 0; }
@@ -332,12 +335,11 @@ UC::Status ResolvePoolSlotCounts(DramPoolConfig& config)
         }
 
         if (slotCapacity > std::numeric_limits<std::size_t>::max() -
-                               (UC::ASU::kBufferSlotAddressAlignment - 1)) {
+                               (kSlotAlignment - 1)) {
             return UC::Status::InvalidParam("--kvcache-block-sizes item overflows slot alignment");
         }
         const auto slotStride =
-            (slotCapacity + UC::ASU::kBufferSlotAddressAlignment - 1) /
-            UC::ASU::kBufferSlotAddressAlignment * UC::ASU::kBufferSlotAddressAlignment;
+            (slotCapacity + kSlotAlignment - 1) / kSlotAlignment * kSlotAlignment;
         const auto proportion = static_cast<std::uint64_t>(config.poolBlockProportions[index]);
         // totalProportion is bounded to uint32_t, so this remainder product cannot overflow.
         const auto classBytes = wholeShare * proportion + remainder * proportion / totalProportion;

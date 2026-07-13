@@ -67,6 +67,7 @@ private:
         Stopped,
     };
 
+    UC::Status InitializeAclRuntime();
     UC::Status InitMemoryPool();
     UC::Status InitMetadata();
     UC::Status InitProtocol();
@@ -111,7 +112,7 @@ private:
     RequestQueue requestQueue_;
     TransHandleQueue transHandleQueue_;
     std::unique_ptr<transport::TransportManager> transportManager_;
-    BufferPoolList bufferPools_;
+    BufferManagerList bufferManagers_;
     std::unique_ptr<MetadataIndex> metadataIndex_;
     std::unique_ptr<ProtocolManager> protocolManager_;
     std::unique_ptr<DramPoolRuntime> runtime_;

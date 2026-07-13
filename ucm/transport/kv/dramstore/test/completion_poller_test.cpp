@@ -9,8 +9,8 @@
 #include <thread>
 #include <utility>
 #include <vector>
+#include "buffer_manager.h"
 #include "drampool_config.h"
-#include "test_buffer_pool.h"
 #include "test_transport.h"
 
 namespace UC::DRAMPOOL {
@@ -62,10 +62,17 @@ protected:
         g_config.pollerMaxPending = kQueueCapacity;
         g_config.pollerIdleWaitUs = kTestIdleWaitUs;
         g_config.opTimeoutMs = kTestOperationTimeoutMs;
+        g_config.poolBlockSizes = {kValueLength};
+        g_config.poolSlotCounts = {static_cast<std::uint32_t>(kQueueCapacity)};
 
-        bufferPools_.push_back(
-            std::make_unique<TEST::TestBufferPool>(kValueLength, kQueueCapacity));
-        runtime_ = std::make_unique<DramPoolRuntime>(metadata_, bufferPools_, manager_,
+        auto bufferManager = std::make_unique<UC::ASU::BufferManager>();
+        ASSERT_TRUE(bufferManager
+                        ->Init("completion-poller-test", UC::ASU::MemoryType::HOST,
+                               kValueLength, kQueueCapacity, nullptr)
+                        .ok());
+        bufferManagers_.push_back(std::move(bufferManager));
+
+        runtime_ = std::make_unique<DramPoolRuntime>(metadata_, bufferManagers_, manager_,
                                                      protocols_, requestQueue_, ingress_);
     }
 
@@ -127,7 +134,7 @@ protected:
     RequestQueue requestQueue_;
     TransHandleQueue ingress_;
     FakeMetadataIndex metadata_;
-    BufferPoolList bufferPools_;
+    BufferManagerList bufferManagers_;
     ProtocolManager protocols_;
     std::shared_ptr<TEST::TestTransport> testTransport_{TEST::MakeTestTransport()};
     transport::TransportManager manager_{"127.0.0.1:28000"};

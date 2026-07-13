@@ -1,5 +1,8 @@
 find_package(Threads REQUIRED)
 
+set(DRAMPOOL_BUFFER_MANAGER_SOURCE_DIR
+    ${CMAKE_SOURCE_DIR}/ucm/transport/kv/asu/trans/src)
+
 add_library(drampool_core STATIC
     src/completion_poller.cpp
     src/drampool_buffer.cpp
@@ -15,6 +18,8 @@ target_include_directories(drampool_core
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_SOURCE_DIR}/ucm/store/dram/cc
         ${CMAKE_SOURCE_DIR}/ucm/store/detail
+    PRIVATE
+        ${DRAMPOOL_BUFFER_MANAGER_SOURCE_DIR}
 )
 
 target_link_libraries(drampool_core
@@ -53,6 +58,8 @@ if(BUILD_UNIT_TESTS)
             gtest_main
             gtest
     )
+    target_include_directories(drampool_startup.test
+        PRIVATE ${DRAMPOOL_BUFFER_MANAGER_SOURCE_DIR})
     if(BUILD_DRAMPOOL_RUNTIME_INTEGRATION_TESTS)
         target_compile_definitions(drampool_startup.test
             PRIVATE UCM_DRAMPOOL_RUNTIME_INTEGRATION_TESTS=1)
@@ -71,6 +78,8 @@ if(BUILD_UNIT_TESTS)
             gtest_main
             gtest
     )
+    target_include_directories(completion_poller.test
+        PRIVATE ${DRAMPOOL_BUFFER_MANAGER_SOURCE_DIR})
     if(MSVC)
         target_link_options(completion_poller.test PRIVATE /PROFILE)
     endif()

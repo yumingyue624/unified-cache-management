@@ -23,6 +23,10 @@ namespace transport {
 class TransportManager;
 }
 
+namespace UC::ASU {
+class BufferManager;
+}
+
 namespace UC::DRAMPOOL {
 
 using BlockId = UC::Detail::BlockId;
@@ -149,17 +153,16 @@ struct InflightRecord {
 using TransHandleQueue = UC::SpscRingQueue<InflightRecord>;
 
 class MetadataIndex;
-class BufferPool;
 
-using BufferPoolList = std::vector<std::unique_ptr<BufferPool>>;
+using BufferManagerList = std::vector<std::unique_ptr<UC::ASU::BufferManager>>;
 
 // Non-owning runtime view. DramPoolServer owns every referenced component.
 struct DramPoolRuntime {
-    DramPoolRuntime(MetadataIndex& metadataRef, BufferPoolList& bufferPoolsRef,
+    DramPoolRuntime(MetadataIndex& metadataRef, BufferManagerList& bufferManagersRef,
                     transport::TransportManager& transportRef, ProtocolManager& protocolRef,
                     RequestQueue& requestQueueRef, TransHandleQueue& transHandleQueueRef)
         : metadata(metadataRef),
-          bufferPools(bufferPoolsRef),
+          bufferManagers(bufferManagersRef),
           transport(transportRef),
           protocol(protocolRef),
           requestQueue(requestQueueRef),
@@ -168,7 +171,7 @@ struct DramPoolRuntime {
     }
 
     MetadataIndex& metadata;
-    BufferPoolList& bufferPools;
+    BufferManagerList& bufferManagers;
     transport::TransportManager& transport;
     ProtocolManager& protocol;
     RequestQueue& requestQueue;

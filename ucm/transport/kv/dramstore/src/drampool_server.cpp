@@ -28,6 +28,7 @@
 #include <string>
 #include <type_traits>
 #include <utility>
+#include "buffer_manager.h"
 #include "logger.h"
 #include "task_worker.h"
 
@@ -64,25 +65,6 @@ auto MakeScopeExit(Callback&& callback)
     return ScopeExit<std::decay_t<Callback>>(std::forward<Callback>(callback));
 }
 
-UC::Status InitializeAclRuntime(std::int32_t deviceId, bool& ownsRuntime)
-{
-    const auto initStatus = aclInit(nullptr);
-    if (initStatus == ACL_SUCCESS) {
-        ownsRuntime = true;
-    } else if (initStatus != ACL_ERROR_REPEAT_INITIALIZE) {
-        return UC::Status::Error("aclInit failed: " + std::to_string(initStatus));
-    }
-
-    const auto setDeviceStatus = aclrtSetDevice(deviceId);
-    if (setDeviceStatus == ACL_SUCCESS) { return UC::Status::OK(); }
-
-    if (ownsRuntime) {
-        (void)aclFinalize();
-        ownsRuntime = false;
-    }
-    return UC::Status::Error("aclrtSetDevice failed: " + std::to_string(setDeviceStatus));
-}
-
 }  // namespace
 
 DramPoolServer::DramPoolServer() = default;
@@ -100,6 +82,7 @@ UC::Status DramPoolServer::Init()
     // Build local state only; externally visible services start in Start().
     auto rollback = MakeScopeExit([this]() { ResetInitializedComponents(); });
     try {
+        if (auto status = InitializeAclRuntime(); status.Failure()) { return status; }
         if (auto status = InitMemoryPool(); status.Failure()) { return status; }
         if (auto status = InitMetadata(); status.Failure()) { return status; }
         if (auto status = InitProtocol(); status.Failure()) { return status; }
@@ -172,23 +155,38 @@ std::vector<std::string> DramPoolServer::LifecycleEvents() const
     return lifecycleEvents_;
 }
 
+UC::Status DramPoolServer::InitializeAclRuntime()
+{
+    const auto initStatus = aclInit(nullptr);
+    if (initStatus == ACL_SUCCESS) {
+        aclRuntimeOwned_ = true;
+    } else if (initStatus != ACL_ERROR_REPEAT_INITIALIZE) {
+        return UC::Status::Error("aclInit failed: " + std::to_string(initStatus));
+    }
+
+    const auto setDeviceStatus = aclrtSetDevice(g_config.transportDeviceId);
+    if (setDeviceStatus == ACL_SUCCESS) { return UC::Status::OK(); }
+
+    if (aclRuntimeOwned_) {
+        (void)aclFinalize();
+        aclRuntimeOwned_ = false;
+    }
+    return UC::Status::Error("aclrtSetDevice failed: " + std::to_string(setDeviceStatus));
+}
+
 UC::Status DramPoolServer::InitMemoryPool()
 {
-    if (const auto status = InitializeAclRuntime(g_config.transportDeviceId, aclRuntimeOwned_);
-        status.Failure()) {
-        return status;
-    }
-    constexpr char kBufferPoolNamePrefix[] = "drampool-kvcache-";
+    constexpr char kBufferManagerNamePrefix[] = "drampool-kvcache-";
     for (std::size_t index = 0; index < g_config.poolBlockSizes.size(); ++index) {
-        auto bufferPool = std::make_unique<AsuBufferPool>();
-        if (const auto status = bufferPool->Init(
-                kBufferPoolNamePrefix + std::to_string(index),
-                static_cast<std::size_t>(g_config.poolBlockSizes[index]),
-                static_cast<std::size_t>(g_config.poolSlotCounts[index]));
-            status.Failure()) {
-            return status;
+        auto bufferManager = std::make_unique<UC::ASU::BufferManager>();
+        const auto status = bufferManager->Init(
+            kBufferManagerNamePrefix + std::to_string(index), UC::ASU::MemoryType::HOST,
+            static_cast<std::size_t>(g_config.poolBlockSizes[index]),
+            static_cast<std::size_t>(g_config.poolSlotCounts[index]), nullptr);
+        if (!status.ok()) {
+            return UC::Status::Error("BufferManager::Init failed: " + status.message);
         }
-        bufferPools_.push_back(std::move(bufferPool));
+        bufferManagers_.push_back(std::move(bufferManager));
     }
     RecordLifecycleEvent("InitMemoryPool");
     return UC::Status::OK();
@@ -234,7 +232,7 @@ UC::Status DramPoolServer::StartTransportService()
     if (status != transport::Status::Ok) {
         return ToUcStatus(status, "TransportManager::InstallTransport");
     }
-    if (bufferPools_.empty()) {
+    if (bufferManagers_.empty()) {
         return UC::Status::InvalidParam("memory pool is not initialized");
     }
     RecordLifecycleEvent("StartTransportService");
@@ -246,11 +244,11 @@ UC::Status DramPoolServer::CreateRuntimeContext()
     if (!metadataIndex_ || !protocolManager_ || !transportManager_) {
         return UC::Status::InvalidParam("DramPool runtime dependencies are not initialized");
     }
-    if (bufferPools_.empty()) {
-        return UC::Status::InvalidParam("DramPool buffer pools are not initialized");
+    if (bufferManagers_.empty()) {
+        return UC::Status::InvalidParam("DramPool buffer managers are not initialized");
     }
     try {
-        runtime_ = std::make_unique<DramPoolRuntime>(*metadataIndex_, bufferPools_,
+        runtime_ = std::make_unique<DramPoolRuntime>(*metadataIndex_, bufferManagers_,
                                                       *transportManager_, *protocolManager_,
                                                       requestQueue_, transHandleQueue_);
     } catch (const std::exception& error) {
@@ -371,7 +369,7 @@ void DramPoolServer::UnregisterBufferMemory()
             UC_ERROR_UNLIMITED("DramPool TransportManager shutdown failed");
         }
     }
-    bufferPools_.clear();
+    bufferManagers_.clear();
     RecordLifecycleEvent("UnregisterBufferMemory");
 }
 
@@ -430,7 +428,7 @@ void DramPoolServer::ResetInitializedComponents()
     protocolManager_.reset();
     metadataIndex_.reset();
     transportManager_.reset();
-    bufferPools_.clear();
+    bufferManagers_.clear();
     if (aclRuntimeOwned_) {
         (void)aclrtResetDevice(g_config.transportDeviceId);
         (void)aclFinalize();
