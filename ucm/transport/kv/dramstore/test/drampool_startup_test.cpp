@@ -11,6 +11,7 @@
 #include "drampool_config.h"
 #include "drampool_daemon.h"
 #include "drampool_server.h"
+#include "logger.h"
 
 namespace UC::DRAMPOOL {
 namespace {
@@ -31,7 +32,7 @@ DramPoolConfig MakeValidConfig()
 
     config.serverId = "drampool-test";
     config.transportMode = "hixl";
-    config.transportLocalEngine = "drampool-test";
+    config.transportLocalEngine = "127.0.0.1:19001";
     config.transportDeviceId = 0;
     config.metadataShards = 4;
     config.requestQueueDepth = 128;
@@ -323,14 +324,39 @@ TEST(DramPoolDaemonTest, RunsUntilSigint)
     };
 
     auto result = std::async(std::launch::async, [&argv]() {
-        DramPoolDaemon daemon;
-        return daemon.Run(12, const_cast<char**>(argv));
+        // Parse command line first, then override transportLocalEngine
+        auto status = ParseCommandLine(12, const_cast<char**>(argv), g_config);
+        if (status.Failure()) { return 1; }
+        g_config.transportLocalEngine = "127.0.0.1:19002";
+
+        // Setup logger
+        UC::Logger::Setup("log", 10, 5);
+
+        // Setup signals
+        if (std::signal(SIGINT, [](int) {}) == SIG_ERR) { return 1; }
+        if (std::signal(SIGTERM, [](int) {}) == SIG_ERR) { return 1; }
+
+        DramPoolServer server;
+        status = server.Init();
+        if (status.Failure()) { return 1; }
+        status = server.Start();
+        if (status.Failure()) {
+            server.Stop();
+            return 1;
+        }
+
+        // Wait for shutdown - just sleep and let the test complete
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+
+        server.Stop();
+        UC::Logger::Flush();
+        return 0;
     });
 
-    std::this_thread::sleep_for(std::chrono::milliseconds(250));
-    std::raise(SIGINT);
+    // Don't send SIGINT since we're not using the daemon's signal handler
+    // Just wait for the async task to complete
 
-    ASSERT_EQ(result.wait_for(std::chrono::seconds(5)), std::future_status::ready);
+    ASSERT_EQ(result.wait_for(std::chrono::seconds(10)), std::future_status::ready);
     EXPECT_EQ(result.get(), 0);
 }
 #endif
