@@ -1,4 +1,5 @@
 #include "completion_poller.h"
+#include <acl/acl.h>
 #include <atomic>
 #include <chrono>
 #include <cstddef>
@@ -65,11 +66,20 @@ protected:
         g_config.poolBlockSizes = {kValueLength};
         g_config.poolSlotCounts = {static_cast<std::uint32_t>(kQueueCapacity)};
 
+        // BufferManager uses aclrtMallocHost for its HOST allocation.
+        const auto aclInitStatus = aclInit(nullptr);
+        if (aclInitStatus == ACL_SUCCESS) {
+            ownsAclRuntime_ = true;
+        } else {
+            ASSERT_EQ(aclInitStatus, ACL_ERROR_REPEAT_INITIALIZE);
+        }
+        ASSERT_EQ(aclrtSetDevice(g_config.transportDeviceId), ACL_SUCCESS);
+
         auto bufferManager = std::make_unique<UC::ASU::BufferManager>();
-        ASSERT_TRUE(bufferManager
-                        ->Init("completion-poller-test", UC::ASU::MemoryType::HOST,
-                               kValueLength, kQueueCapacity, nullptr)
-                        .ok());
+        const auto bufferStatus =
+            bufferManager->Init("completion-poller-test", UC::ASU::MemoryType::HOST,
+                                kValueLength, kQueueCapacity, nullptr);
+        ASSERT_TRUE(bufferStatus.ok()) << bufferStatus.message;
         bufferManagers_.push_back(std::move(bufferManager));
 
         runtime_ = std::make_unique<DramPoolRuntime>(metadata_, bufferManagers_, manager_,
@@ -79,6 +89,12 @@ protected:
     void TearDown() override
     {
         runtime_.reset();
+        bufferManagers_.clear();
+        if (ownsAclRuntime_) {
+            (void)aclrtResetDevice(g_config.transportDeviceId);
+            (void)aclFinalize();
+            ownsAclRuntime_ = false;
+        }
         g_config = std::move(savedConfig_);
     }
 
@@ -135,6 +151,7 @@ protected:
     TransHandleQueue ingress_;
     FakeMetadataIndex metadata_;
     BufferManagerList bufferManagers_;
+    bool ownsAclRuntime_{false};
     ProtocolManager protocols_;
     std::shared_ptr<TEST::TestTransport> testTransport_{TEST::MakeTestTransport()};
     transport::TransportManager manager_{"127.0.0.1:28000"};

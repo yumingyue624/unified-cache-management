@@ -15,15 +15,21 @@
 namespace UC::DRAMPOOL {
 namespace {
 
+#if defined(UCM_DRAMPOOL_RUNTIME_INTEGRATION_TESTS)
 DramPoolConfig MakeValidConfig()
 {
+    const char* argv[] = {
+        "drampool", "--addr", "127.0.0.1:19000", "--nics", "mlx5_0", "mlx5_1",
+        "--pool-size-gb", "1", "--kvcache-block-sizes", "4096", "8192",
+        "--kvcache-block-proportions", "70", "30",
+    };
     DramPoolConfig config;
+    if (const auto status = ParseCommandLine(14, const_cast<char**>(argv), config);
+        status.Failure()) {
+        throw std::runtime_error(status.ToString());
+    }
+
     config.serverId = "drampool-test";
-    config.addr = "127.0.0.1:19000";
-    config.nics = {"mlx5_0", "mlx5_1"};
-    config.poolSizeGb = 1;
-    config.poolBlockSizes = {4096, 8192};
-    config.poolBlockProportions = {70, 30};
     config.transportMode = "hixl";
     config.transportLocalEngine = "drampool-test";
     config.transportDeviceId = 0;
@@ -38,13 +44,9 @@ DramPoolConfig MakeValidConfig()
     config.gcIntervalMs = 10;
     config.opTimeoutMs = 5000;
     config.shutdownTimeoutMs = 30000;
-    if (const auto status = ResolvePoolSlotCounts(config); status.Failure()) {
-        throw std::runtime_error(status.ToString());
-    }
     return config;
 }
 
-#if defined(UCM_DRAMPOOL_RUNTIME_INTEGRATION_TESTS)
 class ScopedDramPoolConfig {
 public:
     explicit ScopedDramPoolConfig(DramPoolConfig config)
@@ -188,49 +190,40 @@ TEST(DramPoolConfigTest, RejectsInvalidCommandLines)
         DramPoolConfig config;
         EXPECT_TRUE(ParseCommandLine(8, const_cast<char**>(argv), config).Failure());
     }
-}
-
-TEST(DramPoolConfigTest, RejectsInvalidCoreConfig)
-{
-    auto expectInvalid = [](auto mutate) {
-        auto config = MakeValidConfig();
-        mutate(config);
-        EXPECT_TRUE(ValidateDramPoolConfig(config).Failure());
-    };
-
-    expectInvalid([](DramPoolConfig& config) { config.serverId.clear(); });
-    expectInvalid([](DramPoolConfig& config) { config.addr.clear(); });
-    expectInvalid([](DramPoolConfig& config) { config.nics.clear(); });
-    expectInvalid([](DramPoolConfig& config) { config.transportMode = "udp"; });
-    expectInvalid([](DramPoolConfig& config) { config.transportLocalEngine.clear(); });
-    expectInvalid([](DramPoolConfig& config) { config.transportDeviceId = -1; });
-    expectInvalid([](DramPoolConfig& config) { config.poolSizeGb = 0; });
-    expectInvalid([](DramPoolConfig& config) { config.poolBlockSizes.clear(); });
-    expectInvalid([](DramPoolConfig& config) { config.poolBlockSizes[0] = 0; });
-    expectInvalid([](DramPoolConfig& config) { config.poolBlockProportions.clear(); });
-    expectInvalid([](DramPoolConfig& config) { config.poolBlockProportions[0] = 0; });
-    expectInvalid([](DramPoolConfig& config) { config.poolBlockProportions = {100}; });
-    expectInvalid([](DramPoolConfig& config) { config.defaultDumpTtlMs = 0; });
-    expectInvalid([](DramPoolConfig& config) { config.metadataShards = 0; });
-    expectInvalid([](DramPoolConfig& config) { config.requestQueueDepth = 1; });
-    expectInvalid([](DramPoolConfig& config) { config.handleQueueDepth = 1; });
-    expectInvalid([](DramPoolConfig& config) { config.pollerDrainBudget = 0; });
-    expectInvalid([](DramPoolConfig& config) { config.pollerScanBudget = 0; });
-    expectInvalid([](DramPoolConfig& config) { config.pollerMaxPending = 0; });
-    expectInvalid([](DramPoolConfig& config) { config.pollerMaxPending = 32; });
-    expectInvalid([](DramPoolConfig& config) { config.pollerIdleWaitUs = 0; });
-    expectInvalid([](DramPoolConfig& config) { config.gcIntervalMs = 0; });
-    expectInvalid([](DramPoolConfig& config) { config.opTimeoutMs = 0; });
-    expectInvalid([](DramPoolConfig& config) { config.shutdownTimeoutMs = 0; });
-}
-
-TEST(DramPoolConfigTest, AcceptsGcDisabledWithHixlTransport)
-{
-    auto config = MakeValidConfig();
-    config.gcEnabled = false;
-    config.gcIntervalMs = 0;
-    const auto status = ValidateDramPoolConfig(config);
-    EXPECT_TRUE(status.Success()) << status.ToString();
+    {
+        const char* argv[] = {"drampool", "--pool-size-gb", "0"};
+        DramPoolConfig config;
+        EXPECT_TRUE(ParseCommandLine(3, const_cast<char**>(argv), config).Failure());
+    }
+    {
+        const char* argv[] = {"drampool", "--kvcache-block-sizes", "0"};
+        DramPoolConfig config;
+        EXPECT_TRUE(ParseCommandLine(3, const_cast<char**>(argv), config).Failure());
+    }
+    {
+        const char* argv[] = {"drampool", "--kvcache-block-proportions", "0"};
+        DramPoolConfig config;
+        EXPECT_TRUE(ParseCommandLine(3, const_cast<char**>(argv), config).Failure());
+    }
+    {
+        const char* argv[] = {
+            "drampool", "--pool-size-gb", "18446744073709551615", "--unknown",
+        };
+        DramPoolConfig config;
+        const auto status = ParseCommandLine(4, const_cast<char**>(argv), config);
+        EXPECT_TRUE(status.Failure());
+        EXPECT_NE(status.ToString().find("--pool-size-gb is too large"), std::string::npos);
+    }
+    {
+        const char* argv[] = {
+            "drampool", "--kvcache-block-proportions", "1", "--kvcache-block-sizes", "4096",
+            "8192", "--unknown",
+        };
+        DramPoolConfig config;
+        const auto status = ParseCommandLine(7, const_cast<char**>(argv), config);
+        EXPECT_TRUE(status.Failure());
+        EXPECT_NE(status.ToString().find("must have the same length"), std::string::npos);
+    }
 }
 
 TEST(DramPoolServerTest, RejectsCallsOutsideValidState)

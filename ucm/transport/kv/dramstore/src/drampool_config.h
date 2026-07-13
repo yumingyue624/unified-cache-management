@@ -82,7 +82,5 @@ inline DramPoolConfig g_config{};
 
 std::string BuildUsage(const char* program);
 UC::Status ParseCommandLine(int argc, char** argv, DramPoolConfig& config);
-UC::Status ValidateDramPoolConfig(const DramPoolConfig& config);
-UC::Status ResolvePoolSlotCounts(DramPoolConfig& config);
 
 }  // namespace UC::DRAMPOOL

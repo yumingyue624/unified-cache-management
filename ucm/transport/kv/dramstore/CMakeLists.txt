@@ -69,19 +69,19 @@ if(BUILD_UNIT_TESTS)
     endif()
     gtest_discover_tests(drampool_startup.test)
 
-    add_executable(completion_poller.test
-        test/completion_poller_test.cpp
+    add_executable(completion_poller.integration.test EXCLUDE_FROM_ALL
+            test/completion_poller_test.cpp
     )
-    target_link_libraries(completion_poller.test
+    target_link_libraries(completion_poller.integration.test
         PRIVATE
             drampool_core
             gtest_main
             gtest
     )
-    target_include_directories(completion_poller.test
+    target_include_directories(completion_poller.integration.test
         PRIVATE ${DRAMPOOL_BUFFER_MANAGER_SOURCE_DIR})
     if(MSVC)
-        target_link_options(completion_poller.test PRIVATE /PROFILE)
+        target_link_options(completion_poller.integration.test PRIVATE /PROFILE)
     endif()
-    gtest_discover_tests(completion_poller.test)
+    gtest_discover_tests(completion_poller.integration.test PROPERTIES LABELS integration)
 endif()

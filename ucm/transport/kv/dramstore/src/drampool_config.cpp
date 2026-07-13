@@ -22,8 +22,6 @@
  * SOFTWARE.
  * */
 #include "drampool_config.h"
-#include <algorithm>
-#include <cctype>
 #include <cstddef>
 #include <limits>
 #include <stdexcept>
@@ -46,13 +44,6 @@ std::string Trim(const std::string& value)
     if (begin == std::string::npos) { return ""; }
     const auto end = value.find_last_not_of(" \t\r\n");
     return value.substr(begin, end - begin + 1);
-}
-
-std::string ToLower(std::string value)
-{
-    std::transform(value.begin(), value.end(), value.begin(),
-                   [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-    return value;
 }
 
 std::uint64_t ParseUint64(const std::string& value)
@@ -145,17 +136,106 @@ UC::Status ParseBlockProportions(const std::vector<std::string>& values,
     return UC::Status::OK();
 }
 
-UC::Status RequirePositive(const char* name, std::uint64_t value)
+UC::Status ValidateAddress(const std::string& addr)
 {
-    if (value == 0) { return UC::Status::InvalidParam("{} must be greater than zero", name); }
+    return Trim(addr).empty() ? UC::Status::InvalidParam("--addr is required")
+                              : UC::Status::OK();
+}
+
+UC::Status ValidateNics(const std::vector<std::string>& nics)
+{
+    for (const auto& nic : nics) {
+        if (Trim(nic).empty()) {
+            return UC::Status::InvalidParam("--nics contains an empty name");
+        }
+    }
     return UC::Status::OK();
 }
 
-UC::Status RequireAtLeast(const char* name, std::uint64_t value, std::uint64_t minimum)
+UC::Status ValidatePoolSize(std::uint64_t poolSizeGb)
 {
-    if (value < minimum) {
-        return UC::Status::InvalidParam("{} must be at least {}", name, minimum);
+    if (poolSizeGb == 0) {
+        return UC::Status::InvalidParam("--pool-size-gb must be greater than zero");
     }
+    if (poolSizeGb > std::numeric_limits<std::uint64_t>::max() / kBytesPerGiB) {
+        return UC::Status::InvalidParam("--pool-size-gb is too large");
+    }
+    const auto totalBytes = poolSizeGb * kBytesPerGiB;
+    if (static_cast<std::uint64_t>(static_cast<std::size_t>(totalBytes)) != totalBytes) {
+        return UC::Status::InvalidParam("--pool-size-gb exceeds addressable process memory");
+    }
+    return UC::Status::OK();
+}
+
+UC::Status ValidateBlockSizes(const std::vector<std::uint64_t>& blockSizes)
+{
+    for (const auto blockSize : blockSizes) {
+        const auto slotCapacity = static_cast<std::size_t>(blockSize);
+        if (blockSize == 0 || blockSize > std::numeric_limits<std::uint32_t>::max() ||
+            static_cast<std::uint64_t>(slotCapacity) != blockSize) {
+            return UC::Status::InvalidParam("--kvcache-block-sizes item is unsupported");
+        }
+        if (slotCapacity > std::numeric_limits<std::size_t>::max() -
+                               (kSlotAlignment - 1)) {
+            return UC::Status::InvalidParam("--kvcache-block-sizes item overflows slot alignment");
+        }
+    }
+    return UC::Status::OK();
+}
+
+UC::Status ValidateBlockProportions(const std::vector<std::uint32_t>& proportions)
+{
+    std::uint64_t totalProportion = 0;
+    for (const auto proportion : proportions) {
+        if (proportion == 0 ||
+            totalProportion > std::numeric_limits<std::uint32_t>::max() - proportion) {
+            return UC::Status::InvalidParam(
+                "sum of --kvcache-block-proportions must be in [1, {}]",
+                std::numeric_limits<std::uint32_t>::max());
+        }
+        totalProportion += proportion;
+    }
+    return UC::Status::OK();
+}
+
+UC::Status ValidateBlockClassCount(const std::vector<std::uint64_t>& blockSizes,
+                                   const std::vector<std::uint32_t>& proportions)
+{
+    if (blockSizes.size() != proportions.size()) {
+        return UC::Status::InvalidParam(
+            "--kvcache-block-sizes and --kvcache-block-proportions must have the same length");
+    }
+    return UC::Status::OK();
+}
+
+UC::Status CalculatePoolSlotCounts(DramPoolConfig& config)
+{
+    config.poolSlotCounts.clear();
+    std::uint64_t totalProportion = 0;
+    for (const auto proportion : config.poolBlockProportions) { totalProportion += proportion; }
+
+    const auto totalBytes = config.poolSizeGb * kBytesPerGiB;
+    std::vector<std::uint32_t> slotCounts;
+    slotCounts.reserve(config.poolBlockSizes.size());
+    const auto wholeShare = totalBytes / totalProportion;
+    const auto remainder = totalBytes % totalProportion;
+    for (std::size_t index = 0; index < config.poolBlockSizes.size(); ++index) {
+        const auto slotCapacity = static_cast<std::size_t>(config.poolBlockSizes[index]);
+        const auto slotStride =
+            (slotCapacity + kSlotAlignment - 1) / kSlotAlignment * kSlotAlignment;
+        const auto proportion = static_cast<std::uint64_t>(config.poolBlockProportions[index]);
+        // totalProportion is bounded to uint32_t, so this remainder product cannot overflow.
+        const auto classBytes = wholeShare * proportion + remainder * proportion / totalProportion;
+        const auto slotCount = classBytes / slotStride;
+        if (slotCount == 0 || slotCount >= std::numeric_limits<std::uint32_t>::max()) {
+            return UC::Status::InvalidParam(
+                "pool capacity for --kvcache-block-sizes item {} cannot form a valid slot pool",
+                index);
+        }
+        slotCounts.push_back(static_cast<std::uint32_t>(slotCount));
+    }
+
+    config.poolSlotCounts = std::move(slotCounts);
     return UC::Status::OK();
 }
 
@@ -208,6 +288,8 @@ UC::Status ParseCommandLine(int argc, char** argv, DramPoolConfig& config)
             status = ReadSingleValue(option, hasInlineValue, inlineValue, argc, argv, index, value);
             if (status.Failure()) { return status; }
             config.addr = value;
+            status = ValidateAddress(config.addr);
+            if (status.Failure()) { return status; }
             hasAddr = true;
             continue;
         }
@@ -216,6 +298,8 @@ UC::Status ParseCommandLine(int argc, char** argv, DramPoolConfig& config)
             status = ReadListValues(option, hasInlineValue, inlineValue, argc, argv, index, values);
             if (status.Failure()) { return status; }
             config.nics = std::move(values);
+            status = ValidateNics(config.nics);
+            if (status.Failure()) { return status; }
             hasNics = true;
             continue;
         }
@@ -230,6 +314,8 @@ UC::Status ParseCommandLine(int argc, char** argv, DramPoolConfig& config)
             } catch (const std::exception& error) {
                 return UC::Status::InvalidParam("invalid --pool-size-gb value: {}", error.what());
             }
+            status = ValidatePoolSize(config.poolSizeGb);
+            if (status.Failure()) { return status; }
             hasPoolSize = true;
             continue;
         }
@@ -241,7 +327,14 @@ UC::Status ParseCommandLine(int argc, char** argv, DramPoolConfig& config)
             if (status.Failure()) { return status; }
             status = ParseBlockSizes(values, config.poolBlockSizes);
             if (status.Failure()) { return status; }
+            status = ValidateBlockSizes(config.poolBlockSizes);
+            if (status.Failure()) { return status; }
             hasBlockSizes = true;
+            if (hasBlockProportions) {
+                status = ValidateBlockClassCount(config.poolBlockSizes,
+                                                 config.poolBlockProportions);
+                if (status.Failure()) { return status; }
+            }
             continue;
         }
         if (option == "--kvcache-block-proportions") {
@@ -253,7 +346,14 @@ UC::Status ParseCommandLine(int argc, char** argv, DramPoolConfig& config)
             if (status.Failure()) { return status; }
             status = ParseBlockProportions(values, config.poolBlockProportions);
             if (status.Failure()) { return status; }
+            status = ValidateBlockProportions(config.poolBlockProportions);
+            if (status.Failure()) { return status; }
             hasBlockProportions = true;
+            if (hasBlockSizes) {
+                status = ValidateBlockClassCount(config.poolBlockSizes,
+                                                 config.poolBlockProportions);
+                if (status.Failure()) { return status; }
+            }
             continue;
         }
         if (option == "--ttl-minutes") {
@@ -287,149 +387,10 @@ UC::Status ParseCommandLine(int argc, char** argv, DramPoolConfig& config)
         // Each configured block size receives an equal capacity share by default.
         config.poolBlockProportions.assign(config.poolBlockSizes.size(), 1);
     }
-    if (const auto status = ValidateDramPoolConfig(config); status.Failure()) { return status; }
-    return ResolvePoolSlotCounts(config);
-}
-
-UC::Status ResolvePoolSlotCounts(DramPoolConfig& config)
-{
-    config.poolSlotCounts.clear();
-    if (config.poolBlockSizes.size() != config.poolBlockProportions.size()) {
-        return UC::Status::InvalidParam(
-            "--kvcache-block-sizes and --kvcache-block-proportions must have the same length");
+    // Options are order-independent; all pool inputs are complete only here.
+    if (const auto status = CalculatePoolSlotCounts(config); status.Failure()) {
+        return status;
     }
-    if (config.poolSizeGb > std::numeric_limits<std::uint64_t>::max() / kBytesPerGiB) {
-        return UC::Status::InvalidParam("--pool-size-gb is too large");
-    }
-
-    std::uint64_t totalProportion = 0;
-    for (const auto proportion : config.poolBlockProportions) {
-        if (proportion == 0 ||
-            totalProportion > std::numeric_limits<std::uint32_t>::max() - proportion) {
-            return UC::Status::InvalidParam(
-                "sum of --kvcache-block-proportions must be in [1, {}]",
-                std::numeric_limits<std::uint32_t>::max());
-        }
-        totalProportion += proportion;
-    }
-    if (totalProportion == 0) {
-        return UC::Status::InvalidParam("--kvcache-block-proportions must not be empty");
-    }
-
-    const auto totalBytes = config.poolSizeGb * kBytesPerGiB;
-    const auto totalSize = static_cast<std::size_t>(totalBytes);
-    if (static_cast<std::uint64_t>(totalSize) != totalBytes) {
-        return UC::Status::InvalidParam("--pool-size-gb exceeds addressable process memory");
-    }
-
-    std::vector<std::uint32_t> slotCounts;
-    slotCounts.reserve(config.poolBlockSizes.size());
-    const auto wholeShare = totalBytes / totalProportion;
-    const auto remainder = totalBytes % totalProportion;
-    for (std::size_t index = 0; index < config.poolBlockSizes.size(); ++index) {
-        const auto blockSize = config.poolBlockSizes[index];
-        const auto slotCapacity = static_cast<std::size_t>(blockSize);
-        if (blockSize == 0 || blockSize > std::numeric_limits<std::uint32_t>::max() ||
-            static_cast<std::uint64_t>(slotCapacity) != blockSize) {
-            return UC::Status::InvalidParam("--kvcache-block-sizes item is unsupported");
-        }
-
-        if (slotCapacity > std::numeric_limits<std::size_t>::max() -
-                               (kSlotAlignment - 1)) {
-            return UC::Status::InvalidParam("--kvcache-block-sizes item overflows slot alignment");
-        }
-        const auto slotStride =
-            (slotCapacity + kSlotAlignment - 1) / kSlotAlignment * kSlotAlignment;
-        const auto proportion = static_cast<std::uint64_t>(config.poolBlockProportions[index]);
-        // totalProportion is bounded to uint32_t, so this remainder product cannot overflow.
-        const auto classBytes = wholeShare * proportion + remainder * proportion / totalProportion;
-        const auto slotCount = classBytes / slotStride;
-        if (slotCount == 0 || slotCount >= std::numeric_limits<std::uint32_t>::max()) {
-            return UC::Status::InvalidParam(
-                "pool capacity for --kvcache-block-sizes item {} cannot form a valid slot pool",
-                index);
-        }
-        slotCounts.push_back(static_cast<std::uint32_t>(slotCount));
-    }
-
-    config.poolSlotCounts = std::move(slotCounts);
-    return UC::Status::OK();
-}
-
-UC::Status ValidateDramPoolConfig(const DramPoolConfig& config)
-{
-    if (Trim(config.serverId).empty()) { return UC::Status::InvalidParam("server.id is required"); }
-    if (Trim(config.addr).empty()) { return UC::Status::InvalidParam("--addr is required"); }
-    if (config.nics.empty()) { return UC::Status::InvalidParam("--nics must not be empty"); }
-    for (const auto& nic : config.nics) {
-        if (Trim(nic).empty()) { return UC::Status::InvalidParam("--nics contains an empty name"); }
-    }
-
-    const auto transportMode = ToLower(config.transportMode);
-    if (transportMode != "hixl") {
-        return UC::Status::InvalidParam("unsupported transport.mode: {}", config.transportMode);
-    }
-    if (Trim(config.transportLocalEngine).empty()) {
-        return UC::Status::InvalidParam("transport.local_engine is required");
-    }
-    if (config.transportDeviceId < 0) {
-        return UC::Status::InvalidParam("transport.device_id must not be negative");
-    }
-
-    auto status = RequirePositive("--pool-size-gb", config.poolSizeGb);
-    if (status.Failure()) { return status; }
-    if (config.poolBlockSizes.empty()) {
-        return UC::Status::InvalidParam("--kvcache-block-sizes must not be empty");
-    }
-    if (config.poolBlockProportions.empty()) {
-        return UC::Status::InvalidParam("--kvcache-block-proportions must not be empty");
-    }
-    if (config.poolBlockSizes.size() != config.poolBlockProportions.size()) {
-        return UC::Status::InvalidParam(
-            "--kvcache-block-sizes and --kvcache-block-proportions must have the same length");
-    }
-    for (const auto blockSize : config.poolBlockSizes) {
-        status = RequirePositive("--kvcache-block-sizes item", blockSize);
-        if (status.Failure()) { return status; }
-    }
-    for (const auto proportion : config.poolBlockProportions) {
-        status = RequirePositive("--kvcache-block-proportions item", proportion);
-        if (status.Failure()) { return status; }
-    }
-    status = RequirePositive("--ttl-minutes", config.defaultDumpTtlMs);
-    if (status.Failure()) { return status; }
-
-    status = RequirePositive("metadata.shards", config.metadataShards);
-    if (status.Failure()) { return status; }
-    status = RequireAtLeast("queue.request_depth", config.requestQueueDepth, 2);
-    if (status.Failure()) { return status; }
-    status = RequireAtLeast("queue.handle_depth", config.handleQueueDepth, 2);
-    if (status.Failure()) { return status; }
-    status = RequirePositive("poller.drain_budget", config.pollerDrainBudget);
-    if (status.Failure()) { return status; }
-    status = RequirePositive("poller.scan_budget", config.pollerScanBudget);
-    if (status.Failure()) { return status; }
-    status = RequirePositive("poller.max_pending", config.pollerMaxPending);
-    if (status.Failure()) { return status; }
-    status = RequirePositive("poller.idle_wait_us", config.pollerIdleWaitUs);
-    if (status.Failure()) { return status; }
-    if (config.pollerMaxPending < config.pollerDrainBudget ||
-        config.pollerMaxPending < config.pollerScanBudget) {
-        return UC::Status::InvalidParam(
-            "poller.max_pending must be greater than or equal to poller budgets");
-    }
-    status = RequirePositive("op.timeout_ms", config.opTimeoutMs);
-    if (status.Failure()) { return status; }
-    if (config.opTimeoutMs > static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max())) {
-        return UC::Status::InvalidParam("op.timeout_ms exceeds transport int32 range");
-    }
-    status = RequirePositive("shutdown.timeout_ms", config.shutdownTimeoutMs);
-    if (status.Failure()) { return status; }
-    if (config.gcEnabled) {
-        status = RequirePositive("gc.interval_ms", config.gcIntervalMs);
-        if (status.Failure()) { return status; }
-    }
-
     return UC::Status::OK();
 }
 
