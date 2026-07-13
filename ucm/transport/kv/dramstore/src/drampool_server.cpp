@@ -112,7 +112,7 @@ UC::Status DramPoolServer::Start()
         if (auto status = StartCompletionPoller(); status.Failure()) { return status; }
         if (auto status = StartTaskWorker(); status.Failure()) { return status; }
         if (auto status = StartGCThread(); status.Failure()) { return status; }
-        if (auto status = StartListeningService(); status.Failure()) { return status; }
+        if (auto status = StartRequestReceiver(); status.Failure()) { return status; }
         if (auto status = StartTransportService(); status.Failure()) { return status; }
         SetServiceReady(true);
         state_ = ServerState::Ready;
@@ -311,14 +311,14 @@ UC::Status DramPoolServer::StartGCThread()
     return UC::Status::OK();
 }
 
-UC::Status DramPoolServer::StartListeningService()
+UC::Status DramPoolServer::StartRequestReceiver()
 {
     try {
         receiverStop_.store(false, std::memory_order_release);
-        receiverThread_ = std::thread(&DramPoolServer::ReceiverLoop, this);
-        RecordLifecycleEvent("StartListeningService");
+        receiverThread_ = std::thread(&DramPoolServer::RequestReceiverLoop, this);
+        RecordLifecycleEvent("StartRequestReceiver");
     } catch (const std::exception& e) {
-        return UC::Status::Error(std::string{"failed to start listening service: "} + e.what());
+        return UC::Status::Error(std::string{"failed to start request receiver: "} + e.what());
     }
     return UC::Status::OK();
 }
@@ -388,12 +388,12 @@ void DramPoolServer::DestroyMetadataIndex()
     RecordLifecycleEvent("DestroyMetadataIndex");
 }
 
-void DramPoolServer::ReceiverLoop()
+void DramPoolServer::RequestReceiverLoop()
 {
-    UC_INFO_UNLIMITED("DramPool Receiver started, addr={}", g_config.addr);
+    UC_INFO_UNLIMITED("DramPool request receiver started, addr={}", g_config.addr);
     std::unique_lock<std::mutex> waitLock(stopWaitMutex_);
     stopWaitCv_.wait(waitLock, [this]() { return receiverStop_.load(std::memory_order_acquire); });
-    UC_INFO_UNLIMITED("DramPool Receiver stopped");
+    UC_INFO_UNLIMITED("DramPool request receiver stopped");
 }
 
 void DramPoolServer::TaskWorkerLoop()

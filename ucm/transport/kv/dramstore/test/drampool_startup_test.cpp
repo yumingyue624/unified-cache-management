@@ -30,11 +30,8 @@ DramPoolConfig MakeValidConfig()
         throw std::runtime_error(status.ToString());
     }
 
-    config.serverId = "drampool-test";
-    config.transportMode = "hixl";
     config.transportLocalEngine = "127.0.0.1:19001";
     config.transportDeviceId = 0;
-    config.metadataShards = 4;
     config.requestQueueDepth = 128;
     config.handleQueueDepth = 128;
     config.pollerDrainBudget = 64;
@@ -44,7 +41,6 @@ DramPoolConfig MakeValidConfig()
     config.gcEnabled = true;
     config.gcIntervalMs = 10;
     config.opTimeoutMs = 5000;
-    config.shutdownTimeoutMs = 30000;
     return config;
 }
 
@@ -259,7 +255,7 @@ TEST(DramPoolServerTest, StartsTransportAfterWorkersAndStopsReceiverFirst)
         "StartCompletionPoller",
         "StartTaskWorker",
         "StartGCThread",
-        "StartListeningService",
+        "StartRequestReceiver",
         "StartTransportService",
         "SetServiceReady(true)",
     };
@@ -291,7 +287,7 @@ TEST(DramPoolServerTest, GcDisabledSkipsGcThreadLifecycleEvents)
     EXPECT_EQ(std::find(events.begin(), events.end(), "StopGCThread"), events.end());
     EXPECT_TRUE(
         ContainsInOrder(events, {"StartCompletionPoller", "StartTaskWorker",
-                                 "StartListeningService", "StartTransportService",
+                                 "StartRequestReceiver", "StartTransportService",
                                  "SetServiceReady(true)"}));
 }
 #endif

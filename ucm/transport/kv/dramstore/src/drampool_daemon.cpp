@@ -105,8 +105,7 @@ int DramPoolDaemon::Run(int argc, char** argv)
         return 1;
     }
 
-    UC_INFO_UNLIMITED("DramPool service ready, server_id={}, addr={}",
-                      g_config.serverId, g_config.addr);
+    UC_INFO_UNLIMITED("DramPool service ready, addr={}", g_config.addr);
     WaitForShutdown();
     UC_INFO_UNLIMITED("DramPool shutdown requested");
     server.Stop();

@@ -123,22 +123,16 @@ protected:
             transport::Segment{reinterpret_cast<void*>(slot.addr), responseAddr, slot.len});
         EXPECT_EQ(manager_.ExecuteAsync(operation, handleOut), transport::Status::Ok);
 
-        TransferItem item;
-        item.request_index = 0;
-        item.key = entry->key;
-        item.remote_addr = responseAddr;
-        item.len = slot.len;
-        item.buffer_handle = slot.handle;
-
-        std::vector<TransferItem> items{item};
+        std::vector<TransferItem> items{TransferItem{0, entry->key, slot.handle}};
         std::vector<std::uint32_t> results{static_cast<std::uint32_t>(ResultCode::Failed)};
 
         InflightRecord record;
         record.opcode = KvOpcode::Dump;
         record.handle = handleOut;
-        record.transfer_items = items;
-        record.request_ctx = std::make_shared<RequestContext>(KvOpcode::Dump, responseAddr,
-                                                              kTargetManager, results, items);
+        record.response_addr = responseAddr;
+        record.peer_manager_id = kTargetManager;
+        record.results = std::move(results);
+        record.transfer_items = std::move(items);
         record.submit_ms = SteadyNowMs();
         return record;
     }

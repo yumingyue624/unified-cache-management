@@ -25,7 +25,6 @@
 
 #include <cstdint>
 #include <string>
-#include <unordered_map>
 #include <vector>
 #include "status/status.h"
 
@@ -53,12 +52,8 @@ struct DramPoolConfig {
     std::vector<std::uint32_t> poolSlotCounts{};
     std::uint64_t defaultDumpTtlMs{kDefaultDumpTtlMs};
 
-    std::string serverId{"drampool-0"};
-    std::string transportMode{"hixl"};
-    std::string transportLocalEngine{"drampool-0"};
+    std::string transportLocalEngine{};
     std::int32_t transportDeviceId{0};
-
-    std::uint32_t metadataShards{1024};
 
     std::uint32_t requestQueueDepth{65536};
     std::uint32_t handleQueueDepth{65536};
@@ -72,9 +67,6 @@ struct DramPoolConfig {
     std::uint32_t gcIntervalMs{1000};
 
     std::uint32_t opTimeoutMs{5000};
-    std::uint32_t shutdownTimeoutMs{30000};
-
-    std::unordered_map<std::string, std::string> extra;
 };
 
 // One DramPool daemon runs in each process; startup sets this once before Server::Init().

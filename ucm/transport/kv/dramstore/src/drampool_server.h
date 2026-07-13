@@ -76,7 +76,7 @@ private:
     UC::Status CreateRuntimeContext();
 
     UC::Status StartTransportService();
-    UC::Status StartListeningService();
+    UC::Status StartRequestReceiver();
     UC::Status StartCompletionPoller();
     UC::Status StartTaskWorker();
     UC::Status StartGCThread();
@@ -90,7 +90,7 @@ private:
     void UnregisterBufferMemory();
     void DestroyMetadataIndex();
 
-    void ReceiverLoop();
+    void RequestReceiverLoop();
     void TaskWorkerLoop();
     void CompletionPollerLoop();
     void GCThreadLoop();

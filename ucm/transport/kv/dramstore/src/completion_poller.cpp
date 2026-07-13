@@ -7,7 +7,6 @@
 #include <algorithm>
 #include <chrono>
 #include <exception>
-#include <optional>
 #include <stdexcept>
 #include <thread>
 #include <utility>
@@ -154,28 +153,19 @@ void CompletionPoller::ApplyTerminal(InflightRecord& record,
             }
         }
 
-        if (!record.request_ctx) {
-            UC_ERROR("CompletionPoller record has no RequestContext, handle={}", record.handle);
+        if (item.index_in_request >= record.results.size()) {
+            UC_ERROR("CompletionPoller result index out of range, handle={}, index={}",
+                     record.handle, item.index_in_request);
             continue;
         }
+        record.results[item.index_in_request] = static_cast<std::uint32_t>(result);
+    }
 
-        std::optional<FinalResponse> finalResponse;
-        const auto completeStatus =
-            record.request_ctx->CompleteItem(item.request_index, result, finalResponse);
-        if (completeStatus.Failure()) {
-            UC_ERROR("CompletionPoller CompleteItem failed, handle={}, error={}", record.handle,
-                     completeStatus);
-            continue;
-        }
-        if (!finalResponse.has_value()) { continue; }
-
-        const auto responseStatus =
-            WriteResponse(runtime_, finalResponse->opcode, finalResponse->response_addr,
-                          finalResponse->peer_manager_id, finalResponse->results);
-        if (responseStatus.Failure()) {
-            UC_ERROR("CompletionPoller WriteResponse failed, handle={}, error={}", record.handle,
-                     responseStatus);
-        }
+    const auto responseStatus = WriteResponse(runtime_, record.opcode, record.response_addr,
+                                              record.peer_manager_id, record.results);
+    if (responseStatus.Failure()) {
+        UC_ERROR("CompletionPoller WriteResponse failed, handle={}, error={}", record.handle,
+                 responseStatus);
     }
 }
 

@@ -20,6 +20,7 @@
  * DEALINGS IN THE SOFTWARE.
  * */
 #include "task_worker.h"
+#include <algorithm>
 #include <chrono>
 #include <cstring>
 #include <limits>
@@ -112,10 +113,17 @@ UC::Status TaskWorker::ProcessDump(const KvDumpRequest& request,
     const auto lifeTimeout = LifeTimeout(ttl_ms);
     std::vector<std::uint32_t> results(request.batch_size,
                                        static_cast<std::uint32_t>(ResultCode::Ok));
+    const auto mark_remaining_failed = [&results](std::size_t first) {
+        std::fill(results.begin() + first, results.end(),
+                  static_cast<std::uint32_t>(ResultCode::Failed));
+    };
     std::vector<TransferItem> transfer_items;
-    std::vector<transport::Segment> segments;
     transfer_items.reserve(request.entries.size());
-    segments.reserve(request.entries.size());
+    transport::Operation operation;
+    operation.opcode = transport::Opcode::Read;
+    operation.direct = transport::OperationDirect::RemoteDeviceHost;
+    operation.target_manager = peerManagerId;
+    operation.ops.reserve(request.entries.size());
 
     for (std::uint16_t index = 0; index < request.batch_size; ++index) {
         const auto& entry = request.entries[index];
@@ -124,6 +132,7 @@ UC::Status TaskWorker::ProcessDump(const KvDumpRequest& request,
         auto allocated = AllocateBuffer(runtime_, entry.len);
         if (!allocated.HasValue()) {
             UC_ERROR("Dump[{}] Allocate failed, len={}", index, entry.len);
+            mark_remaining_failed(index);
             break;
         }
         auto slot = std::move(allocated).Value();
@@ -131,12 +140,12 @@ UC::Status TaskWorker::ProcessDump(const KvDumpRequest& request,
         if (slot.handle.value > std::numeric_limits<std::uint32_t>::max()) {
             UC_ERROR("Dump[{}] buffer slot id exceeds Entry::slot", index);
             (void)FreeBuffer(runtime_, slot.handle);
+            mark_remaining_failed(index);
             break;
         }
 
         auto metadataEntry = std::make_shared<UC::DramStore::Entry>();
         metadataEntry->key = key;
-        metadataEntry->shard = slot.class_id;
         metadataEntry->slot = static_cast<std::uint32_t>(slot.handle.value);
         metadataEntry->addr = reinterpret_cast<void*>(slot.addr);
         metadataEntry->size = entry.len;
@@ -159,41 +168,19 @@ UC::Status TaskWorker::ProcessDump(const KvDumpRequest& request,
             }
             UC_ERROR("Dump[{}] ReserveDumpEntry failed, code={}", index,
                      static_cast<int>(reserve.code));
+            mark_remaining_failed(index);
             break;
         }
 
         // A RESERVED entry owns this buffer until Poller publishes or aborts it.
-        TransferItem item;
-        item.request_index = index;
-        item.key = key;
-        item.remote_addr = entry.addr;
-        item.len = entry.len;
-        item.buffer_handle = slot.handle;
-        transfer_items.emplace_back(item);
-
-        transport::Segment segment;
-        segment.local_addr = reinterpret_cast<void*>(slot.addr);
-        segment.remote_addr = entry.addr;
-        segment.length = entry.len;
-        segments.emplace_back(segment);
+        transfer_items.emplace_back(TransferItem{index, key, slot.handle});
+        operation.ops.emplace_back(
+            transport::Segment{reinterpret_cast<void*>(slot.addr), entry.addr, entry.len});
     }
 
     if (transfer_items.empty()) {
         return WriteResponse(runtime_, KvOpcode::Dump, request.resp_addr, peerManagerId, results);
     }
-
-    auto requestContext = std::make_shared<RequestContext>(KvOpcode::Dump, request.resp_addr,
-                                                           peerManagerId, results, transfer_items);
-    if (!requestContext->Valid()) {
-        RollbackDumpItems(transfer_items);
-        return UC::Status::InvalidParam("failed to build DUMP RequestContext");
-    }
-
-    transport::Operation operation;
-    operation.opcode = transport::Opcode::Read;
-    operation.direct = transport::OperationDirect::RemoteDeviceHost;
-    operation.target_manager = peerManagerId;
-    operation.ops = std::move(segments);
 
     TransportHandle handle = transport::kInvalidTransferHandle;
     const auto submit_status = runtime_.transport.ExecuteAsync(operation, handle);
@@ -201,7 +188,7 @@ UC::Status TaskWorker::ProcessDump(const KvDumpRequest& request,
         UC_ERROR("Dump SubmitAsync failed, items={}", transfer_items.size());
         RollbackDumpItems(transfer_items);
         for (const auto& item : transfer_items) {
-            results[item.request_index] = static_cast<std::uint32_t>(ResultCode::Failed);
+            results[item.index_in_request] = static_cast<std::uint32_t>(ResultCode::Failed);
         }
         return WriteResponse(runtime_, KvOpcode::Dump, request.resp_addr, peerManagerId, results);
     }
@@ -209,8 +196,10 @@ UC::Status TaskWorker::ProcessDump(const KvDumpRequest& request,
     InflightRecord record;
     record.opcode = KvOpcode::Dump;
     record.handle = handle;
+    record.response_addr = request.resp_addr;
+    record.peer_manager_id = peerManagerId;
+    record.results = std::move(results);
     record.transfer_items = std::move(transfer_items);
-    record.request_ctx = std::move(requestContext);
     record.submit_ms = SteadyNowMs();
     return SubmitInflight(std::move(record));
 }
@@ -220,11 +209,14 @@ UC::Status TaskWorker::ProcessLoad(const KvLoadRequest& request,
 {
     const auto now = std::chrono::system_clock::now();
     std::vector<std::uint32_t> results(request.batch_size,
-                                       static_cast<std::uint32_t>(ResultCode::Failed));
+                                       static_cast<std::uint32_t>(ResultCode::Ok));
     std::vector<TransferItem> transfer_items;
-    std::vector<transport::Segment> segments;
     transfer_items.reserve(request.entries.size());
-    segments.reserve(request.entries.size());
+    transport::Operation operation;
+    operation.opcode = transport::Opcode::Write;
+    operation.direct = transport::OperationDirect::RemoteDeviceHost;
+    operation.target_manager = peerManagerId;
+    operation.ops.reserve(request.entries.size());
 
     for (std::uint16_t index = 0; index < request.batch_size; ++index) {
         const auto& entry = request.entries[index];
@@ -243,41 +235,19 @@ UC::Status TaskWorker::ProcessLoad(const KvLoadRequest& request,
                          releaseStatus);
             }
             UC_ERROR("Load[{}] len mismatch, entry.len={} > pin.len={}", index, entry.len, pin.len);
+            results[index] = static_cast<std::uint32_t>(ResultCode::Failed);
             continue;
         }
 
         // The LOAD pin keeps metadata and buffer alive through async transport.
-        TransferItem item;
-        item.request_index = index;
-        item.key = key;
-        item.remote_addr = entry.addr;
-        item.len = entry.len;
-        item.buffer_handle = pin.buffer_handle;
-        transfer_items.emplace_back(item);
-
-        transport::Segment segment;
-        segment.local_addr = reinterpret_cast<void*>(pin.local_addr);
-        segment.remote_addr = entry.addr;
-        segment.length = entry.len;
-        segments.emplace_back(segment);
+        transfer_items.emplace_back(TransferItem{index, key, pin.buffer_handle});
+        operation.ops.emplace_back(
+            transport::Segment{reinterpret_cast<void*>(pin.local_addr), entry.addr, entry.len});
     }
 
     if (transfer_items.empty()) {
         return WriteResponse(runtime_, KvOpcode::Load, request.resp_addr, peerManagerId, results);
     }
-
-    auto requestContext = std::make_shared<RequestContext>(KvOpcode::Load, request.resp_addr,
-                                                           peerManagerId, results, transfer_items);
-    if (!requestContext->Valid()) {
-        UnpinLoadItems(transfer_items);
-        return UC::Status::InvalidParam("failed to build LOAD RequestContext");
-    }
-
-    transport::Operation operation;
-    operation.opcode = transport::Opcode::Write;
-    operation.direct = transport::OperationDirect::RemoteDeviceHost;
-    operation.target_manager = peerManagerId;
-    operation.ops = std::move(segments);
 
     TransportHandle handle = transport::kInvalidTransferHandle;
     const auto submit_status = runtime_.transport.ExecuteAsync(operation, handle);
@@ -285,7 +255,7 @@ UC::Status TaskWorker::ProcessLoad(const KvLoadRequest& request,
         UC_ERROR("Load SubmitAsync failed, items={}", transfer_items.size());
         UnpinLoadItems(transfer_items);
         for (const auto& item : transfer_items) {
-            results[item.request_index] = static_cast<std::uint32_t>(ResultCode::Failed);
+            results[item.index_in_request] = static_cast<std::uint32_t>(ResultCode::Failed);
         }
         return WriteResponse(runtime_, KvOpcode::Load, request.resp_addr, peerManagerId, results);
     }
@@ -293,8 +263,10 @@ UC::Status TaskWorker::ProcessLoad(const KvLoadRequest& request,
     InflightRecord record;
     record.opcode = KvOpcode::Load;
     record.handle = handle;
+    record.response_addr = request.resp_addr;
+    record.peer_manager_id = peerManagerId;
+    record.results = std::move(results);
     record.transfer_items = std::move(transfer_items);
-    record.request_ctx = std::move(requestContext);
     record.submit_ms = SteadyNowMs();
     return SubmitInflight(std::move(record));
 }
