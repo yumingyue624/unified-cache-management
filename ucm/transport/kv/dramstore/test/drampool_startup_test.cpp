@@ -233,7 +233,7 @@ TEST(DramPoolServerTest, RejectsCallsOutsideValidState)
 }
 
 #if defined(UCM_DRAMPOOL_RUNTIME_INTEGRATION_TESTS)
-TEST(DramPoolServerTest, StartsReceiverLastAndStopsReceiverFirst)
+TEST(DramPoolServerTest, StartsTransportAfterWorkersAndStopsReceiverFirst)
 {
     ScopedDramPoolConfig configScope(MakeValidConfig());
     DramPoolServer server;
@@ -253,12 +253,13 @@ TEST(DramPoolServerTest, StartsReceiverLastAndStopsReceiverFirst)
         "InitMetadata",
         "InitProtocol",
         "InitQueues",
-        "StartTransportService",
+        "InitTransportManager",
         "CreateRuntimeContext",
         "StartCompletionPoller",
         "StartTaskWorker",
         "StartGCThread",
         "StartListeningService",
+        "StartTransportService",
         "SetServiceReady(true)",
     };
     EXPECT_TRUE(ContainsInOrder(events, startupOrder));
@@ -289,7 +290,8 @@ TEST(DramPoolServerTest, GcDisabledSkipsGcThreadLifecycleEvents)
     EXPECT_EQ(std::find(events.begin(), events.end(), "StopGCThread"), events.end());
     EXPECT_TRUE(
         ContainsInOrder(events, {"StartCompletionPoller", "StartTaskWorker",
-                                 "StartListeningService", "SetServiceReady(true)"}));
+                                 "StartListeningService", "StartTransportService",
+                                 "SetServiceReady(true)"}));
 }
 #endif
 

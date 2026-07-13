@@ -72,9 +72,10 @@ private:
     UC::Status InitMetadata();
     UC::Status InitProtocol();
     UC::Status InitQueues();
-    UC::Status StartTransportService();
+    UC::Status InitTransportManager();
     UC::Status CreateRuntimeContext();
 
+    UC::Status StartTransportService();
     UC::Status StartListeningService();
     UC::Status StartCompletionPoller();
     UC::Status StartTaskWorker();

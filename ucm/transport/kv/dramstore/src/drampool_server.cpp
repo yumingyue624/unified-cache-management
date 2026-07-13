@@ -79,7 +79,7 @@ UC::Status DramPoolServer::Init()
             "DramPoolServer cannot be initialized in its current state");
     }
 
-    // Build local state only; externally visible services start in Start().
+    // Prepare dependencies without opening the TCP control listener.
     auto rollback = MakeScopeExit([this]() { ResetInitializedComponents(); });
     try {
         if (auto status = InitializeAclRuntime(); status.Failure()) { return status; }
@@ -87,6 +87,8 @@ UC::Status DramPoolServer::Init()
         if (auto status = InitMetadata(); status.Failure()) { return status; }
         if (auto status = InitProtocol(); status.Failure()) { return status; }
         if (auto status = InitQueues(); status.Failure()) { return status; }
+        if (auto status = InitTransportManager(); status.Failure()) { return status; }
+        if (auto status = CreateRuntimeContext(); status.Failure()) { return status; }
     } catch (const std::exception& error) {
         return UC::Status::Error(std::string{"DramPoolServer initialization failed: "} +
                                  error.what());
@@ -107,12 +109,11 @@ UC::Status DramPoolServer::Start()
 
     auto rollback = MakeScopeExit([this]() { StopLocked(); });
     try {
-        if (auto status = StartTransportService(); status.Failure()) { return status; }
-        if (auto status = CreateRuntimeContext(); status.Failure()) { return status; }
         if (auto status = StartCompletionPoller(); status.Failure()) { return status; }
         if (auto status = StartTaskWorker(); status.Failure()) { return status; }
         if (auto status = StartGCThread(); status.Failure()) { return status; }
         if (auto status = StartListeningService(); status.Failure()) { return status; }
+        if (auto status = StartTransportService(); status.Failure()) { return status; }
         SetServiceReady(true);
         state_ = ServerState::Ready;
     } catch (const std::exception& error) {
@@ -132,7 +133,7 @@ void DramPoolServer::StopLocked()
 {
     if (state_ == ServerState::New || state_ == ServerState::Stopped) { return; }
     state_ = ServerState::Stopping;
-    // Close ingress first, drain accepted work, then destroy shared dependencies.
+    // Stop the Receiver first, drain accepted work, then tear down shared dependencies.
     SetServiceReady(false);
     StopReceiver();
     StopTaskWorker();
@@ -214,26 +215,34 @@ UC::Status DramPoolServer::InitQueues()
     return UC::Status::OK();
 }
 
-UC::Status DramPoolServer::StartTransportService()
+UC::Status DramPoolServer::InitTransportManager()
 {
     transportManager_ = std::make_unique<transport::TransportManager>(g_config.addr);
-    auto status = transportManager_->Init();
-    if (status != transport::Status::Ok) {
-        transportManager_.reset();
-        return ToUcStatus(status, "TransportManager::Init");
-    }
+    RecordLifecycleEvent("InitTransportManager");
+    return UC::Status::OK();
+}
 
+UC::Status DramPoolServer::StartTransportService()
+{
+    if (!transportManager_) {
+        return UC::Status::InvalidParam("DramPool transport manager is not initialized");
+    }
+    if (bufferManagers_.empty()) {
+        return UC::Status::InvalidParam("memory pool is not initialized");
+    }
     transport::HixlInitAttrs attrs;
     attrs.local_engine = g_config.transportLocalEngine;
     attrs.device_id = g_config.transportDeviceId;
     attrs.connect_timeout_ms = static_cast<std::int32_t>(g_config.opTimeoutMs);
     attrs.transfer_timeout_ms = static_cast<std::int32_t>(g_config.opTimeoutMs);
-    status = transportManager_->InstallTransport(transport::TransportProtocol::Hixl, attrs);
+    auto status = transportManager_->InstallTransport(transport::TransportProtocol::Hixl, attrs);
     if (status != transport::Status::Ok) {
         return ToUcStatus(status, "TransportManager::InstallTransport");
     }
-    if (bufferManagers_.empty()) {
-        return UC::Status::InvalidParam("memory pool is not initialized");
+    // TransportManager::Init opens the metadata TCP listener.
+    status = transportManager_->Init();
+    if (status != transport::Status::Ok) {
+        return ToUcStatus(status, "TransportManager::Init");
     }
     RecordLifecycleEvent("StartTransportService");
     return UC::Status::OK();
