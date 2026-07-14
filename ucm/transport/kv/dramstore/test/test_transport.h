@@ -75,7 +75,8 @@ public:
         }
         std::lock_guard<std::mutex> guard(mutex_);
         handle = nextTransferHandle_++;
-        transfers_.emplace(handle, transport::TransferStatus::Completed);
+        transfers_.emplace(handle, newTransferStatus_);
+        ++asyncExecutionCount_;
         return transport::Status::Ok;
     }
 
@@ -125,6 +126,25 @@ public:
         return syncExecutionCount_;
     }
 
+    std::size_t AsyncExecutionCount() const
+    {
+        std::lock_guard<std::mutex> guard(mutex_);
+        return asyncExecutionCount_;
+    }
+
+    transport::TransferHandle LatestTransferHandle() const
+    {
+        std::lock_guard<std::mutex> guard(mutex_);
+        return nextTransferHandle_ == 1 ? transport::kInvalidTransferHandle
+                                        : nextTransferHandle_ - 1;
+    }
+
+    void SetNewTransferStatus(transport::TransferStatus status)
+    {
+        std::lock_guard<std::mutex> guard(mutex_);
+        newTransferStatus_ = status;
+    }
+
 private:
     mutable std::mutex mutex_;
     transport::MemoryHandle nextMemoryHandle_{1};
@@ -132,7 +152,9 @@ private:
     std::unordered_map<transport::MemoryHandle, transport::MemoryRegion> memories_;
     std::unordered_map<transport::TransferHandle, transport::TransferStatus> transfers_;
     std::unordered_map<transport::TransferHandle, std::size_t> queryCounts_;
+    transport::TransferStatus newTransferStatus_{transport::TransferStatus::Completed};
     std::size_t syncExecutionCount_{0};
+    std::size_t asyncExecutionCount_{0};
 };
 
 inline std::shared_ptr<TestTransport> MakeTestTransport()

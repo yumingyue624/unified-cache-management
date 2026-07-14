@@ -29,8 +29,6 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
-#include "core/transport_manager.h"
-#include "drampool_buffer.h"
 #include "drampool_types.h"
 #include "entry.h"
 #include "kv_protocol.h"
@@ -215,35 +213,5 @@ private:
     std::unordered_map<BlockId, UC::DramStore::EntryPtr, UC::Detail::BlockIdHasher> entries_;
     std::unordered_map<BlockId, BufferHandle, UC::Detail::BlockIdHasher> bufferHandles_;
 };
-
-inline UC::Status WriteResponse(DramPoolRuntime& runtime, KvOpcode opcode, std::uint64_t resp_addr,
-                                const transport::ManagerID& peer_manager_id,
-                                const std::vector<std::uint32_t>& results)
-{
-    if (peer_manager_id.empty()) {
-        return UC::Status::InvalidParam("response peer_manager_id is empty");
-    }
-    const auto len = static_cast<std::uint32_t>(results.size() * sizeof(std::uint32_t));
-    auto allocated = AllocateBuffer(runtime, len);
-    if (!allocated.HasValue()) { return allocated.Error(); }
-    auto slot = std::move(allocated).Value();
-
-    const auto protocol_status = runtime.protocol.PackResponse(
-        reinterpret_cast<void*>(slot.addr), opcode, KvResponse{results});
-    UC::Status status =
-        protocol_status.ok() ? UC::Status::OK() : UC::Status::Error(protocol_status.message);
-    if (status.Success()) {
-        transport::Operation operation;
-        operation.opcode = transport::Opcode::Write;
-        operation.direct = transport::OperationDirect::RemoteDeviceHost;
-        operation.target_manager = peer_manager_id;
-        operation.ops.push_back(
-            transport::Segment{reinterpret_cast<void*>(slot.addr), resp_addr, len});
-        status = ToUcStatus(runtime.transport.ExecuteSync(operation), "ExecuteSync response");
-    }
-
-    const auto free_status = FreeBuffer(runtime, slot.handle);
-    return status.Failure() ? status : free_status;
-}
 
 }  // namespace UC::DRAMPOOL

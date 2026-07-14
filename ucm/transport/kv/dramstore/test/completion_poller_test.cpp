@@ -11,6 +11,8 @@
 #include <utility>
 #include <vector>
 #include "buffer_manager.h"
+#include "core/transport_manager.h"
+#include "drampool_buffer.h"
 #include "drampool_config.h"
 #include "test_transport.h"
 
@@ -20,7 +22,6 @@ namespace {
 constexpr auto kConditionWaitTimeout = std::chrono::seconds(2);
 constexpr auto kConditionPollInterval = std::chrono::milliseconds(1);
 constexpr std::uint64_t kTestOperationTimeoutMs = 60'000;
-constexpr std::uint32_t kTestIdleWaitUs = 50;
 constexpr std::uint32_t kValueLength = 16;
 constexpr char kTargetManager[] = "127.0.0.1:29000";
 
@@ -61,7 +62,6 @@ protected:
         g_config.pollerDrainBudget = kDrainBudget;
         g_config.pollerScanBudget = kHeadScanBudget;
         g_config.pollerMaxPending = kQueueCapacity;
-        g_config.pollerIdleWaitUs = kTestIdleWaitUs;
         g_config.opTimeoutMs = kTestOperationTimeoutMs;
         g_config.poolBlockSizes = {kValueLength};
         g_config.poolSlotCounts = {static_cast<std::uint32_t>(kQueueCapacity)};
@@ -98,8 +98,8 @@ protected:
         g_config = std::move(savedConfig_);
     }
 
-    InflightRecord MakeDumpRecord(std::uint8_t keySuffix, std::uint64_t responseAddr,
-                                  TransportHandle& handleOut)
+    CompletionRecord MakeDumpRecord(std::uint8_t keySuffix, std::uint64_t responseAddr,
+                                    TransportHandle& handleOut)
     {
         auto allocated = AllocateBuffer(*runtime_, kValueLength);
         EXPECT_TRUE(allocated.HasValue());
@@ -126,9 +126,10 @@ protected:
         std::vector<TransferItem> items{TransferItem{0, entry->key, slot.handle}};
         std::vector<std::uint32_t> results{static_cast<std::uint32_t>(ResultCode::Failed)};
 
-        InflightRecord record;
+        CompletionRecord record;
+        record.stage = CompletionStage::DataTransfer;
         record.opcode = KvOpcode::Dump;
-        record.handle = handleOut;
+        record.data_handle = handleOut;
         record.response_addr = responseAddr;
         record.peer_manager_id = kTargetManager;
         record.results = std::move(results);
@@ -142,7 +143,7 @@ protected:
     static constexpr std::size_t kHeadScanBudget = 2;
 
     RequestQueue requestQueue_;
-    TransHandleQueue ingress_;
+    CompletionQueue ingress_;
     FakeMetadataIndex metadata_;
     BufferManagerList bufferManagers_;
     bool ownsAclRuntime_{false};
@@ -181,8 +182,10 @@ TEST_F(CompletionPollerTest, ScansOnlyConfiguredHeadWindowAndThenPublishesAll)
 
     EXPECT_TRUE(testTransport_->SetStatus(firstHandle, transport::TransferStatus::Completed));
     EXPECT_TRUE(testTransport_->SetStatus(secondHandle, transport::TransferStatus::Completed));
-    const bool allCompleted =
-        WaitUntil([&]() { return testTransport_->SyncExecutionCount() == 3; });
+    const bool allCompleted = WaitUntil([&]() {
+        return testTransport_->AsyncExecutionCount() == 6 &&
+               testTransport_->ActiveTransferCount() == 0;
+    });
 
     stop.store(true, std::memory_order_release);
     pollerThread.join();
@@ -219,7 +222,10 @@ TEST_F(CompletionPollerTest, TimeoutWaitsForTerminalThenAbortsDump)
     EXPECT_EQ(testTransport_->ActiveMemoryCount(), 1U);
 
     ASSERT_TRUE(testTransport_->SetStatus(handle, transport::TransferStatus::Completed));
-    const bool completed = WaitUntil([&]() { return testTransport_->SyncExecutionCount() == 1; });
+    const bool completed = WaitUntil([&]() {
+        return testTransport_->AsyncExecutionCount() == 2 &&
+               testTransport_->ActiveTransferCount() == 0;
+    });
     stop.store(true, std::memory_order_release);
     pollerThread.join();
 
@@ -228,6 +234,78 @@ TEST_F(CompletionPollerTest, TimeoutWaitsForTerminalThenAbortsDump)
               LookupCode::NotFound);
     EXPECT_EQ(testTransport_->ActiveMemoryCount(), 0U);
     EXPECT_EQ(testTransport_->ActiveTransferCount(), 0U);
+}
+
+TEST_F(CompletionPollerTest, KeepsResponseBufferUntilAsyncWriteReachesTerminal)
+{
+    g_config.pollerDrainBudget = 1;
+    g_config.pollerScanBudget = 1;
+
+    TransportHandle dataHandle = transport::kInvalidTransferHandle;
+    auto record = MakeDumpRecord(9, 109, dataHandle);
+    testTransport_->SetNewTransferStatus(transport::TransferStatus::Waiting);
+    ingress_.Push(std::move(record));
+
+    CompletionPoller poller(*runtime_);
+    std::atomic_bool stop{false};
+    std::thread pollerThread([&]() { poller.Run(stop); });
+
+    ASSERT_TRUE(WaitUntil([&]() { return testTransport_->AsyncExecutionCount() == 2; }));
+    const auto responseHandle = testTransport_->LatestTransferHandle();
+    ASSERT_NE(responseHandle, transport::kInvalidTransferHandle);
+    EXPECT_EQ(testTransport_->SyncExecutionCount(), 0U);
+    EXPECT_EQ(testTransport_->ActiveTransferCount(), 1U);
+    // The published Dump buffer and the response source buffer are both still registered.
+    EXPECT_EQ(testTransport_->ActiveMemoryCount(), 2U);
+
+    ASSERT_TRUE(
+        testTransport_->SetStatus(responseHandle, transport::TransferStatus::Completed));
+    const bool responseReleased = WaitUntil([&]() {
+        return testTransport_->ActiveTransferCount() == 0 &&
+               testTransport_->ActiveMemoryCount() == 1;
+    });
+
+    stop.store(true, std::memory_order_release);
+    pollerThread.join();
+
+    EXPECT_TRUE(responseReleased);
+    EXPECT_EQ(metadata_.LookupReady(MakeKey(9), std::chrono::system_clock::now()),
+              LookupCode::Ready);
+}
+
+TEST_F(CompletionPollerTest, SendsResponseReadyRecordWithoutBlocking)
+{
+    testTransport_->SetNewTransferStatus(transport::TransferStatus::Waiting);
+
+    CompletionRecord record;
+    record.stage = CompletionStage::ResponseReady;
+    record.opcode = KvOpcode::Lookup;
+    record.response_addr = 110;
+    record.peer_manager_id = kTargetManager;
+    record.results = {3};
+    ingress_.Push(std::move(record));
+
+    CompletionPoller poller(*runtime_);
+    std::atomic_bool stop{false};
+    std::thread pollerThread([&]() { poller.Run(stop); });
+
+    ASSERT_TRUE(WaitUntil([&]() { return testTransport_->AsyncExecutionCount() == 1; }));
+    const auto responseHandle = testTransport_->LatestTransferHandle();
+    ASSERT_NE(responseHandle, transport::kInvalidTransferHandle);
+    EXPECT_EQ(testTransport_->SyncExecutionCount(), 0U);
+    EXPECT_EQ(testTransport_->ActiveMemoryCount(), 1U);
+
+    ASSERT_TRUE(
+        testTransport_->SetStatus(responseHandle, transport::TransferStatus::Completed));
+    const bool responseReleased = WaitUntil([&]() {
+        return testTransport_->ActiveTransferCount() == 0 &&
+               testTransport_->ActiveMemoryCount() == 0;
+    });
+
+    stop.store(true, std::memory_order_release);
+    pollerThread.join();
+
+    EXPECT_TRUE(responseReleased);
 }
 
 }  // namespace

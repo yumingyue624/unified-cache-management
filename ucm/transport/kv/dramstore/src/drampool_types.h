@@ -80,22 +80,36 @@ enum class ResultCode : std::uint32_t {
 enum class InflightPhase : std::uint8_t {
     Polling = 0,
     // The transfer must still reach terminal, but its request result is forced to failure.
-    TimedOut = 1,
+    FailurePending = 1,
 };
 
-struct InflightRecord {
-    // One async handle owns one request batch and its sole response.
-    KvOpcode opcode{KvOpcode::None};
-    TransportHandle handle{transport::kInvalidTransferHandle};
-    std::uint64_t response_addr{0};
-    transport::ManagerID peer_manager_id;
-    std::vector<std::uint32_t> results;
+enum class CompletionStage : std::uint8_t {
+    DataTransfer = 0,
+    ResponseReady = 1,
+    ResponseTransfer = 2,
+};
+
+struct CompletionRecord {
+    CompletionStage stage{CompletionStage::DataTransfer};
+
+    // State used while the request's data transfer is in flight.
+    TransportHandle data_handle{transport::kInvalidTransferHandle};
     std::vector<TransferItem> transfer_items;
     std::uint64_t submit_ms{0};
     InflightPhase phase{InflightPhase::Polling};
+
+    // State needed to construct the request's sole response.
+    KvOpcode opcode{KvOpcode::None};
+    std::uint64_t response_addr{0};
+    transport::ManagerID peer_manager_id;
+    std::vector<std::uint32_t> results;
+
+    // Ownership held from response submission until its handle reaches terminal.
+    TransportHandle response_handle{transport::kInvalidTransferHandle};
+    BufferHandle response_buffer;
 };
 
-using TransHandleQueue = UC::SpscRingQueue<InflightRecord>;
+using CompletionQueue = UC::SpscRingQueue<CompletionRecord>;
 
 class MetadataIndex;
 
@@ -105,13 +119,13 @@ using BufferManagerList = std::vector<std::unique_ptr<UC::ASU::BufferManager>>;
 struct DramPoolRuntime {
     DramPoolRuntime(MetadataIndex& metadataRef, BufferManagerList& bufferManagersRef,
                     transport::TransportManager& transportRef, ProtocolManager& protocolRef,
-                    RequestQueue& requestQueueRef, TransHandleQueue& transHandleQueueRef)
+                    RequestQueue& requestQueueRef, CompletionQueue& completionQueueRef)
         : metadata(metadataRef),
           bufferManagers(bufferManagersRef),
           transport(transportRef),
           protocol(protocolRef),
           requestQueue(requestQueueRef),
-          transHandleQueue(transHandleQueueRef)
+          completionQueue(completionQueueRef)
     {
     }
 
@@ -120,7 +134,7 @@ struct DramPoolRuntime {
     transport::TransportManager& transport;
     ProtocolManager& protocol;
     RequestQueue& requestQueue;
-    TransHandleQueue& transHandleQueue;
+    CompletionQueue& completionQueue;
 };
 
 }  // namespace UC::DRAMPOOL

@@ -27,6 +27,7 @@
 #include <thread>
 #include <utility>
 #include "core/transport_manager.h"
+#include "drampool_buffer.h"
 #include "drampool_config.h"
 #include "drampool_fake_deps.h"
 #include "logger.h"
@@ -189,7 +190,8 @@ UC::Status TaskWorker::ProcessDump(const KvDumpRequest& request,
     }
 
     if (transfer_items.empty()) {
-        return WriteResponse(runtime_, KvOpcode::Dump, request.resp_addr, peerManagerId, results);
+        return QueueResponse(KvOpcode::Dump, request.resp_addr, peerManagerId,
+                             std::move(results));
     }
 
     TransportHandle handle = transport::kInvalidTransferHandle;
@@ -200,18 +202,20 @@ UC::Status TaskWorker::ProcessDump(const KvDumpRequest& request,
         for (const auto& item : transfer_items) {
             results[item.index_in_request] = static_cast<std::uint32_t>(ResultCode::Failed);
         }
-        return WriteResponse(runtime_, KvOpcode::Dump, request.resp_addr, peerManagerId, results);
+        return QueueResponse(KvOpcode::Dump, request.resp_addr, peerManagerId,
+                             std::move(results));
     }
 
-    InflightRecord record;
+    CompletionRecord record;
+    record.stage = CompletionStage::DataTransfer;
     record.opcode = KvOpcode::Dump;
-    record.handle = handle;
+    record.data_handle = handle;
     record.response_addr = request.resp_addr;
     record.peer_manager_id = peerManagerId;
     record.results = std::move(results);
     record.transfer_items = std::move(transfer_items);
     record.submit_ms = SteadyNowMs();
-    return SubmitInflight(std::move(record));
+    return SubmitCompletion(std::move(record));
 }
 
 UC::Status TaskWorker::ProcessLoad(const KvLoadRequest& request,
@@ -256,7 +260,8 @@ UC::Status TaskWorker::ProcessLoad(const KvLoadRequest& request,
     }
 
     if (transfer_items.empty()) {
-        return WriteResponse(runtime_, KvOpcode::Load, request.resp_addr, peerManagerId, results);
+        return QueueResponse(KvOpcode::Load, request.resp_addr, peerManagerId,
+                             std::move(results));
     }
 
     TransportHandle handle = transport::kInvalidTransferHandle;
@@ -267,18 +272,20 @@ UC::Status TaskWorker::ProcessLoad(const KvLoadRequest& request,
         for (const auto& item : transfer_items) {
             results[item.index_in_request] = static_cast<std::uint32_t>(ResultCode::Failed);
         }
-        return WriteResponse(runtime_, KvOpcode::Load, request.resp_addr, peerManagerId, results);
+        return QueueResponse(KvOpcode::Load, request.resp_addr, peerManagerId,
+                             std::move(results));
     }
 
-    InflightRecord record;
+    CompletionRecord record;
+    record.stage = CompletionStage::DataTransfer;
     record.opcode = KvOpcode::Load;
-    record.handle = handle;
+    record.data_handle = handle;
     record.response_addr = request.resp_addr;
     record.peer_manager_id = peerManagerId;
     record.results = std::move(results);
     record.transfer_items = std::move(transfer_items);
     record.submit_ms = SteadyNowMs();
-    return SubmitInflight(std::move(record));
+    return SubmitCompletion(std::move(record));
 }
 
 UC::Status TaskWorker::ProcessLookup(const KvLookupRequest& request,
@@ -296,8 +303,7 @@ UC::Status TaskWorker::ProcessLookup(const KvLookupRequest& request,
         break;
     }
 
-    return WriteResponse(runtime_, KvOpcode::Lookup, request.resp_addr, peerManagerId,
-                         {prefix_count});
+    return QueueResponse(KvOpcode::Lookup, request.resp_addr, peerManagerId, {prefix_count});
 }
 
 void TaskWorker::RollbackDumpItems(const std::vector<TransferItem>& items)
@@ -322,10 +328,23 @@ void TaskWorker::UnpinLoadItems(const std::vector<TransferItem>& items)
     }
 }
 
-UC::Status TaskWorker::SubmitInflight(InflightRecord&& record)
+UC::Status TaskWorker::QueueResponse(KvOpcode opcode, std::uint64_t responseAddr,
+                                     const transport::ManagerID& peerManagerId,
+                                     std::vector<std::uint32_t>&& results)
+{
+    CompletionRecord record;
+    record.stage = CompletionStage::ResponseReady;
+    record.opcode = opcode;
+    record.response_addr = responseAddr;
+    record.peer_manager_id = peerManagerId;
+    record.results = std::move(results);
+    return SubmitCompletion(std::move(record));
+}
+
+UC::Status TaskWorker::SubmitCompletion(CompletionRecord&& record)
 {
     // TaskWorker is the sole producer; CompletionPoller is the sole consumer.
-    runtime_.transHandleQueue.Push(std::move(record));
+    runtime_.completionQueue.Push(std::move(record));
     return UC::Status::OK();
 }
 

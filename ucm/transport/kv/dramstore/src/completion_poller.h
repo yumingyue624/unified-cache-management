@@ -22,13 +22,17 @@ public:
     void RequestDrainAllAsFailed() noexcept;
 
 private:
-    std::size_t DrainNewHandles();
-    bool PollFirstBatch();
-    void ApplyTerminal(InflightRecord& record, transport::TransferStatus terminalStatus);
-    bool OperationTimedOut(const InflightRecord& record, std::uint64_t nowMs) const;
+    std::size_t DrainNewCompletions();
+    void PollPendingTransfers();
+    void ProcessDataTransfer(CompletionRecord& record);
+    UC::Status SubmitResponse(CompletionRecord& record);
+    bool ProcessResponseTransfer(CompletionRecord& record);
+    void SettleDataTransfer(CompletionRecord& record,
+                            transport::TransferStatus terminalStatus);
+    bool OperationTimedOut(const CompletionRecord& record, std::uint64_t nowMs) const;
 
     DramPoolRuntime& runtime_;
-    std::deque<InflightRecord> pending_;
+    std::deque<CompletionRecord> pending_;
     std::atomic_bool failAllRequested_{false};
 };
 

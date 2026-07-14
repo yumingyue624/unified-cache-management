@@ -34,7 +34,6 @@ namespace UC::DRAMPOOL {
 inline constexpr std::uint32_t kDefaultPollerDrainBudget = 64;
 inline constexpr std::uint32_t kDefaultPollerScanBudget = 64;
 inline constexpr std::uint32_t kDefaultPollerMaxPending = 1024 * 1024;
-inline constexpr std::uint32_t kDefaultPollerIdleWaitUs = 100;
 inline constexpr std::uint64_t kBytesPerGiB = 1024ULL * 1024ULL * 1024ULL;
 inline constexpr std::uint64_t kMillisecondsPerMinute = 60'000;
 inline constexpr std::uint64_t kDefaultTtlMinutes = 120;
@@ -67,7 +66,6 @@ struct DramPoolConfig {
     std::uint32_t pollerDrainBudget{kDefaultPollerDrainBudget};
     std::uint32_t pollerScanBudget{kDefaultPollerScanBudget};
     std::uint32_t pollerMaxPending{kDefaultPollerMaxPending};
-    std::uint32_t pollerIdleWaitUs{kDefaultPollerIdleWaitUs};
 
     bool gcEnabled{true};
     std::uint32_t gcIntervalMs{1000};

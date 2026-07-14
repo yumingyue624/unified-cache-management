@@ -116,7 +116,7 @@ private:
     std::thread gcThread_;
 
     RequestQueue requestQueue_;
-    TransHandleQueue transHandleQueue_;
+    CompletionQueue completionQueue_;
     std::unique_ptr<transport::TransportManager> transportManager_;
     std::unique_ptr<transport::TcpMessageChannel> tcpMessageChannel_;
     BufferManagerList bufferManagers_;

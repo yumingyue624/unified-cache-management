@@ -52,7 +52,6 @@ constexpr const char* kRequiredRuntimeConfigKeys[] = {
     "poller.drain_budget",
     "poller.scan_budget",
     "poller.max_pending",
-    "poller.idle_wait_us",
     "gc.enabled",
     "gc.interval_ms",
     "operation.timeout_ms",
@@ -197,9 +196,6 @@ UC::Status ApplyRuntimeConfigValue(DramPoolConfig& config, const std::string& ke
     if (key == "poller.max_pending") {
         return ParseUint32Value(key, value, config.pollerMaxPending);
     }
-    if (key == "poller.idle_wait_us") {
-        return ParseUint32Value(key, value, config.pollerIdleWaitUs);
-    }
     if (key == "gc.enabled") { return ParseBoolValue(key, value, config.gcEnabled); }
     if (key == "gc.interval_ms") {
         return ParseUint32Value(key, value, config.gcIntervalMs);
@@ -247,7 +243,7 @@ UC::Status ValidateRuntimeConfig(const DramPoolConfig& config)
             "request_receiver.idle_wait_us must be greater than zero");
     }
     if (config.pollerDrainBudget == 0 || config.pollerScanBudget == 0 ||
-        config.pollerMaxPending == 0 || config.pollerIdleWaitUs == 0) {
+        config.pollerMaxPending == 0) {
         return UC::Status::InvalidParam("poller values must be greater than zero");
     }
     if (config.pollerMaxPending < config.pollerDrainBudget ||

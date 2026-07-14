@@ -46,7 +46,10 @@ private:
 
     void RollbackDumpItems(const std::vector<TransferItem>& items);
     void UnpinLoadItems(const std::vector<TransferItem>& items);
-    UC::Status SubmitInflight(InflightRecord&& record);
+    UC::Status QueueResponse(KvOpcode opcode, std::uint64_t responseAddr,
+                             const transport::ManagerID& peerManagerId,
+                             std::vector<std::uint32_t>&& results);
+    UC::Status SubmitCompletion(CompletionRecord&& record);
 
     DramPoolRuntime& runtime_;
 };

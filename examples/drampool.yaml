@@ -22,7 +22,6 @@ poller:
   drain_budget: 64
   scan_budget: 64
   max_pending: 1048576
-  idle_wait_us: 100
 
 gc:
   enabled: true

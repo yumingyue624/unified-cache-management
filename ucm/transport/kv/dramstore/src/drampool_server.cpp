@@ -211,7 +211,7 @@ UC::Status DramPoolServer::InitProtocol()
 UC::Status DramPoolServer::InitQueues()
 {
     requestQueue_.Setup(g_config.requestQueueDepth);
-    transHandleQueue_.Setup(g_config.handleQueueDepth);
+    completionQueue_.Setup(g_config.handleQueueDepth);
     return UC::Status::OK();
 }
 
@@ -277,7 +277,7 @@ UC::Status DramPoolServer::CreateRuntimeContext()
     try {
         runtime_ = std::make_unique<DramPoolRuntime>(*metadataIndex_, bufferManagers_,
                                                       *transportManager_, *protocolManager_,
-                                                      requestQueue_, transHandleQueue_);
+                                                      requestQueue_, completionQueue_);
     } catch (const std::exception& error) {
         return UC::Status::Error(std::string{"failed to create DramPool runtime: "} +
                                  error.what());
