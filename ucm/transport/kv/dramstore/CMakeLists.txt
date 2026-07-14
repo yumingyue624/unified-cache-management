@@ -10,7 +10,6 @@ add_library(drampool_core STATIC
     src/drampool_daemon.cpp
     src/drampool_runtime_config.cpp
     src/drampool_server.cpp
-    src/kv_control_protocol.cpp
     src/kv_protocol.cpp
     src/task_worker.cpp
 )
@@ -53,7 +52,6 @@ if(BUILD_UNIT_TESTS)
            "Run DramPool startup tests that require a real Hixl runtime" OFF)
     add_executable(drampool_startup.test
         test/drampool_startup_test.cpp
-        test/kv_control_protocol_test.cpp
     )
     target_link_libraries(drampool_startup.test
         PRIVATE

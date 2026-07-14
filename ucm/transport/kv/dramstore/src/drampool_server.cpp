@@ -29,7 +29,6 @@
 #include <type_traits>
 #include <utility>
 #include "buffer_manager.h"
-#include "kv_control_protocol.h"
 #include "logger.h"
 #include "task_worker.h"
 #include "two_sided/tcp/tcp_message_channel.h"
@@ -472,17 +471,9 @@ void DramPoolServer::RequestReceiveLoop()
             break;
         }
 
-        KvRequestEnvelopeView envelope;
-        const auto envelopeStatus = UnpackKvRequestEnvelope(received, envelope);
-        if (envelopeStatus.Failure()) {
-            UC_WARN("RequestReceiver rejected TCP message from {}: {}",
-                    controlPeer.ToString(), envelopeStatus);
-            continue;
-        }
-
         RequestPtr request;
         const auto unpackStatus = runtime_->protocol.UnpackRequest(
-            envelope.request_data, envelope.request_size, request);
+            received.data(), received.size(), request);
         if (!unpackStatus.ok()) {
             UC_WARN("RequestReceiver rejected KV request from {}: {}", controlPeer.ToString(),
                     unpackStatus.message);
@@ -491,10 +482,16 @@ void DramPoolServer::RequestReceiveLoop()
 
         auto task = std::make_unique<RequestTask>();
         task->request = std::move(request);
-        task->peer_manager_id = std::move(envelope.peer_manager_id);
+        task->peer_manager_id = controlPeer.ToString();
         // This bounded handoff keeps transport I/O separate from potentially slow request handling.
+        bool queueFullLogged = false;
         while (!requestReceiverStop_.load(std::memory_order_acquire) &&
                !requestQueue_.TryPush(std::move(task))) {
+            if (!queueFullLogged) {
+                UC_WARN("RequestReceiver queue is full, depth={}, retry_wait_us={}",
+                        g_config.requestQueueDepth, g_config.requestReceiverIdleWaitUs);
+                queueFullLogged = true;
+            }
             std::this_thread::sleep_for(idleWait);
         }
     }
