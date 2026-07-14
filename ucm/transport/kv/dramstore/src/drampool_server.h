@@ -59,8 +59,6 @@ public:
     void Stop();
 
     bool IsServiceReady() const noexcept;
-    std::vector<std::string> LifecycleEvents() const;
-
 private:
     enum class ServerState {
         New = 0,
@@ -101,7 +99,6 @@ private:
     void TaskWorkerLoop();
     void CompletionPollerLoop();
     void GCThreadLoop();
-    void RecordLifecycleEvent(const std::string& event);
     void StopLocked();
     void ResetInitializedComponents();
 
@@ -136,8 +133,6 @@ private:
     std::condition_variable requestReceiverWaitCv_;
     std::mutex stopWaitMutex_;
     std::condition_variable stopWaitCv_;
-    mutable std::mutex lifecycleMutex_;
-    std::vector<std::string> lifecycleEvents_;
 };
 
 }  // namespace UC::DRAMPOOL

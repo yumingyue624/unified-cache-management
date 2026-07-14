@@ -29,8 +29,8 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
+#include "core/transport_manager.h"
 #include "drampool_buffer.h"
-#include "drampool_transport.h"
 #include "drampool_types.h"
 #include "entry.h"
 #include "kv_protocol.h"

@@ -9,8 +9,8 @@
 #include <string>
 #include <utility>
 #include "buffer_manager.h"
+#include "core/transport_manager.h"
 #include "drampool_config.h"
-#include "drampool_transport.h"
 
 namespace UC::DRAMPOOL {
 

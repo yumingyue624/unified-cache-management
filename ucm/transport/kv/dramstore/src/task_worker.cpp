@@ -26,6 +26,7 @@
 #include <limits>
 #include <thread>
 #include <utility>
+#include "core/transport_manager.h"
 #include "drampool_config.h"
 #include "drampool_fake_deps.h"
 #include "logger.h"

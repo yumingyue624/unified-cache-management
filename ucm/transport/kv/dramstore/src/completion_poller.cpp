@@ -6,8 +6,6 @@
 #include "completion_poller.h"
 #include <algorithm>
 #include <chrono>
-#include <exception>
-#include <stdexcept>
 #include <thread>
 #include <utility>
 #include "drampool_config.h"
@@ -28,31 +26,23 @@ bool IsSuccessful(transport::TransferStatus status)
 
 }  // namespace
 
-void CompletionPoller::Run(const std::atomic_bool& stop) noexcept
+void CompletionPoller::Run(const std::atomic_bool& stop)
 {
-    try {
-        while (true) {
-            if (stop.load(std::memory_order_acquire)) {
-                // The formal transport has no per-transfer Cancel; drain each handle safely.
-                failAllRequested_.store(true, std::memory_order_release);
-            }
-
-            const auto drained = DrainNewHandles();
-            const bool stateChanged = PollFirstBatch();
-
-            if (stop.load(std::memory_order_acquire) && drained == 0 && pending_.empty()) { break; }
-
-            if (drained == 0 && !stateChanged) {
-                std::this_thread::sleep_for(
-                    std::chrono::microseconds(g_config.pollerIdleWaitUs));
-            }
+    while (true) {
+        if (stop.load(std::memory_order_acquire)) {
+            // The formal transport has no per-transfer Cancel; drain each handle safely.
+            failAllRequested_.store(true, std::memory_order_release);
         }
-    } catch (const std::exception& error) {
-        healthy_.store(false, std::memory_order_release);
-        UC_ERROR_UNLIMITED("CompletionPoller stopped by exception: {}", error.what());
-    } catch (...) {
-        healthy_.store(false, std::memory_order_release);
-        UC_ERROR_UNLIMITED("CompletionPoller stopped by unknown exception");
+
+        const auto drained = DrainNewHandles();
+        const bool stateChanged = PollFirstBatch();
+
+        if (stop.load(std::memory_order_acquire) && drained == 0 && pending_.empty()) { break; }
+
+        if (drained == 0 && !stateChanged) {
+            std::this_thread::sleep_for(
+                std::chrono::microseconds(g_config.pollerIdleWaitUs));
+        }
     }
     pendingCount_.store(pending_.size(), std::memory_order_release);
 }

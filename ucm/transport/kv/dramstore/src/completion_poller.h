@@ -18,10 +18,9 @@ class CompletionPoller final {
 public:
     explicit CompletionPoller(DramPoolRuntime& runtime) : runtime_(runtime) {}
 
-    void Run(const std::atomic_bool& stop) noexcept;
+    void Run(const std::atomic_bool& stop);
     void RequestDrainAllAsFailed() noexcept;
 
-    bool Healthy() const noexcept { return healthy_.load(std::memory_order_acquire); }
     std::size_t PendingCount() const noexcept
     { return pendingCount_.load(std::memory_order_acquire); }
 
@@ -34,7 +33,6 @@ private:
     DramPoolRuntime& runtime_;
     std::deque<InflightRecord> pending_;
     std::atomic_bool failAllRequested_{false};
-    std::atomic_bool healthy_{true};
     std::atomic_size_t pendingCount_{0};
 };
 

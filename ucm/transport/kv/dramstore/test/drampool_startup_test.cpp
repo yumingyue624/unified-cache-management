@@ -1,4 +1,3 @@
-#include <algorithm>
 #include <chrono>
 #include <csignal>
 #include <filesystem>
@@ -65,20 +64,6 @@ std::filesystem::path RepositoryRuntimeConfigPath()
     for (int depth = 0; depth < 5; ++depth) { path = path.parent_path(); }
     return path / "examples" / "drampool.yaml";
 }
-
-#if defined(UCM_DRAMPOOL_RUNTIME_INTEGRATION_TESTS)
-bool ContainsInOrder(const std::vector<std::string>& events,
-                     const std::vector<std::string>& expected)
-{
-    auto iter = events.begin();
-    for (const auto& item : expected) {
-        iter = std::find(iter, events.end(), item);
-        if (iter == events.end()) { return false; }
-        ++iter;
-    }
-    return true;
-}
-#endif
 
 }  // namespace
 
@@ -265,7 +250,7 @@ TEST(DramPoolServerTest, RejectsCallsOutsideValidState)
 }
 
 #if defined(UCM_DRAMPOOL_RUNTIME_INTEGRATION_TESTS)
-TEST(DramPoolServerTest, StartsTcpMessageChannelAfterWorkersAndStopsIngressFirst)
+TEST(DramPoolServerTest, StartsAndStopsService)
 {
     ScopedDramPoolConfig configScope(MakeValidConfig());
     DramPoolServer server;
@@ -279,34 +264,9 @@ TEST(DramPoolServerTest, StartsTcpMessageChannelAfterWorkersAndStopsIngressFirst
     server.Stop();
     EXPECT_FALSE(server.IsServiceReady());
 
-    const auto events = server.LifecycleEvents();
-    const std::vector<std::string> startupOrder = {
-        "InitMemoryPool",
-        "InitMetadata",
-        "InitProtocol",
-        "InitQueues",
-        "InitTransportManager",
-        "CreateRuntimeContext",
-        "StartTransportService",
-        "StartCompletionPoller",
-        "StartTaskWorker",
-        "StartGCThread",
-        "StartRequestReceiver",
-        "StartTcpMessageChannel",
-        "SetServiceReady(true)",
-    };
-    EXPECT_TRUE(ContainsInOrder(events, startupOrder));
-
-    const std::vector<std::string> shutdownOrder = {
-        "SetServiceReady(false)",       "StopTcpMessageChannel", "StopRequestReceiver",
-        "StopTaskWorker",
-        "MarkInflightTransportsFailed", "StopCompletionPoller", "StopGCThread",
-        "UnregisterBufferMemory",       "DestroyMetadataIndex",
-    };
-    EXPECT_TRUE(ContainsInOrder(events, shutdownOrder));
 }
 
-TEST(DramPoolServerTest, GcDisabledSkipsGcThreadLifecycleEvents)
+TEST(DramPoolServerTest, StartsAndStopsWithGcDisabled)
 {
     auto config = MakeValidConfig();
     config.gcEnabled = false;
@@ -317,16 +277,9 @@ TEST(DramPoolServerTest, GcDisabledSkipsGcThreadLifecycleEvents)
     auto status = server.Init();
     ASSERT_TRUE(status.Success()) << status.ToString();
     ASSERT_TRUE(server.Start().Success());
+    EXPECT_TRUE(server.IsServiceReady());
     server.Stop();
-
-    const auto events = server.LifecycleEvents();
-    EXPECT_EQ(std::find(events.begin(), events.end(), "StartGCThread"), events.end());
-    EXPECT_EQ(std::find(events.begin(), events.end(), "StopGCThread"), events.end());
-    EXPECT_TRUE(
-        ContainsInOrder(events, {"StartTransportService", "StartCompletionPoller",
-                                 "StartTaskWorker", "StartRequestReceiver",
-                                 "StartTcpMessageChannel",
-                                 "SetServiceReady(true)"}));
+    EXPECT_FALSE(server.IsServiceReady());
 }
 #endif
 

@@ -56,6 +56,15 @@ struct BufferSlot {
 
 using TransportHandle = transport::TransferHandle;
 
+inline UC::Status ToUcStatus(transport::Status status, const char* operation)
+{
+    if (status == transport::Status::Ok) { return UC::Status::OK(); }
+    if (status == transport::Status::InvalidArgument) {
+        return UC::Status::InvalidParam("{}: invalid transport argument", operation);
+    }
+    return UC::Status::Error(std::string{operation} + ": transport operation failed");
+}
+
 struct TransferItem {
     // State needed to settle one item after the batch reaches terminal.
     std::uint16_t index_in_request{0};
