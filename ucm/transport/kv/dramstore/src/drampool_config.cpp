@@ -136,12 +136,6 @@ UC::Status ParseBlockProportions(const std::vector<std::string>& values,
     return UC::Status::OK();
 }
 
-UC::Status ValidateAddress(const std::string& addr)
-{
-    return Trim(addr).empty() ? UC::Status::InvalidParam("--addr is required")
-                              : UC::Status::OK();
-}
-
 UC::Status ValidateNics(const std::vector<std::string>& nics)
 {
     for (const auto& nic : nics) {
@@ -241,6 +235,31 @@ UC::Status CalculatePoolSlotCounts(DramPoolConfig& config)
 
 }  // namespace
 
+UC::Status ParseDramPoolEndpoint(const std::string& name, const std::string& value,
+                                 transport::Endpoint& endpoint)
+{
+    const auto normalized = Trim(value);
+    if (normalized.empty()) { return UC::Status::InvalidParam("{} is required", name); }
+
+    const auto separator = normalized.rfind(':');
+    if (separator == std::string::npos || separator == 0 || separator + 1 >= normalized.size()) {
+        return UC::Status::InvalidParam("{} must be <IP>:<PORT>", name);
+    }
+    try {
+        std::size_t parsed = 0;
+        const auto port = std::stoul(normalized.substr(separator + 1), &parsed, 10);
+        if (parsed != normalized.size() - separator - 1 || port == 0 ||
+            port > std::numeric_limits<std::uint16_t>::max()) {
+            return UC::Status::InvalidParam("{} must have a valid port", name);
+        }
+        endpoint.host = normalized.substr(0, separator);
+        endpoint.port = static_cast<std::uint16_t>(port);
+    } catch (const std::exception&) {
+        return UC::Status::InvalidParam("{} must have a valid port", name);
+    }
+    return UC::Status::OK();
+}
+
 std::string BuildUsage(const char* program)
 {
     const std::string name = program == nullptr ? "drampool" : program;
@@ -248,7 +267,7 @@ std::string BuildUsage(const char* program)
            " --addr <IP>:<PORT> --nics <NAME>... --pool-size-gb <SIZE>"
            " --kvcache-block-sizes <SIZE>... [options]\n"
            "Required options:\n"
-           "  --addr <IP>:<PORT>                 DramPool control-service address.\n"
+           "  --addr <IP>:<PORT>                 DramPool service address for KV control messages.\n"
            "  --nics <NAME>...                   RDMA NIC names for pinned memory registration.\n"
            "  --pool-size-gb <SIZE>              Local DRAM capacity contributed to the pool.\n"
            "  --kvcache-block-sizes <SIZE>...    Supported fixed KVCache block sizes.\n"
@@ -287,9 +306,10 @@ UC::Status ParseCommandLine(int argc, char** argv, DramPoolConfig& config)
             if (hasAddr) { return UC::Status::InvalidParam("--addr may be specified once"); }
             status = ReadSingleValue(option, hasInlineValue, inlineValue, argc, argv, index, value);
             if (status.Failure()) { return status; }
-            config.addr = value;
-            status = ValidateAddress(config.addr);
+            transport::Endpoint endpoint;
+            status = ParseDramPoolEndpoint("--addr", value, endpoint);
             if (status.Failure()) { return status; }
+            config.addr = std::move(endpoint);
             hasAddr = true;
             continue;
         }

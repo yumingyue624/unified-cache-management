@@ -29,8 +29,10 @@
 #include <type_traits>
 #include <utility>
 #include "buffer_manager.h"
+#include "kv_control_protocol.h"
 #include "logger.h"
 #include "task_worker.h"
+#include "two_sided/tcp/tcp_message_channel.h"
 
 namespace UC::DRAMPOOL {
 namespace {
@@ -79,7 +81,7 @@ UC::Status DramPoolServer::Init()
             "DramPoolServer cannot be initialized in its current state");
     }
 
-    // Prepare dependencies without opening the TCP control listener.
+    // Build runtime dependencies without starting transport services or listeners.
     auto rollback = MakeScopeExit([this]() { ResetInitializedComponents(); });
     try {
         if (auto status = InitializeAclRuntime(); status.Failure()) { return status; }
@@ -109,11 +111,13 @@ UC::Status DramPoolServer::Start()
 
     auto rollback = MakeScopeExit([this]() { StopLocked(); });
     try {
+        if (auto status = StartTransportService(); status.Failure()) { return status; }
         if (auto status = StartCompletionPoller(); status.Failure()) { return status; }
         if (auto status = StartTaskWorker(); status.Failure()) { return status; }
         if (auto status = StartGCThread(); status.Failure()) { return status; }
         if (auto status = StartRequestReceiver(); status.Failure()) { return status; }
-        if (auto status = StartTransportService(); status.Failure()) { return status; }
+        // Open ingress only after every request consumer is ready.
+        if (auto status = StartTcpMessageChannel(); status.Failure()) { return status; }
         SetServiceReady(true);
         state_ = ServerState::Ready;
     } catch (const std::exception& error) {
@@ -133,9 +137,15 @@ void DramPoolServer::StopLocked()
 {
     if (state_ == ServerState::New || state_ == ServerState::Stopped) { return; }
     state_ = ServerState::Stopping;
-    // Stop the Receiver first, drain accepted work, then tear down shared dependencies.
+    // Close ingress, stop its receiver, then let TaskWorker drain accepted tasks.
     SetServiceReady(false);
-    StopReceiver();
+    {
+        std::lock_guard<std::mutex> waitGuard(requestReceiverWaitMutex_);
+        requestReceiverStop_.store(true, std::memory_order_release);
+    }
+    requestReceiverWaitCv_.notify_all();
+    StopTcpMessageChannel();
+    StopRequestReceiver();
     StopTaskWorker();
     MarkInflightTransportsFailed();
     StopCompletionPoller();
@@ -217,7 +227,9 @@ UC::Status DramPoolServer::InitQueues()
 
 UC::Status DramPoolServer::InitTransportManager()
 {
-    transportManager_ = std::make_unique<transport::TransportManager>(g_config.addr);
+    transportManager_ =
+        std::make_unique<transport::TransportManager>(g_config.transportManagerEndpoint.ToString());
+    tcpMessageChannel_ = std::make_unique<transport::TcpMessageChannel>();
     RecordLifecycleEvent("InitTransportManager");
     return UC::Status::OK();
 }
@@ -231,7 +243,7 @@ UC::Status DramPoolServer::StartTransportService()
         return UC::Status::InvalidParam("memory pool is not initialized");
     }
     transport::HixlInitAttrs attrs;
-    attrs.local_engine = g_config.transportLocalEngine;
+    attrs.local_engine = g_config.hixlEngineEndpoint.ToString();
     attrs.device_id = g_config.transportDeviceId;
     attrs.connect_timeout_ms = static_cast<std::int32_t>(g_config.opTimeoutMs);
     attrs.transfer_timeout_ms = static_cast<std::int32_t>(g_config.opTimeoutMs);
@@ -245,6 +257,25 @@ UC::Status DramPoolServer::StartTransportService()
         return ToUcStatus(status, "TransportManager::Init");
     }
     RecordLifecycleEvent("StartTransportService");
+    return UC::Status::OK();
+}
+
+UC::Status DramPoolServer::StartTcpMessageChannel()
+{
+    if (!tcpMessageChannel_) {
+        return UC::Status::InvalidParam("DramPool TCP message channel is not initialized");
+    }
+
+    const auto channelStatus = tcpMessageChannel_->Init(g_config.addr);
+    if (channelStatus != transport::Status::Ok) {
+        return ToUcStatus(channelStatus, "TcpMessageChannel::Init");
+    }
+    {
+        std::lock_guard<std::mutex> waitGuard(requestReceiverWaitMutex_);
+        tcpMessageChannelReady_ = true;
+    }
+    requestReceiverWaitCv_.notify_one();
+    RecordLifecycleEvent("StartTcpMessageChannel");
     return UC::Status::OK();
 }
 
@@ -298,6 +329,26 @@ UC::Status DramPoolServer::StartTaskWorker()
     return UC::Status::OK();
 }
 
+UC::Status DramPoolServer::StartRequestReceiver()
+{
+    if (!runtime_ || !tcpMessageChannel_) {
+        return UC::Status::InvalidParam(
+            "DramPool RequestReceiver dependencies are not initialized");
+    }
+    try {
+        {
+            std::lock_guard<std::mutex> waitGuard(requestReceiverWaitMutex_);
+            requestReceiverStop_.store(false, std::memory_order_release);
+        }
+        requestReceiverThread_ = std::thread(&DramPoolServer::RequestReceiveLoop, this);
+        RecordLifecycleEvent("StartRequestReceiver");
+    } catch (const std::exception& e) {
+        requestReceiverStop_.store(true, std::memory_order_release);
+        return UC::Status::Error(std::string{"failed to start RequestReceiver: "} + e.what());
+    }
+    return UC::Status::OK();
+}
+
 UC::Status DramPoolServer::StartGCThread()
 {
     if (!g_config.gcEnabled) { return UC::Status::OK(); }
@@ -311,30 +362,36 @@ UC::Status DramPoolServer::StartGCThread()
     return UC::Status::OK();
 }
 
-UC::Status DramPoolServer::StartRequestReceiver()
-{
-    try {
-        receiverStop_.store(false, std::memory_order_release);
-        receiverThread_ = std::thread(&DramPoolServer::RequestReceiverLoop, this);
-        RecordLifecycleEvent("StartRequestReceiver");
-    } catch (const std::exception& e) {
-        return UC::Status::Error(std::string{"failed to start request receiver: "} + e.what());
-    }
-    return UC::Status::OK();
-}
-
 void DramPoolServer::SetServiceReady(bool ready)
 {
     serviceReady_.store(ready, std::memory_order_release);
     RecordLifecycleEvent(ready ? "SetServiceReady(true)" : "SetServiceReady(false)");
 }
 
-void DramPoolServer::StopReceiver()
+void DramPoolServer::StopTcpMessageChannel()
 {
-    receiverStop_.store(true, std::memory_order_release);
-    stopWaitCv_.notify_all();
-    if (receiverThread_.joinable()) { receiverThread_.join(); }
-    RecordLifecycleEvent("StopReceiver");
+    {
+        std::lock_guard<std::mutex> waitGuard(requestReceiverWaitMutex_);
+        tcpMessageChannelReady_ = false;
+    }
+    if (tcpMessageChannel_) {
+        const auto status = tcpMessageChannel_->Shutdown();
+        if (status != transport::Status::Ok) {
+            UC_ERROR_UNLIMITED("DramPool TCP message channel shutdown failed");
+        }
+    }
+    RecordLifecycleEvent("StopTcpMessageChannel");
+}
+
+void DramPoolServer::StopRequestReceiver()
+{
+    {
+        std::lock_guard<std::mutex> waitGuard(requestReceiverWaitMutex_);
+        requestReceiverStop_.store(true, std::memory_order_release);
+    }
+    requestReceiverWaitCv_.notify_all();
+    if (requestReceiverThread_.joinable()) { requestReceiverThread_.join(); }
+    RecordLifecycleEvent("StopRequestReceiver");
 }
 
 void DramPoolServer::StopTaskWorker()
@@ -388,19 +445,71 @@ void DramPoolServer::DestroyMetadataIndex()
     RecordLifecycleEvent("DestroyMetadataIndex");
 }
 
-void DramPoolServer::RequestReceiverLoop()
-{
-    UC_INFO_UNLIMITED("DramPool request receiver started, addr={}", g_config.addr);
-    std::unique_lock<std::mutex> waitLock(stopWaitMutex_);
-    stopWaitCv_.wait(waitLock, [this]() { return receiverStop_.load(std::memory_order_acquire); });
-    UC_INFO_UNLIMITED("DramPool request receiver stopped");
-}
-
 void DramPoolServer::TaskWorkerLoop()
 {
     UC_INFO_UNLIMITED("DramPool TaskWorker started");
     taskWorker_->Run(taskWorkerStop_);
     UC_INFO_UNLIMITED("DramPool TaskWorker stopped");
+}
+
+void DramPoolServer::RequestReceiveLoop()
+{
+    UC_INFO_UNLIMITED("DramPool RequestReceiver started, addr={}",
+                      g_config.addr.ToString());
+    if (!WaitForChannelReady()) {
+        UC_INFO_UNLIMITED("DramPool RequestReceiver stopped before TCP channel became ready");
+        return;
+    }
+
+    const auto idleWait = std::chrono::microseconds(g_config.requestReceiverIdleWaitUs);
+    while (!requestReceiverStop_.load(std::memory_order_acquire)) {
+        transport::Endpoint controlPeer;
+        transport::Metadata received;
+        const auto receiveStatus = tcpMessageChannel_->Receive(controlPeer, received);
+        if (requestReceiverStop_.load(std::memory_order_acquire)) { break; }
+        if (receiveStatus != transport::Status::Ok) {
+            UC_ERROR("RequestReceiver TCP message channel stopped unexpectedly");
+            break;
+        }
+
+        KvRequestEnvelopeView envelope;
+        const auto envelopeStatus = UnpackKvRequestEnvelope(received, envelope);
+        if (envelopeStatus.Failure()) {
+            UC_WARN("RequestReceiver rejected TCP message from {}: {}",
+                    controlPeer.ToString(), envelopeStatus);
+            continue;
+        }
+
+        RequestPtr request;
+        const auto unpackStatus = runtime_->protocol.UnpackRequest(
+            envelope.request_data, envelope.request_size, request);
+        if (!unpackStatus.ok()) {
+            UC_WARN("RequestReceiver rejected KV request from {}: {}", controlPeer.ToString(),
+                    unpackStatus.message);
+            continue;
+        }
+
+        auto task = std::make_unique<RequestTask>();
+        task->request = std::move(request);
+        task->peer_manager_id = std::move(envelope.peer_manager_id);
+        // This bounded handoff keeps transport I/O separate from potentially slow request handling.
+        while (!requestReceiverStop_.load(std::memory_order_acquire) &&
+               !requestQueue_.TryPush(std::move(task))) {
+            std::this_thread::sleep_for(idleWait);
+        }
+    }
+    UC_INFO_UNLIMITED("DramPool RequestReceiver stopped");
+}
+
+bool DramPoolServer::WaitForChannelReady()
+{
+    std::unique_lock<std::mutex> waitLock(requestReceiverWaitMutex_);
+    requestReceiverWaitCv_.wait(waitLock, [this]() {
+        return tcpMessageChannelReady_ ||
+               requestReceiverStop_.load(std::memory_order_acquire);
+    });
+    return tcpMessageChannelReady_ &&
+           !requestReceiverStop_.load(std::memory_order_acquire);
 }
 
 void DramPoolServer::CompletionPollerLoop()
@@ -436,6 +545,7 @@ void DramPoolServer::ResetInitializedComponents()
     taskWorker_.reset();
     protocolManager_.reset();
     metadataIndex_.reset();
+    tcpMessageChannel_.reset();
     transportManager_.reset();
     bufferManagers_.clear();
     if (aclRuntimeOwned_) {

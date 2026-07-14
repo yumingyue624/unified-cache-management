@@ -26,6 +26,7 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include "core/transport.h"
 #include "status/status.h"
 
 namespace UC::DRAMPOOL {
@@ -39,10 +40,11 @@ inline constexpr std::uint64_t kMillisecondsPerMinute = 60'000;
 inline constexpr std::uint64_t kDefaultTtlMinutes = 120;
 inline constexpr std::uint64_t kDefaultDumpTtlMs =
     kDefaultTtlMinutes * kMillisecondsPerMinute;
+inline constexpr char kDefaultDramPoolRuntimeConfigPath[] = "examples/drampool.yaml";
 
 struct DramPoolConfig {
-    // Local DramPool service address supplied by --addr.
-    std::string addr;
+    // Northbound KV control endpoint supplied by --addr.
+    transport::Endpoint addr{};
     std::vector<std::string> nics{};
     // --pool-size-gb follows the project convention: the unit is GiB.
     std::uint64_t poolSizeGb{0};
@@ -52,11 +54,15 @@ struct DramPoolConfig {
     std::vector<std::uint32_t> poolSlotCounts{};
     std::uint64_t defaultDumpTtlMs{kDefaultDumpTtlMs};
 
-    std::string transportLocalEngine{};
+    // Transport internals are loaded from the runtime YAML file.
+    transport::Endpoint transportManagerEndpoint{};
+    transport::Endpoint hixlEngineEndpoint{};
     std::int32_t transportDeviceId{0};
 
+    // Bounded handoff from RequestReceiveLoop to TaskWorker.
     std::uint32_t requestQueueDepth{65536};
     std::uint32_t handleQueueDepth{65536};
+    std::uint32_t requestReceiverIdleWaitUs{100};
 
     std::uint32_t pollerDrainBudget{kDefaultPollerDrainBudget};
     std::uint32_t pollerScanBudget{kDefaultPollerScanBudget};
@@ -67,6 +73,11 @@ struct DramPoolConfig {
     std::uint32_t gcIntervalMs{1000};
 
     std::uint32_t opTimeoutMs{5000};
+
+    std::string logLevel{"info"};
+    std::string logDir{"./logs"};
+    std::uint32_t logMaxFiles{10};
+    std::uint32_t logMaxSizeMb{5};
 };
 
 // One DramPool daemon runs in each process; startup sets this once before Server::Init().
@@ -74,5 +85,8 @@ inline DramPoolConfig g_config{};
 
 std::string BuildUsage(const char* program);
 UC::Status ParseCommandLine(int argc, char** argv, DramPoolConfig& config);
+UC::Status ParseDramPoolEndpoint(const std::string& name, const std::string& value,
+                                 transport::Endpoint& endpoint);
+UC::Status LoadDramPoolRuntimeConfig(const std::string& path, DramPoolConfig& config);
 
 }  // namespace UC::DRAMPOOL

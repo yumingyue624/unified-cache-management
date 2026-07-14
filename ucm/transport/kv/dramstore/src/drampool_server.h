@@ -38,6 +38,10 @@
 #include "kv_protocol.h"
 #include "status/status.h"
 
+namespace transport {
+class TcpMessageChannel;
+}
+
 namespace UC::DRAMPOOL {
 
 class TaskWorker;
@@ -76,13 +80,15 @@ private:
     UC::Status CreateRuntimeContext();
 
     UC::Status StartTransportService();
-    UC::Status StartRequestReceiver();
+    UC::Status StartTcpMessageChannel();
     UC::Status StartCompletionPoller();
     UC::Status StartTaskWorker();
+    UC::Status StartRequestReceiver();
     UC::Status StartGCThread();
 
     void SetServiceReady(bool ready);
-    void StopReceiver();
+    void StopTcpMessageChannel();
+    void StopRequestReceiver();
     void StopTaskWorker();
     void MarkInflightTransportsFailed();
     void StopCompletionPoller();
@@ -90,7 +96,8 @@ private:
     void UnregisterBufferMemory();
     void DestroyMetadataIndex();
 
-    void RequestReceiverLoop();
+    void RequestReceiveLoop();
+    bool WaitForChannelReady();
     void TaskWorkerLoop();
     void CompletionPollerLoop();
     void GCThreadLoop();
@@ -100,12 +107,13 @@ private:
 
     std::atomic_bool serviceReady_{false};
 
-    std::atomic_bool receiverStop_{true};
+    std::atomic_bool requestReceiverStop_{true};
     std::atomic_bool taskWorkerStop_{true};
     std::atomic_bool completionPollerStop_{true};
     std::atomic_bool gcThreadStop_{true};
+    bool tcpMessageChannelReady_{false};
 
-    std::thread receiverThread_;
+    std::thread requestReceiverThread_;
     std::thread taskWorkerThread_;
     std::thread completionPollerThread_;
     std::thread gcThread_;
@@ -113,6 +121,7 @@ private:
     RequestQueue requestQueue_;
     TransHandleQueue transHandleQueue_;
     std::unique_ptr<transport::TransportManager> transportManager_;
+    std::unique_ptr<transport::TcpMessageChannel> tcpMessageChannel_;
     BufferManagerList bufferManagers_;
     std::unique_ptr<MetadataIndex> metadataIndex_;
     std::unique_ptr<ProtocolManager> protocolManager_;
@@ -123,6 +132,8 @@ private:
 
     mutable std::mutex controlMutex_;
     ServerState state_{ServerState::New};
+    std::mutex requestReceiverWaitMutex_;
+    std::condition_variable requestReceiverWaitCv_;
     std::mutex stopWaitMutex_;
     std::condition_variable stopWaitCv_;
     mutable std::mutex lifecycleMutex_;

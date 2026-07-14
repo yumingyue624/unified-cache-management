@@ -64,10 +64,41 @@ std::uint32_t LoadFailureCode(LoadPinCode /*code*/)
 
 void TaskWorker::Run(const std::atomic_bool& stop)
 {
-    runtime_.requestQueue.ConsumerLoop(stop, [this](RequestTaskPtr task) {
-        const auto status = ProcessOneRequest(std::move(task));
-        if (status.Failure()) { UC_ERROR("TaskWorker ProcessOneRequest failed: {}", status); }
-    });
+    while (true) {
+        RequestTaskPtr task;
+        if (runtime_.requestQueue.TryPop(task)) {
+            const auto processStatus = ProcessOneRequest(std::move(task));
+            if (processStatus.Failure()) {
+                UC_ERROR("TaskWorker ProcessOneRequest failed: {}", processStatus);
+            }
+            continue;
+        }
+
+        // Stop is requested only after RequestReceiveLoop has exited, so an empty queue is drained.
+        if (stop.load(std::memory_order_acquire)) { break; }
+        std::this_thread::sleep_for(kTaskWorkerIdleWait);
+    }
+}
+
+UC::Status TaskWorker::ProcessOneRequest(RequestTaskPtr task)
+{
+    if (!task || !task->request || task->peer_manager_id.empty()) {
+        return UC::Status::InvalidParam("TaskWorker got an invalid request task");
+    }
+    const auto peerStatus = EnsurePeerReady(task->peer_manager_id);
+    if (peerStatus.Failure()) { return peerStatus; }
+    const auto& peerManagerId = task->peer_manager_id;
+    const auto& request = task->request;
+    switch (request->opcode) {
+        case KvOpcode::Dump:
+            return ProcessDump(*dynamic_cast<const KvDumpRequest*>(request.get()), peerManagerId);
+        case KvOpcode::Load:
+            return ProcessLoad(*dynamic_cast<const KvLoadRequest*>(request.get()), peerManagerId);
+        case KvOpcode::Lookup:
+            return ProcessLookup(*dynamic_cast<const KvLookupRequest*>(request.get()), peerManagerId);
+        case KvOpcode::None: break;
+    }
+    return UC::Status::InvalidParam("TaskWorker got invalid opcode");
 }
 
 UC::Status TaskWorker::EnsurePeerReady(const transport::ManagerID& targetManager)
@@ -81,28 +112,6 @@ UC::Status TaskWorker::EnsurePeerReady(const transport::ManagerID& targetManager
     }
     return ToUcStatus(runtime_.transport.Connect(transport::TransportProtocol::Hixl, targetManager),
                       "TransportManager::Connect");
-}
-
-UC::Status TaskWorker::ProcessOneRequest(RequestTaskPtr task)
-{
-    if (!task || !task->request || task->peer_manager_id.empty()) {
-        return UC::Status::InvalidParam("TaskWorker got an invalid request task");
-    }
-    const auto peer_status = EnsurePeerReady(task->peer_manager_id);
-    if (peer_status.Failure()) { return peer_status; }
-    const auto& peerManagerId = task->peer_manager_id;
-    const auto& request = task->request;
-    switch (request->opcode) {
-        case KvOpcode::Dump:
-            return ProcessDump(*dynamic_cast<const KvDumpRequest*>(request.get()), peerManagerId);
-        case KvOpcode::Load:
-            return ProcessLoad(*dynamic_cast<const KvLoadRequest*>(request.get()), peerManagerId);
-        case KvOpcode::Lookup:
-            return ProcessLookup(*dynamic_cast<const KvLookupRequest*>(request.get()),
-                                 peerManagerId);
-        case KvOpcode::None: break;
-    }
-    return UC::Status::InvalidParam("TaskWorker got invalid opcode");
 }
 
 UC::Status TaskWorker::ProcessDump(const KvDumpRequest& request,

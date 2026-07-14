@@ -30,7 +30,7 @@ namespace UC::DRAMPOOL {
 using BlockId = UC::Detail::BlockId;
 using RequestPtr = std::unique_ptr<KvRequest>;
 
-// Receiver attaches connection context after KvProtocol parses the wire request.
+// Receiver keeps transport identity beside the parsed KV request.
 struct RequestTask {
     RequestPtr request;
     transport::ManagerID peer_manager_id;

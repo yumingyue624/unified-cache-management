@@ -1,6 +1,7 @@
 #include <algorithm>
 #include <chrono>
 #include <csignal>
+#include <filesystem>
 #include <future>
 #include <gtest/gtest.h>
 #include <stdexcept>
@@ -16,6 +17,8 @@
 namespace UC::DRAMPOOL {
 namespace {
 
+std::filesystem::path RepositoryRuntimeConfigPath();
+
 #if defined(UCM_DRAMPOOL_RUNTIME_INTEGRATION_TESTS)
 DramPoolConfig MakeValidConfig()
 {
@@ -30,17 +33,11 @@ DramPoolConfig MakeValidConfig()
         throw std::runtime_error(status.ToString());
     }
 
-    config.transportLocalEngine = "127.0.0.1:19001";
-    config.transportDeviceId = 0;
-    config.requestQueueDepth = 128;
-    config.handleQueueDepth = 128;
-    config.pollerDrainBudget = 64;
-    config.pollerScanBudget = 64;
-    config.pollerMaxPending = 1024;
-    config.pollerIdleWaitUs = 100;
-    config.gcEnabled = true;
-    config.gcIntervalMs = 10;
-    config.opTimeoutMs = 5000;
+    if (const auto status = LoadDramPoolRuntimeConfig(RepositoryRuntimeConfigPath().string(),
+                                                       config);
+        status.Failure()) {
+        throw std::runtime_error(status.ToString());
+    }
     return config;
 }
 
@@ -61,6 +58,13 @@ private:
     DramPoolConfig previous_;
 };
 #endif
+
+std::filesystem::path RepositoryRuntimeConfigPath()
+{
+    auto path = std::filesystem::path{__FILE__}.parent_path();
+    for (int depth = 0; depth < 5; ++depth) { path = path.parent_path(); }
+    return path / "examples" / "drampool.yaml";
+}
 
 #if defined(UCM_DRAMPOOL_RUNTIME_INTEGRATION_TESTS)
 bool ContainsInOrder(const std::vector<std::string>& events,
@@ -102,7 +106,8 @@ TEST(DramPoolConfigTest, ParsesLaunchOptions)
     const auto status = ParseCommandLine(15, const_cast<char**>(argv), config);
 
     ASSERT_TRUE(status.Success()) << status.ToString();
-    EXPECT_EQ(config.addr, "127.0.0.1:9000");
+    EXPECT_EQ(config.addr.host, "127.0.0.1");
+    EXPECT_EQ(config.addr.port, 9000U);
     EXPECT_EQ(config.nics, (std::vector<std::string>{"mlx5_0", "mlx5_1"}));
     EXPECT_EQ(config.poolSizeGb, 128U);
     EXPECT_EQ(config.poolBlockSizes, (std::vector<std::uint64_t>{4096, 8192}));
@@ -145,6 +150,28 @@ TEST(DramPoolConfigTest, ResolvesGiBSlotCountsWithAlignedStride)
 
     ASSERT_TRUE(status.Success()) << status.ToString();
     EXPECT_EQ(config.poolSlotCounts, (std::vector<std::uint32_t>{258'111}));
+}
+
+TEST(DramPoolRuntimeConfigTest, LoadsRepositoryExample)
+{
+    const char* argv[] = {
+        "drampool", "--addr", "127.0.0.1:9000", "--nics", "mlx5_0",
+        "--pool-size-gb", "1", "--kvcache-block-sizes", "4096",
+    };
+    DramPoolConfig config;
+    ASSERT_TRUE(ParseCommandLine(9, const_cast<char**>(argv), config).Success());
+
+    const auto status = LoadDramPoolRuntimeConfig(RepositoryRuntimeConfigPath().string(), config);
+
+    ASSERT_TRUE(status.Success()) << status.ToString();
+    EXPECT_EQ(config.transportManagerEndpoint.host, "127.0.0.1");
+    EXPECT_EQ(config.transportManagerEndpoint.port, 4501U);
+    EXPECT_EQ(config.hixlEngineEndpoint.host, "127.0.0.1");
+    EXPECT_EQ(config.hixlEngineEndpoint.port, 5501U);
+    EXPECT_EQ(config.requestQueueDepth, 65536U);
+    EXPECT_EQ(config.requestReceiverIdleWaitUs, 100U);
+    EXPECT_EQ(config.pollerScanBudget, 64U);
+    EXPECT_EQ(config.logLevel, "info");
 }
 
 TEST(DramPoolConfigTest, RejectsInvalidCommandLines)
@@ -221,6 +248,14 @@ TEST(DramPoolConfigTest, RejectsInvalidCommandLines)
         EXPECT_TRUE(status.Failure());
         EXPECT_NE(status.ToString().find("must have the same length"), std::string::npos);
     }
+    {
+        const char* argv[] = {
+            "drampool", "--addr", "127.0.0.1:bad", "--nics", "mlx5_0",
+            "--pool-size-gb", "1", "--kvcache-block-sizes", "4096",
+        };
+        DramPoolConfig config;
+        EXPECT_TRUE(ParseCommandLine(9, const_cast<char**>(argv), config).Failure());
+    }
 }
 
 TEST(DramPoolServerTest, RejectsCallsOutsideValidState)
@@ -230,7 +265,7 @@ TEST(DramPoolServerTest, RejectsCallsOutsideValidState)
 }
 
 #if defined(UCM_DRAMPOOL_RUNTIME_INTEGRATION_TESTS)
-TEST(DramPoolServerTest, StartsTransportAfterWorkersAndStopsReceiverFirst)
+TEST(DramPoolServerTest, StartsTcpMessageChannelAfterWorkersAndStopsIngressFirst)
 {
     ScopedDramPoolConfig configScope(MakeValidConfig());
     DramPoolServer server;
@@ -252,17 +287,19 @@ TEST(DramPoolServerTest, StartsTransportAfterWorkersAndStopsReceiverFirst)
         "InitQueues",
         "InitTransportManager",
         "CreateRuntimeContext",
+        "StartTransportService",
         "StartCompletionPoller",
         "StartTaskWorker",
         "StartGCThread",
         "StartRequestReceiver",
-        "StartTransportService",
+        "StartTcpMessageChannel",
         "SetServiceReady(true)",
     };
     EXPECT_TRUE(ContainsInOrder(events, startupOrder));
 
     const std::vector<std::string> shutdownOrder = {
-        "SetServiceReady(false)",       "StopReceiver",         "StopTaskWorker",
+        "SetServiceReady(false)",       "StopTcpMessageChannel", "StopRequestReceiver",
+        "StopTaskWorker",
         "MarkInflightTransportsFailed", "StopCompletionPoller", "StopGCThread",
         "UnregisterBufferMemory",       "DestroyMetadataIndex",
     };
@@ -286,8 +323,9 @@ TEST(DramPoolServerTest, GcDisabledSkipsGcThreadLifecycleEvents)
     EXPECT_EQ(std::find(events.begin(), events.end(), "StartGCThread"), events.end());
     EXPECT_EQ(std::find(events.begin(), events.end(), "StopGCThread"), events.end());
     EXPECT_TRUE(
-        ContainsInOrder(events, {"StartCompletionPoller", "StartTaskWorker",
-                                 "StartRequestReceiver", "StartTransportService",
+        ContainsInOrder(events, {"StartTransportService", "StartCompletionPoller",
+                                 "StartTaskWorker", "StartRequestReceiver",
+                                 "StartTcpMessageChannel",
                                  "SetServiceReady(true)"}));
 }
 #endif
@@ -315,15 +353,15 @@ TEST(DramPoolDaemonTest, ReturnsForInvalidArguments)
 TEST(DramPoolDaemonTest, RunsUntilSigint)
 {
     const char* argv[] = {
-        "drampool", "--addr", "127.0.0.1:9000", "--nics", "mlx5_0", "--pool-size-gb",
-        "1",        "--kvcache-block-sizes", "4096", "8192", "--ttl-minutes", "120",
+        "drampool", "--addr", "127.0.0.1:19000", "--nics", "mlx5_0", "--pool-size-gb",
+        "1", "--kvcache-block-sizes", "4096", "8192", "--ttl-minutes", "120",
     };
 
     auto result = std::async(std::launch::async, [&argv]() {
-        // Parse command line first, then override transportLocalEngine
         auto status = ParseCommandLine(12, const_cast<char**>(argv), g_config);
         if (status.Failure()) { return 1; }
-        g_config.transportLocalEngine = "127.0.0.1:19002";
+        status = LoadDramPoolRuntimeConfig(RepositoryRuntimeConfigPath().string(), g_config);
+        if (status.Failure()) { return 1; }
 
         // Setup logger
         UC::Logger::Setup("log", 10, 5);

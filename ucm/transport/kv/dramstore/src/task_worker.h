@@ -35,9 +35,9 @@ public:
     explicit TaskWorker(DramPoolRuntime& runtime) : runtime_(runtime) {}
 
     void Run(const std::atomic_bool& stop);
-    UC::Status ProcessOneRequest(RequestTaskPtr task);
 
 private:
+    UC::Status ProcessOneRequest(RequestTaskPtr task);
     UC::Status EnsurePeerReady(const transport::ManagerID& targetManager);
     UC::Status ProcessDump(const KvDumpRequest& request, const transport::ManagerID& peerManagerId);
     UC::Status ProcessLoad(const KvLoadRequest& request, const transport::ManagerID& peerManagerId);
