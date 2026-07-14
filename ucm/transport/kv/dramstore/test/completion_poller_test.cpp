@@ -188,7 +188,6 @@ TEST_F(CompletionPollerTest, ScansOnlyConfiguredHeadWindowAndThenPublishesAll)
     pollerThread.join();
 
     EXPECT_TRUE(allCompleted);
-    EXPECT_EQ(poller.PendingCount(), 0U);
     EXPECT_EQ(testTransport_->ActiveTransferCount(), 0U);
     EXPECT_EQ(metadata_.LookupReady(MakeKey(1), std::chrono::system_clock::now()),
               LookupCode::Ready);

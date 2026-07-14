@@ -21,9 +21,6 @@ public:
     void Run(const std::atomic_bool& stop);
     void RequestDrainAllAsFailed() noexcept;
 
-    std::size_t PendingCount() const noexcept
-    { return pendingCount_.load(std::memory_order_acquire); }
-
 private:
     std::size_t DrainNewHandles();
     bool PollFirstBatch();
@@ -33,7 +30,6 @@ private:
     DramPoolRuntime& runtime_;
     std::deque<InflightRecord> pending_;
     std::atomic_bool failAllRequested_{false};
-    std::atomic_size_t pendingCount_{0};
 };
 
 }  // namespace UC::DRAMPOOL

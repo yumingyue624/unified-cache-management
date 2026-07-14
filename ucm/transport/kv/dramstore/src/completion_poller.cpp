@@ -44,7 +44,6 @@ void CompletionPoller::Run(const std::atomic_bool& stop)
                 std::chrono::microseconds(g_config.pollerIdleWaitUs));
         }
     }
-    pendingCount_.store(pending_.size(), std::memory_order_release);
 }
 
 void CompletionPoller::RequestDrainAllAsFailed() noexcept
@@ -59,7 +58,6 @@ std::size_t CompletionPoller::DrainNewHandles()
         pending_.emplace_back(std::move(record));
         ++drained;
     }
-    pendingCount_.store(pending_.size(), std::memory_order_release);
     return drained;
 }
 
@@ -99,7 +97,6 @@ bool CompletionPoller::PollFirstBatch()
         stateChanged = true;
     }
 
-    pendingCount_.store(pending_.size(), std::memory_order_release);
     return stateChanged;
 }
 
