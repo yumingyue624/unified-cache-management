@@ -32,10 +32,12 @@
 namespace UC::DRAMPOOL {
 namespace {
 
-std::array<std::uint8_t, kKvKeySize> MakeKey(std::uint8_t seed)
+BlockId MakeKey(std::uint8_t seed)
 {
-    std::array<std::uint8_t, kKvKeySize> key{};
-    for (std::size_t i = 0; i < key.size(); ++i) { key[i] = static_cast<std::uint8_t>(seed + i); }
+    BlockId key{};
+    for (std::size_t i = 0; i < key.size(); ++i) {
+        key[i] = static_cast<std::byte>(seed + i);
+    }
     return key;
 }
 
@@ -325,7 +327,7 @@ TEST_F(KvProtocolTest, ServerRoundTripLookup)
 TEST_F(KvProtocolTest, DumpLoadMaxFieldValuesRoundTrip)
 {
     KvLoadEntry entry;
-    entry.key.fill(0xFF);
+    entry.key.fill(std::byte{0xFF});
     entry.addr = 0xFFFFFFFFFFFFFFFFULL;
     entry.len = 0xFFFFFFFFU;
     entry.idx = 0xFFFFFFFFU;

@@ -111,12 +111,10 @@ KvOpcode PeekOpcode(const void* data)
     return static_cast<KvOpcode>(static_cast<const std::uint8_t*>(data)[kOpcodeOffset]);
 }
 
-bool IsAllZeroKey(const std::uint8_t* key)
+bool IsAllZeroKey(const BlockId& key)
 {
-    for (std::size_t i = 0; i < kKvKeySize; ++i) {
-        if (key[i] != 0) { return false; }
-    }
-    return true;
+    return std::all_of(key.begin(), key.end(),
+                       [](std::byte value) { return value == std::byte{}; });
 }
 
 const char* ProtocolName(KvOpcode opcode)
@@ -200,7 +198,7 @@ Status KvDumpProtocol::ValidateRequest(const KvDumpRequest& req) const
 
     for (std::size_t i = 0; i < req.entries.size(); ++i) {
         const auto& entry = req.entries[i];
-        if (IsAllZeroKey(entry.key.data())) {
+        if (IsAllZeroKey(entry.key)) {
             return Status::Error(StatusCode::INVALID_ARGUMENT,
                                  "Dump: entry[" + std::to_string(i) + "] key is all zero");
         }
@@ -252,7 +250,7 @@ Status KvDumpProtocol::UnpackRequest(const void* data, std::size_t size,
     for (std::size_t i = 0; i < req->batch_size; ++i) {
         const std::uint8_t* base = bytes + kKvDumpHeaderSize + i * kKvDumpEntrySize;
         std::memcpy(req->entries[i].key.data(), base + kDumpEntryKeyOffset, kKvKeySize);
-        if (IsAllZeroKey(req->entries[i].key.data())) {
+        if (IsAllZeroKey(req->entries[i].key)) {
             return Status::Error(StatusCode::INVALID_ARGUMENT,
                                  "Dump: entry[" + std::to_string(i) + "] key is all zero");
         }
@@ -335,7 +333,7 @@ Status KvLoadProtocol::ValidateRequest(const KvLoadRequest& req) const
 
     for (std::size_t i = 0; i < req.entries.size(); ++i) {
         const auto& entry = req.entries[i];
-        if (IsAllZeroKey(entry.key.data())) {
+        if (IsAllZeroKey(entry.key)) {
             return Status::Error(StatusCode::INVALID_ARGUMENT,
                                  "Load: entry[" + std::to_string(i) + "] key is all zero");
         }
@@ -386,7 +384,7 @@ Status KvLoadProtocol::UnpackRequest(const void* data, std::size_t size,
     for (std::size_t i = 0; i < req->batch_size; ++i) {
         const std::uint8_t* base = bytes + kKvHeaderSize + i * kKvLoadEntrySize;
         std::memcpy(req->entries[i].key.data(), base + kLoadEntryKeyOffset, kKvKeySize);
-        if (IsAllZeroKey(req->entries[i].key.data())) {
+        if (IsAllZeroKey(req->entries[i].key)) {
             return Status::Error(StatusCode::INVALID_ARGUMENT,
                                  "Load: entry[" + std::to_string(i) + "] key is all zero");
         }
@@ -465,7 +463,7 @@ Status KvLookupProtocol::ValidateRequest(const KvLookupRequest& req) const
     if (!header_status.ok()) { return header_status; }
 
     for (std::size_t i = 0; i < req.entries.size(); ++i) {
-        if (IsAllZeroKey(req.entries[i].key.data())) {
+        if (IsAllZeroKey(req.entries[i].key)) {
             return Status::Error(StatusCode::INVALID_ARGUMENT,
                                  "Lookup: entry[" + std::to_string(i) + "] key is all zero");
         }
@@ -508,7 +506,7 @@ Status KvLookupProtocol::UnpackRequest(const void* data, std::size_t size,
     for (std::size_t i = 0; i < req->batch_size; ++i) {
         const std::uint8_t* base = bytes + kKvHeaderSize + i * kKvLookupEntrySize;
         std::memcpy(req->entries[i].key.data(), base + kLookupEntryKeyOffset, kKvKeySize);
-        if (IsAllZeroKey(req->entries[i].key.data())) {
+        if (IsAllZeroKey(req->entries[i].key)) {
             return Status::Error(StatusCode::INVALID_ARGUMENT,
                                  "Lookup: entry[" + std::to_string(i) + "] key is all zero");
         }

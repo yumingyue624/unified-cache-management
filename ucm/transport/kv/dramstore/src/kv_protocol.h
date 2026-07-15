@@ -31,11 +31,13 @@
 #include <unordered_map>
 #include <vector>
 #include "../../asu/trans/include/asu_transport/types.h"
+#include "type/types.h"
 
 namespace UC::DRAMPOOL {
 
 using Status = UC::ASU::Status;
 using StatusCode = UC::ASU::StatusCode;
+using BlockId = UC::Detail::BlockId;
 
 enum class KvOpcode : std::uint8_t {
     None = 0x0,
@@ -44,7 +46,8 @@ enum class KvOpcode : std::uint8_t {
     Lookup = 0x3,
 };
 
-constexpr std::size_t kKvKeySize = 16;
+constexpr std::size_t kKvKeySize = sizeof(BlockId);
+static_assert(kKvKeySize == 16, "DramPool wire protocol requires a 16-byte BlockId");
 constexpr std::size_t kKvHeaderSize =
     sizeof(std::uint8_t) + sizeof(std::uint64_t) + sizeof(std::uint16_t);
 constexpr std::size_t kKvDumpHeaderSize =
@@ -81,7 +84,7 @@ constexpr std::size_t kLookupEntryKeyOffset = 0;
 
 class KvDumpEntry {
 public:
-    std::array<std::uint8_t, kKvKeySize> key{};
+    BlockId key{};
     std::uint64_t addr{0};
     std::uint32_t len{0};
     std::uint32_t idx{0};
@@ -89,7 +92,7 @@ public:
 
 class KvLoadEntry {
 public:
-    std::array<std::uint8_t, kKvKeySize> key{};
+    BlockId key{};
     std::uint64_t addr{0};
     std::uint32_t len{0};
     std::uint32_t idx{0};
@@ -97,7 +100,7 @@ public:
 
 class KvLookupEntry {
 public:
-    std::array<std::uint8_t, kKvKeySize> key{};
+    BlockId key{};
 };
 
 class KvRequest {
@@ -140,8 +143,8 @@ public:
 // Peek the opcode byte from a packed request buffer (byte 0).
 KvOpcode PeekOpcode(const void* data);
 
-// True if every byte of the 16-byte key is zero.
-bool IsAllZeroKey(const std::uint8_t* key);
+// True if every byte of the block identifier is zero.
+bool IsAllZeroKey(const BlockId& key);
 
 // Human-readable protocol name for log prefixes (Dump/Load/Lookup, "Unknown" otherwise).
 const char* ProtocolName(KvOpcode opcode);

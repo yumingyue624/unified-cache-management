@@ -22,7 +22,6 @@
 #include "task_worker.h"
 #include <algorithm>
 #include <chrono>
-#include <cstring>
 #include <limits>
 #include <thread>
 #include <utility>
@@ -48,15 +47,6 @@ MetadataIndex::TimePoint LifeTimeout(std::uint64_t ttlMs)
 {
     return ttlMs == 0 ? MetadataIndex::TimePoint{}
                       : std::chrono::system_clock::now() + std::chrono::milliseconds(ttlMs);
-}
-
-template <typename WireKey>
-BlockId CopyBlockId(const WireKey& wireKey)
-{
-    static_assert(sizeof(BlockId) == sizeof(WireKey), "wire key and BlockId must have equal size");
-    BlockId key{};
-    std::memcpy(key.data(), wireKey.data(), key.size());
-    return key;
 }
 
 std::uint8_t LoadFailureCode(LoadPinCode /*code*/)
@@ -138,7 +128,7 @@ UC::Status TaskWorker::ProcessDump(const KvDumpRequest& request,
 
     for (std::uint16_t index = 0; index < request.batch_size; ++index) {
         const auto& entry = request.entries[index];
-        const BlockId key = CopyBlockId(entry.key);
+        const BlockId& key = entry.key;
 
         auto allocated = AllocateBuffer(runtime_, entry.len);
         if (!allocated.HasValue()) {
@@ -234,7 +224,7 @@ UC::Status TaskWorker::ProcessLoad(const KvLoadRequest& request,
 
     for (std::uint16_t index = 0; index < request.batch_size; ++index) {
         const auto& entry = request.entries[index];
-        const BlockId key = CopyBlockId(entry.key);
+        const BlockId& key = entry.key;
         auto pin = runtime_.metadata.LookupAndPinLoad(key, now);
         if (pin.code != LoadPinCode::Pinned) {
             results[index] = LoadFailureCode(pin.code);
@@ -295,7 +285,7 @@ UC::Status TaskWorker::ProcessLookup(const KvLookupRequest& request,
     std::vector<std::uint8_t> results(
         request.batch_size, static_cast<std::uint8_t>(LookupResult::NotFound));
     for (std::uint16_t index = 0; index < request.batch_size; ++index) {
-        const BlockId key = CopyBlockId(request.entries[index].key);
+        const BlockId& key = request.entries[index].key;
         const auto code = runtime_.metadata.LookupReady(key, now);
         if (code == LookupCode::Ready) {
             results[index] = static_cast<std::uint8_t>(LookupResult::Exists);

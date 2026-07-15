@@ -15,7 +15,6 @@
 #include "kv_protocol.h"
 #include "status/status.h"
 #include "template/spsc_ring_queue.h"
-#include "type/types.h"
 
 namespace transport {
 class TransportManager;
@@ -27,7 +26,6 @@ class BufferManager;
 
 namespace UC::DRAMPOOL {
 
-using BlockId = UC::Detail::BlockId;
 using RequestPtr = std::unique_ptr<KvRequest>;
 
 // Receiver keeps transport identity beside the parsed KV request.
