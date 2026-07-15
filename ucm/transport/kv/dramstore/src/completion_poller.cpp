@@ -36,7 +36,7 @@ void CompletionPoller::Run(const std::atomic_bool& stop)
         }
 
         const auto drained = DrainNewCompletions();
-        PollPendingTransfers();
+        PollPendingCompletions();
 
         if (stop.load(std::memory_order_acquire) && drained == 0 && pending_.empty()) { break; }
     }
@@ -57,7 +57,7 @@ std::size_t CompletionPoller::DrainNewCompletions()
     return drained;
 }
 
-void CompletionPoller::PollPendingTransfers()
+void CompletionPoller::PollPendingCompletions()
 {
     const std::size_t scanCount =
         std::min(static_cast<std::size_t>(g_config.pollerScanBudget), pending_.size());
@@ -65,12 +65,16 @@ void CompletionPoller::PollPendingTransfers()
 
     // Scan only this head snapshot. Erase never pulls extra work into this round.
     for (std::size_t scanned = 0; scanned < scanCount; ++scanned) {
-        if (iter->stage == CompletionStage::DataTransfer && !ProcessDataTransfer(*iter)) {
-            ++iter;
-            continue;
-        }
-
-        if (iter->stage == CompletionStage::ResponseReady) {
+        switch (iter->stage) {
+        case CompletionStage::DataTransfer:
+            if (!ProcessDataTransfer(*iter)) {
+                ++iter;
+                break;
+            }
+            // Data settlement moves the record to ResponseReady. Submit its response
+            // in this scan instead of deferring it to the next poll round.
+            [[fallthrough]];
+        case CompletionStage::ResponseReady: {
             const auto status = SubmitResponse(*iter);
             if (status.Failure()) {
                 UC_ERROR("CompletionPoller SubmitResponse failed, opcode={}, error={}",
@@ -79,17 +83,20 @@ void CompletionPoller::PollPendingTransfers()
             } else {
                 ++iter;
             }
-            continue;
+            break;
         }
-
-        if (iter->stage != CompletionStage::ResponseTransfer) {
+        case CompletionStage::ResponseTransfer:
+            if (ProcessResponseTransfer(*iter)) {
+                iter = pending_.erase(iter);
+            } else {
+                ++iter;
+            }
+            break;
+        default:
             UC_ERROR("CompletionPoller got invalid completion stage={}",
                      static_cast<int>(iter->stage));
             iter = pending_.erase(iter);
-        } else if (ProcessResponseTransfer(*iter)) {
-            iter = pending_.erase(iter);
-        } else {
-            ++iter;
+            break;
         }
     }
 }
