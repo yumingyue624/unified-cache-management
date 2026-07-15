@@ -128,7 +128,6 @@ UC::Status TaskWorker::ProcessDump(const KvDumpRequest& request,
 
     for (std::uint16_t index = 0; index < request.batch_size; ++index) {
         const auto& entry = request.entries[index];
-        const BlockId& key = entry.key;
 
         auto allocated = AllocateBuffer(runtime_, entry.len);
         if (!allocated.HasValue()) {
@@ -146,7 +145,7 @@ UC::Status TaskWorker::ProcessDump(const KvDumpRequest& request,
         }
 
         auto metadataEntry = std::make_shared<UC::DramStore::Entry>();
-        metadataEntry->key = key;
+        metadataEntry->key = entry.key;
         metadataEntry->slot = static_cast<std::uint32_t>(slot.handle.value);
         metadataEntry->addr = reinterpret_cast<void*>(slot.addr);
         metadataEntry->size = entry.len;
@@ -174,7 +173,7 @@ UC::Status TaskWorker::ProcessDump(const KvDumpRequest& request,
         }
 
         // A RESERVED entry owns this buffer until Poller publishes or aborts it.
-        transfer_items.emplace_back(TransferItem{index, key, slot.handle});
+        transfer_items.emplace_back(TransferItem{index, entry.key, slot.handle});
         operation.ops.emplace_back(
             transport::Segment{reinterpret_cast<void*>(slot.addr), entry.addr, entry.len});
     }
@@ -224,8 +223,7 @@ UC::Status TaskWorker::ProcessLoad(const KvLoadRequest& request,
 
     for (std::uint16_t index = 0; index < request.batch_size; ++index) {
         const auto& entry = request.entries[index];
-        const BlockId& key = entry.key;
-        auto pin = runtime_.metadata.LookupAndPinLoad(key, now);
+        auto pin = runtime_.metadata.LookupAndPinLoad(entry.key, now);
         if (pin.code != LoadPinCode::Pinned) {
             results[index] = LoadFailureCode(pin.code);
             UC_ERROR("Load[{}] LookupAndPinLoad failed, code={}", index,
@@ -233,7 +231,7 @@ UC::Status TaskWorker::ProcessLoad(const KvLoadRequest& request,
             continue;
         }
         if (entry.len > pin.len) {
-            const auto releaseStatus = runtime_.metadata.ReleaseLoadIo(key);
+            const auto releaseStatus = runtime_.metadata.ReleaseLoadIo(entry.key);
             if (releaseStatus.Failure()) {
                 UC_ERROR("Load[{}] ReleaseLoadIo after len mismatch failed: {}", index,
                          releaseStatus);
@@ -244,7 +242,7 @@ UC::Status TaskWorker::ProcessLoad(const KvLoadRequest& request,
         }
 
         // The LOAD pin keeps metadata and buffer alive through async transport.
-        transfer_items.emplace_back(TransferItem{index, key, pin.buffer_handle});
+        transfer_items.emplace_back(TransferItem{index, entry.key, pin.buffer_handle});
         operation.ops.emplace_back(
             transport::Segment{reinterpret_cast<void*>(pin.local_addr), entry.addr, entry.len});
     }
@@ -285,8 +283,7 @@ UC::Status TaskWorker::ProcessLookup(const KvLookupRequest& request,
     std::vector<std::uint8_t> results(
         request.batch_size, static_cast<std::uint8_t>(LookupResult::NotFound));
     for (std::uint16_t index = 0; index < request.batch_size; ++index) {
-        const BlockId& key = request.entries[index].key;
-        const auto code = runtime_.metadata.LookupReady(key, now);
+        const auto code = runtime_.metadata.LookupReady(request.entries[index].key, now);
         if (code == LookupCode::Ready) {
             results[index] = static_cast<std::uint8_t>(LookupResult::Exists);
         }
