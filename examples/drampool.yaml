@@ -1,0 +1,37 @@
+# DramPool runtime configuration.
+#
+# Launch parameters stay on the command line:
+#   --addr, --nics, --pool-size-gb, --kvcache-block-sizes,
+#   --kvcache-block-proportions, and --ttl-minutes.
+
+transport:
+  # Internal TransportManager metadata endpoint; distinct from --addr.
+  manager_addr: "127.0.0.1:4501"
+  # HIXL engine endpoint for RDMA data transfer.
+  local_engine: "127.0.0.1:5501"
+  device_id: 0
+
+queue:
+  request_depth: 65536
+  completion_depth: 65536
+
+request_receiver:
+  idle_wait_us: 100
+
+poller:
+  drain_budget: 64
+  scan_budget: 64
+  max_pending: 1048576
+
+gc:
+  enabled: true
+  interval_ms: 1000
+
+operation:
+  timeout_ms: 5000
+
+logger:
+  level: info
+  dir: ./logs
+  max_files: 10
+  max_size_mb: 5
