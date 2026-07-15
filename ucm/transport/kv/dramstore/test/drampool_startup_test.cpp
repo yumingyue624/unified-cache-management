@@ -154,6 +154,7 @@ TEST(DramPoolRuntimeConfigTest, LoadsRepositoryExample)
     EXPECT_EQ(config.hixlEngineEndpoint.host, "127.0.0.1");
     EXPECT_EQ(config.hixlEngineEndpoint.port, 5501U);
     EXPECT_EQ(config.requestQueueDepth, 65536U);
+    EXPECT_EQ(config.completionQueueDepth, 65536U);
     EXPECT_EQ(config.requestReceiverIdleWaitUs, 100U);
     EXPECT_EQ(config.pollerScanBudget, 64U);
     EXPECT_EQ(config.logLevel, "info");

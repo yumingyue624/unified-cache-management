@@ -211,7 +211,7 @@ UC::Status DramPoolServer::InitProtocol()
 UC::Status DramPoolServer::InitQueues()
 {
     requestQueue_.Setup(g_config.requestQueueDepth);
-    completionQueue_.Setup(g_config.handleQueueDepth);
+    completionQueue_.Setup(g_config.completionQueueDepth);
     return UC::Status::OK();
 }
 

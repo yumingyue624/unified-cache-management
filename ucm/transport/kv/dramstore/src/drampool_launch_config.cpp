@@ -350,11 +350,6 @@ UC::Status ParseCommandLine(int argc, char** argv, DramPoolConfig& config)
             status = ValidateBlockSizes(config.poolBlockSizes);
             if (status.Failure()) { return status; }
             hasBlockSizes = true;
-            if (hasBlockProportions) {
-                status = ValidateBlockClassCount(config.poolBlockSizes,
-                                                 config.poolBlockProportions);
-                if (status.Failure()) { return status; }
-            }
             continue;
         }
         if (option == "--kvcache-block-proportions") {
@@ -369,11 +364,6 @@ UC::Status ParseCommandLine(int argc, char** argv, DramPoolConfig& config)
             status = ValidateBlockProportions(config.poolBlockProportions);
             if (status.Failure()) { return status; }
             hasBlockProportions = true;
-            if (hasBlockSizes) {
-                status = ValidateBlockClassCount(config.poolBlockSizes,
-                                                 config.poolBlockProportions);
-                if (status.Failure()) { return status; }
-            }
             continue;
         }
         if (option == "--ttl-minutes") {
@@ -406,6 +396,11 @@ UC::Status ParseCommandLine(int argc, char** argv, DramPoolConfig& config)
     if (!hasBlockProportions) {
         // Each configured block size receives an equal capacity share by default.
         config.poolBlockProportions.assign(config.poolBlockSizes.size(), 1);
+    }
+    if (const auto status = ValidateBlockClassCount(config.poolBlockSizes,
+                                                    config.poolBlockProportions);
+        status.Failure()) {
+        return status;
     }
     // Options are order-independent; all pool inputs are complete only here.
     if (const auto status = CalculatePoolSlotCounts(config); status.Failure()) {

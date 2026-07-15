@@ -6,9 +6,9 @@ set(DRAMPOOL_BUFFER_MANAGER_SOURCE_DIR
 add_library(drampool_core STATIC
     src/completion_poller.cpp
     src/drampool_buffer.cpp
-    src/drampool_config.cpp
+    src/drampool_launch_config.cpp
     src/drampool_daemon.cpp
-    src/drampool_runtime_config.cpp
+    src/drampool_yaml_config.cpp
     src/drampool_server.cpp
     src/kv_protocol.cpp
     src/task_worker.cpp

@@ -60,7 +60,8 @@ struct DramPoolConfig {
 
     // Bounded handoff from RequestReceiveLoop to TaskWorker.
     std::uint32_t requestQueueDepth{65536};
-    std::uint32_t handleQueueDepth{65536};
+    // Bounded handoff from TaskWorker to CompletionPoller.
+    std::uint32_t completionQueueDepth{65536};
     std::uint32_t requestReceiverIdleWaitUs{100};
 
     std::uint32_t pollerDrainBudget{kDefaultPollerDrainBudget};

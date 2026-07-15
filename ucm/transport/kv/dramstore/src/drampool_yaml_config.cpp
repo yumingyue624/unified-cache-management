@@ -47,7 +47,7 @@ constexpr const char* kRequiredRuntimeConfigKeys[] = {
     "transport.local_engine",
     "transport.device_id",
     "queue.request_depth",
-    "queue.handle_depth",
+    "queue.completion_depth",
     "request_receiver.idle_wait_us",
     "poller.drain_budget",
     "poller.scan_budget",
@@ -181,8 +181,8 @@ UC::Status ApplyRuntimeConfigValue(DramPoolConfig& config, const std::string& ke
     if (key == "queue.request_depth") {
         return ParseUint32Value(key, value, config.requestQueueDepth);
     }
-    if (key == "queue.handle_depth") {
-        return ParseUint32Value(key, value, config.handleQueueDepth);
+    if (key == "queue.completion_depth") {
+        return ParseUint32Value(key, value, config.completionQueueDepth);
     }
     if (key == "request_receiver.idle_wait_us") {
         return ParseUint32Value(key, value, config.requestReceiverIdleWaitUs);
@@ -222,12 +222,6 @@ UC::Status ApplyRuntimeConfigValue(DramPoolConfig& config, const std::string& ke
 
 UC::Status ValidateRuntimeConfig(const DramPoolConfig& config)
 {
-    if (config.transportManagerEndpoint.host.empty() || config.transportManagerEndpoint.port == 0) {
-        return UC::Status::InvalidParam("transport.manager_addr must be <IP>:<PORT>");
-    }
-    if (config.hixlEngineEndpoint.host.empty() || config.hixlEngineEndpoint.port == 0) {
-        return UC::Status::InvalidParam("transport.local_engine must be <IP>:<PORT>");
-    }
     if (config.addr.host == config.transportManagerEndpoint.host &&
         config.addr.port == config.transportManagerEndpoint.port) {
         return UC::Status::InvalidParam("--addr and transport.manager_addr must differ");
@@ -235,7 +229,7 @@ UC::Status ValidateRuntimeConfig(const DramPoolConfig& config)
     if (config.transportDeviceId < 0) {
         return UC::Status::InvalidParam("transport.device_id must not be negative");
     }
-    if (config.requestQueueDepth < 2 || config.handleQueueDepth < 2) {
+    if (config.requestQueueDepth < 2 || config.completionQueueDepth < 2) {
         return UC::Status::InvalidParam("queue depths must be at least 2");
     }
     if (config.requestReceiverIdleWaitUs == 0) {
