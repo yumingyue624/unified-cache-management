@@ -65,8 +65,7 @@ void CompletionPoller::PollPendingTransfers()
 
     // Scan only this head snapshot. Erase never pulls extra work into this round.
     for (std::size_t scanned = 0; scanned < scanCount; ++scanned) {
-        if (iter->stage == CompletionStage::DataTransfer) {
-            ProcessDataTransfer(*iter);
+        if (iter->stage == CompletionStage::DataTransfer && !ProcessDataTransfer(*iter)) {
             ++iter;
             continue;
         }
@@ -95,7 +94,7 @@ void CompletionPoller::PollPendingTransfers()
     }
 }
 
-void CompletionPoller::ProcessDataTransfer(CompletionRecord& record)
+bool CompletionPoller::ProcessDataTransfer(CompletionRecord& record)
 {
     transport::TransferStatus transportStatus = transport::TransferStatus::Failed;
     const auto queryStatus = runtime_.transport.GetStatus(record.data_handle, transportStatus);
@@ -105,7 +104,7 @@ void CompletionPoller::ProcessDataTransfer(CompletionRecord& record)
         SettleDataTransfer(record, transport::TransferStatus::Failed);
         record.data_handle = transport::kInvalidTransferHandle;
         record.stage = CompletionStage::ResponseReady;
-        return;
+        return true;
     }
 
     if (transportStatus == transport::TransferStatus::Waiting) {
@@ -117,7 +116,7 @@ void CompletionPoller::ProcessDataTransfer(CompletionRecord& record)
             OperationTimedOut(record, SteadyNowMs())) {
             record.phase = InflightPhase::FailurePending;
         }
-        return;
+        return false;
     }
 
     if (record.phase == InflightPhase::FailurePending) {
@@ -127,6 +126,7 @@ void CompletionPoller::ProcessDataTransfer(CompletionRecord& record)
     SettleDataTransfer(record, transportStatus);
     record.data_handle = transport::kInvalidTransferHandle;
     record.stage = CompletionStage::ResponseReady;
+    return true;
 }
 
 UC::Status CompletionPoller::SubmitResponse(CompletionRecord& record)

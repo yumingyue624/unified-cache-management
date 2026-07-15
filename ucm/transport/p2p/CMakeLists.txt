@@ -26,6 +26,7 @@ set(P2P_TRANSPORT_SOURCES
     src/one_sided/common/metadata_codec.cpp
     src/one_sided/control/metadata_channel.cpp
     src/one_sided/core/transport_manager.cpp
+    src/two_sided/tcp/tcp_message_channel.cpp
 )
 
 set(P2P_PRIVATE_INCLUDE_DIRS ${CMAKE_CURRENT_SOURCE_DIR}/src/one_sided
@@ -75,6 +76,7 @@ add_library(p2p_transport STATIC ${P2P_TRANSPORT_SOURCES})
 target_include_directories(p2p_transport
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include/one_sided
+        ${CMAKE_CURRENT_SOURCE_DIR}/include
     PRIVATE
         ${P2P_PRIVATE_INCLUDE_DIRS}
 )
