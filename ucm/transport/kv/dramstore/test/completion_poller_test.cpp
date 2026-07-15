@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <functional>
 #include <gtest/gtest.h>
 #include <memory>
@@ -14,6 +15,7 @@
 #include "core/transport_manager.h"
 #include "drampool_buffer.h"
 #include "drampool_config.h"
+#include "task_worker.h"
 #include "test_transport.h"
 
 namespace UC::DRAMPOOL {
@@ -124,7 +126,7 @@ protected:
         EXPECT_EQ(manager_.ExecuteAsync(operation, handleOut), transport::Status::Ok);
 
         std::vector<TransferItem> items{TransferItem{0, entry->key, slot.handle}};
-        std::vector<std::uint32_t> results{static_cast<std::uint32_t>(ResultCode::Failed)};
+        std::vector<std::uint8_t> results{static_cast<std::uint8_t>(ResultCode::Failed)};
 
         CompletionRecord record;
         record.stage = CompletionStage::DataTransfer;
@@ -282,7 +284,7 @@ TEST_F(CompletionPollerTest, SendsResponseReadyRecordWithoutBlocking)
     record.opcode = KvOpcode::Lookup;
     record.response_addr = 110;
     record.peer_manager_id = kTargetManager;
-    record.results = {3};
+    record.results = {1, 0, 1, 1, 0, 0, 0, 1, 1};
     ingress_.Push(std::move(record));
 
     CompletionPoller poller(*runtime_);
@@ -293,6 +295,7 @@ TEST_F(CompletionPollerTest, SendsResponseReadyRecordWithoutBlocking)
     const auto responseHandle = testTransport_->LatestTransferHandle();
     ASSERT_NE(responseHandle, transport::kInvalidTransferHandle);
     EXPECT_EQ(testTransport_->SyncExecutionCount(), 0U);
+    EXPECT_EQ(testTransport_->LatestOperationLength(), 2U);
     EXPECT_EQ(testTransport_->ActiveMemoryCount(), 1U);
 
     ASSERT_TRUE(
@@ -306,6 +309,50 @@ TEST_F(CompletionPollerTest, SendsResponseReadyRecordWithoutBlocking)
     pollerThread.join();
 
     EXPECT_TRUE(responseReleased);
+}
+
+TEST_F(CompletionPollerTest, LookupReturnsOneResultForEveryKey)
+{
+    const auto publish = [this](std::uint8_t suffix, std::uint64_t handleValue) {
+        auto entry = std::make_shared<UC::DramStore::Entry>();
+        entry->key = MakeKey(suffix);
+        entry->lifeTimeout = std::chrono::system_clock::now() + std::chrono::hours(1);
+        const BufferHandle handle{handleValue, 0, transport::kInvalidMemoryHandle};
+        ASSERT_EQ(metadata_.ReserveDumpEntry(entry, handle).code,
+                  ReserveDumpCode::Reserved);
+        ASSERT_TRUE(metadata_.PublishDump(entry->key).Success());
+    };
+    publish(1, 101);
+    publish(3, 103);
+
+    auto request = std::make_unique<KvLookupRequest>();
+    request->opcode = KvOpcode::Lookup;
+    request->resp_addr = 120;
+    request->batch_size = 3;
+    request->entries.resize(3);
+    for (std::uint8_t index = 0; index < 3; ++index) {
+        const auto key = MakeKey(static_cast<std::uint8_t>(index + 1));
+        std::memcpy(request->entries[index].key.data(), key.data(), key.size());
+    }
+
+    auto task = std::make_unique<RequestTask>();
+    task->request = std::move(request);
+    task->peer_manager_id = kTargetManager;
+    requestQueue_.Push(std::move(task));
+
+    TaskWorker worker(*runtime_);
+    std::atomic_bool stop{false};
+    std::thread workerThread([&]() { worker.Run(stop); });
+
+    CompletionRecord record;
+    const bool completed = WaitUntil([&]() { return ingress_.TryPop(record); });
+    stop.store(true, std::memory_order_release);
+    workerThread.join();
+
+    ASSERT_TRUE(completed);
+    EXPECT_EQ(record.stage, CompletionStage::ResponseReady);
+    EXPECT_EQ(record.opcode, KvOpcode::Lookup);
+    EXPECT_EQ(record.results, (std::vector<std::uint8_t>{1, 0, 1}));
 }
 
 }  // namespace

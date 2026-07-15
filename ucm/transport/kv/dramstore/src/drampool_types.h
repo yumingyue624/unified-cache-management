@@ -72,10 +72,18 @@ struct TransferItem {
     BufferHandle buffer_handle;
 };
 
-enum class ResultCode : std::uint32_t {
+enum class ResultCode : std::uint8_t {
     Ok = 0,
     Failed = 1,
 };
+
+enum class LookupResult : std::uint8_t {
+    NotFound = 0,
+    Exists = 1,
+};
+
+static_assert(static_cast<std::uint8_t>(ResultCode::Failed) <= 0x0FU,
+              "Dump/Load result codes must fit in 4 bits");
 
 enum class InflightPhase : std::uint8_t {
     Polling = 0,
@@ -102,7 +110,7 @@ struct CompletionRecord {
     KvOpcode opcode{KvOpcode::None};
     std::uint64_t response_addr{0};
     transport::ManagerID peer_manager_id;
-    std::vector<std::uint32_t> results;
+    std::vector<std::uint8_t> results;
 
     // Ownership held from response submission until its handle reaches terminal.
     TransportHandle response_handle{transport::kInvalidTransferHandle};

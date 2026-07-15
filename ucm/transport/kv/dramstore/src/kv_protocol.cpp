@@ -22,10 +22,85 @@
  * SOFTWARE.
  * */
 #include "kv_protocol.h"
+#include <algorithm>
 #include <cstring>
 #include <string>
 
 namespace UC::DRAMPOOL {
+namespace {
+
+Status Pack4BitResults(void* data, const std::vector<std::uint8_t>& results,
+                       const char* protocol)
+{
+    for (std::size_t index = 0; index < results.size(); ++index) {
+        if (results[index] > 0x0FU) {
+            return Status::Error(StatusCode::INVALID_ARGUMENT,
+                                 std::string{protocol} + ": result[" +
+                                     std::to_string(index) + "] exceeds 4 bits");
+        }
+    }
+
+    auto* packed = static_cast<std::uint8_t*>(data);
+    for (std::size_t byteIndex = 0; byteIndex < Packed4BitResultSize(results.size());
+         ++byteIndex) {
+        const std::size_t first = byteIndex * 2U;
+        std::uint8_t value = results[first];
+        if (first + 1U < results.size()) {
+            value = static_cast<std::uint8_t>(value | (results[first + 1U] << 4U));
+        }
+        packed[byteIndex] = value;
+    }
+    return Status::OK();
+}
+
+void Unpack4BitResults(const void* data, std::size_t resultCount,
+                       std::vector<std::uint8_t>& results)
+{
+    const auto* packed = static_cast<const std::uint8_t*>(data);
+    results.resize(resultCount);
+    for (std::size_t index = 0; index < resultCount; ++index) {
+        results[index] =
+            static_cast<std::uint8_t>((packed[index / 2U] >> ((index % 2U) * 4U)) & 0x0FU);
+    }
+}
+
+Status Pack1BitResults(void* data, const std::vector<std::uint8_t>& results,
+                       const char* protocol)
+{
+    for (std::size_t index = 0; index < results.size(); ++index) {
+        if (results[index] > 1U) {
+            return Status::Error(StatusCode::INVALID_ARGUMENT,
+                                 std::string{protocol} + ": result[" +
+                                     std::to_string(index) + "] exceeds 1 bit");
+        }
+    }
+
+    auto* packed = static_cast<std::uint8_t*>(data);
+    for (std::size_t byteIndex = 0; byteIndex < Packed1BitResultSize(results.size());
+         ++byteIndex) {
+        std::uint8_t value = 0;
+        const std::size_t first = byteIndex * 8U;
+        const std::size_t end = std::min(first + 8U, results.size());
+        for (std::size_t index = first; index < end; ++index) {
+            value = static_cast<std::uint8_t>(value | (results[index] << (index - first)));
+        }
+        packed[byteIndex] = value;
+    }
+    return Status::OK();
+}
+
+void Unpack1BitResults(const void* data, std::size_t resultCount,
+                       std::vector<std::uint8_t>& results)
+{
+    const auto* packed = static_cast<const std::uint8_t*>(data);
+    results.resize(resultCount);
+    for (std::size_t index = 0; index < resultCount; ++index) {
+        results[index] =
+            static_cast<std::uint8_t>((packed[index / 8U] >> (index % 8U)) & 0x01U);
+    }
+}
+
+}  // namespace
 
 // ---------------------------------------------------------------------------
 // Free helpers
@@ -82,6 +157,9 @@ std::size_t KvDumpProtocol::PackedSize(const KvRequest& req) const
     return kKvDumpHeaderSize + static_cast<std::size_t>(r.batch_size) * kKvDumpEntrySize;
 }
 
+std::size_t KvDumpProtocol::PackedResponseSize(std::size_t result_count) const
+{ return Packed4BitResultSize(result_count); }
+
 Status KvDumpProtocol::PackRequest(const KvRequest& req, void* target)
 {
     const auto& r = static_cast<const KvDumpRequest&>(req);
@@ -108,9 +186,7 @@ Status KvDumpProtocol::UnpackResponse(const void* data, std::uint16_t result_cou
     if (!data) {
         return Status::Error(StatusCode::INVALID_ARGUMENT, "Dump: UnpackResponse data is null");
     }
-    out.results.resize(result_count);
-    std::memcpy(out.results.data(), data,
-                static_cast<std::size_t>(result_count) * sizeof(std::uint32_t));
+    Unpack4BitResults(data, result_count, out.results);
     return Status::OK();
 }
 
@@ -201,8 +277,7 @@ Status KvDumpProtocol::PackResponse(void* data, const KvResponse& resp) const
     if (!data) {
         return Status::Error(StatusCode::INVALID_ARGUMENT, "Dump: PackResponse data is null");
     }
-    std::memcpy(data, resp.results.data(), resp.results.size() * sizeof(std::uint32_t));
-    return Status::OK();
+    return Pack4BitResults(data, resp.results, "Dump");
 }
 
 // ===========================================================================
@@ -216,6 +291,9 @@ std::size_t KvLoadProtocol::PackedSize(const KvRequest& req) const
     const auto& r = static_cast<const KvLoadRequest&>(req);
     return kKvHeaderSize + static_cast<std::size_t>(r.batch_size) * kKvLoadEntrySize;
 }
+
+std::size_t KvLoadProtocol::PackedResponseSize(std::size_t result_count) const
+{ return Packed4BitResultSize(result_count); }
 
 Status KvLoadProtocol::PackRequest(const KvRequest& req, void* target)
 {
@@ -243,9 +321,7 @@ Status KvLoadProtocol::UnpackResponse(const void* data, std::uint16_t result_cou
     if (!data) {
         return Status::Error(StatusCode::INVALID_ARGUMENT, "Load: UnpackResponse data is null");
     }
-    out.results.resize(result_count);
-    std::memcpy(out.results.data(), data,
-                static_cast<std::size_t>(result_count) * sizeof(std::uint32_t));
+    Unpack4BitResults(data, result_count, out.results);
     return Status::OK();
 }
 
@@ -335,8 +411,7 @@ Status KvLoadProtocol::PackResponse(void* data, const KvResponse& resp) const
     if (!data) {
         return Status::Error(StatusCode::INVALID_ARGUMENT, "Load: PackResponse data is null");
     }
-    std::memcpy(data, resp.results.data(), resp.results.size() * sizeof(std::uint32_t));
-    return Status::OK();
+    return Pack4BitResults(data, resp.results, "Load");
 }
 
 // ===========================================================================
@@ -350,6 +425,9 @@ std::size_t KvLookupProtocol::PackedSize(const KvRequest& req) const
     const auto& r = static_cast<const KvLookupRequest&>(req);
     return kKvHeaderSize + static_cast<std::size_t>(r.batch_size) * kKvLookupEntrySize;
 }
+
+std::size_t KvLookupProtocol::PackedResponseSize(std::size_t result_count) const
+{ return Packed1BitResultSize(result_count); }
 
 Status KvLookupProtocol::PackRequest(const KvRequest& req, void* target)
 {
@@ -371,15 +449,10 @@ Status KvLookupProtocol::PackRequest(const KvRequest& req, void* target)
 Status KvLookupProtocol::UnpackResponse(const void* data, std::uint16_t result_count,
                                         KvResponse& out) const
 {
-    if (result_count != 1) {
-        return Status::Error(StatusCode::INVALID_ARGUMENT,
-                             "Lookup: result_count must be 1, got " + std::to_string(result_count));
-    }
     if (!data) {
         return Status::Error(StatusCode::INVALID_ARGUMENT, "Lookup: UnpackResponse data is null");
     }
-    out.results.resize(result_count);
-    std::memcpy(out.results.data(), data, result_count * sizeof(std::uint32_t));
+    Unpack1BitResults(data, result_count, out.results);
     return Status::OK();
 }
 
@@ -449,13 +522,12 @@ Status KvLookupProtocol::PackResponse(void* data, const KvResponse& resp) const
     if (!data) {
         return Status::Error(StatusCode::INVALID_ARGUMENT, "Lookup: PackResponse data is null");
     }
-    if (resp.results.size() != 1) {
+    if (resp.results.empty()) {
         return Status::Error(
             StatusCode::INVALID_ARGUMENT,
-            "Lookup: results.size()(" + std::to_string(resp.results.size()) + ") must be 1");
+            "Lookup: results must not be empty");
     }
-    std::memcpy(data, resp.results.data(), sizeof(std::uint32_t));
-    return Status::OK();
+    return Pack1BitResults(data, resp.results, "Lookup");
 }
 
 // ===========================================================================
@@ -482,6 +554,13 @@ std::size_t ProtocolManager::GetPackedSize(KvOpcode opcode, const KvRequest& req
     KvProtocol* proto = GetProtocol(opcode);
     if (!proto) { return 0; }
     return proto->PackedSize(req);
+}
+
+std::size_t ProtocolManager::GetPackedResponseSize(KvOpcode opcode,
+                                                   std::size_t result_count) const
+{
+    auto* proto = GetProtocol(opcode);
+    return proto ? proto->PackedResponseSize(result_count) : 0;
 }
 
 Status ProtocolManager::PackRequest(void* data, KvOpcode opcode, const KvRequest& req)

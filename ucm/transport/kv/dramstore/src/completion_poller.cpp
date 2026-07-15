@@ -6,6 +6,7 @@
 #include "completion_poller.h"
 #include <algorithm>
 #include <chrono>
+#include <limits>
 #include <utility>
 #include "core/transport_manager.h"
 #include "drampool_buffer.h"
@@ -142,7 +143,12 @@ UC::Status CompletionPoller::SubmitResponse(CompletionRecord& record)
         return UC::Status::InvalidParam("response peer_manager_id is empty");
     }
 
-    const auto len = static_cast<std::uint32_t>(record.results.size() * sizeof(std::uint32_t));
+    const auto packedSize =
+        runtime_.protocol.GetPackedResponseSize(record.opcode, record.results.size());
+    if (packedSize == 0 || packedSize > std::numeric_limits<std::uint32_t>::max()) {
+        return UC::Status::InvalidParam("invalid packed response size");
+    }
+    const auto len = static_cast<std::uint32_t>(packedSize);
     auto allocated = AllocateBuffer(runtime_, len);
     if (!allocated.HasValue()) { return allocated.Error(); }
     auto slot = std::move(allocated).Value();
@@ -257,7 +263,7 @@ void CompletionPoller::SettleDataTransfer(CompletionRecord& record,
                      record.data_handle, item.index_in_request);
             continue;
         }
-        record.results[item.index_in_request] = static_cast<std::uint32_t>(result);
+        record.results[item.index_in_request] = static_cast<std::uint8_t>(result);
     }
     record.transfer_items.clear();
 }

@@ -59,8 +59,8 @@ BlockId CopyBlockId(const WireKey& wireKey)
     return key;
 }
 
-std::uint32_t LoadFailureCode(LoadPinCode /*code*/)
-{ return static_cast<std::uint32_t>(ResultCode::Failed); }
+std::uint8_t LoadFailureCode(LoadPinCode /*code*/)
+{ return static_cast<std::uint8_t>(ResultCode::Failed); }
 
 }  // namespace
 
@@ -122,11 +122,11 @@ UC::Status TaskWorker::ProcessDump(const KvDumpRequest& request,
     const std::uint64_t ttl_ms = request.ttl != 0 ? static_cast<std::uint64_t>(request.ttl)
                                                   : g_config.defaultDumpTtlMs;
     const auto lifeTimeout = LifeTimeout(ttl_ms);
-    std::vector<std::uint32_t> results(request.batch_size,
-                                       static_cast<std::uint32_t>(ResultCode::Ok));
+    std::vector<std::uint8_t> results(request.batch_size,
+                                      static_cast<std::uint8_t>(ResultCode::Ok));
     const auto mark_remaining_failed = [&results](std::size_t first) {
         std::fill(results.begin() + first, results.end(),
-                  static_cast<std::uint32_t>(ResultCode::Failed));
+                  static_cast<std::uint8_t>(ResultCode::Failed));
     };
     std::vector<TransferItem> transfer_items;
     transfer_items.reserve(request.entries.size());
@@ -169,7 +169,7 @@ UC::Status TaskWorker::ProcessDump(const KvDumpRequest& request,
             if (freeStatus.Failure()) {
                 UC_ERROR("Dump[{}] Free duplicate allocation failed: {}", index, freeStatus);
             }
-            results[index] = static_cast<std::uint32_t>(ResultCode::Ok);
+            results[index] = static_cast<std::uint8_t>(ResultCode::Ok);
             continue;
         }
         if (reserve.code != ReserveDumpCode::Reserved) {
@@ -200,7 +200,7 @@ UC::Status TaskWorker::ProcessDump(const KvDumpRequest& request,
         UC_ERROR("Dump SubmitAsync failed, items={}", transfer_items.size());
         RollbackDumpItems(transfer_items);
         for (const auto& item : transfer_items) {
-            results[item.index_in_request] = static_cast<std::uint32_t>(ResultCode::Failed);
+            results[item.index_in_request] = static_cast<std::uint8_t>(ResultCode::Failed);
         }
         return QueueResponse(KvOpcode::Dump, request.resp_addr, peerManagerId,
                              std::move(results));
@@ -222,8 +222,8 @@ UC::Status TaskWorker::ProcessLoad(const KvLoadRequest& request,
                                    const transport::ManagerID& peerManagerId)
 {
     const auto now = std::chrono::system_clock::now();
-    std::vector<std::uint32_t> results(request.batch_size,
-                                       static_cast<std::uint32_t>(ResultCode::Ok));
+    std::vector<std::uint8_t> results(request.batch_size,
+                                      static_cast<std::uint8_t>(ResultCode::Ok));
     std::vector<TransferItem> transfer_items;
     transfer_items.reserve(request.entries.size());
     transport::Operation operation;
@@ -249,7 +249,7 @@ UC::Status TaskWorker::ProcessLoad(const KvLoadRequest& request,
                          releaseStatus);
             }
             UC_ERROR("Load[{}] len mismatch, entry.len={} > pin.len={}", index, entry.len, pin.len);
-            results[index] = static_cast<std::uint32_t>(ResultCode::Failed);
+            results[index] = static_cast<std::uint8_t>(ResultCode::Failed);
             continue;
         }
 
@@ -270,7 +270,7 @@ UC::Status TaskWorker::ProcessLoad(const KvLoadRequest& request,
         UC_ERROR("Load SubmitAsync failed, items={}", transfer_items.size());
         UnpinLoadItems(transfer_items);
         for (const auto& item : transfer_items) {
-            results[item.index_in_request] = static_cast<std::uint32_t>(ResultCode::Failed);
+            results[item.index_in_request] = static_cast<std::uint8_t>(ResultCode::Failed);
         }
         return QueueResponse(KvOpcode::Load, request.resp_addr, peerManagerId,
                              std::move(results));
@@ -292,18 +292,18 @@ UC::Status TaskWorker::ProcessLookup(const KvLookupRequest& request,
                                      const transport::ManagerID& peerManagerId)
 {
     const auto now = std::chrono::system_clock::now();
-    std::uint32_t prefix_count = 0;
+    std::vector<std::uint8_t> results(
+        request.batch_size, static_cast<std::uint8_t>(LookupResult::NotFound));
     for (std::uint16_t index = 0; index < request.batch_size; ++index) {
         const BlockId key = CopyBlockId(request.entries[index].key);
         const auto code = runtime_.metadata.LookupReady(key, now);
         if (code == LookupCode::Ready) {
-            ++prefix_count;
-            continue;
+            results[index] = static_cast<std::uint8_t>(LookupResult::Exists);
         }
-        break;
     }
 
-    return QueueResponse(KvOpcode::Lookup, request.resp_addr, peerManagerId, {prefix_count});
+    return QueueResponse(KvOpcode::Lookup, request.resp_addr, peerManagerId,
+                         std::move(results));
 }
 
 void TaskWorker::RollbackDumpItems(const std::vector<TransferItem>& items)
@@ -330,7 +330,7 @@ void TaskWorker::UnpinLoadItems(const std::vector<TransferItem>& items)
 
 UC::Status TaskWorker::QueueResponse(KvOpcode opcode, std::uint64_t responseAddr,
                                      const transport::ManagerID& peerManagerId,
-                                     std::vector<std::uint32_t>&& results)
+                                     std::vector<std::uint8_t>&& results)
 {
     CompletionRecord record;
     record.stage = CompletionStage::ResponseReady;

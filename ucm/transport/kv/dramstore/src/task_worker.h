@@ -48,7 +48,7 @@ private:
     void UnpinLoadItems(const std::vector<TransferItem>& items);
     UC::Status QueueResponse(KvOpcode opcode, std::uint64_t responseAddr,
                              const transport::ManagerID& peerManagerId,
-                             std::vector<std::uint32_t>&& results);
+                             std::vector<std::uint8_t>&& results);
     UC::Status SubmitCompletion(CompletionRecord&& record);
 
     DramPoolRuntime& runtime_;

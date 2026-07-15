@@ -223,24 +223,20 @@ TEST_F(KvProtocolTest, UnpackRequestRejectsWrongSize)
     EXPECT_NE(status.message.find("size"), std::string::npos);
 }
 
-TEST_F(KvProtocolTest, UnpackResponseReadsFlagEntry)
+TEST_F(KvProtocolTest, UnpackResponseReadsPackedResults)
 {
-    // Lookup: single idx
-    std::uint8_t flag[kKvFlagEntrySize] = {0x78, 0x56, 0x34, 0x12};
+    std::uint8_t lookupFlag[] = {0x8D, 0x01};
     KvResponse resp;
-    auto status = mgr_.UnpackResponse(flag, KvOpcode::Lookup, 1, resp);
+    auto status = mgr_.UnpackResponse(lookupFlag, KvOpcode::Lookup, 9, resp);
     ASSERT_TRUE(status.ok()) << status.message;
-    ASSERT_EQ(resp.results.size(), 1u);
-    EXPECT_EQ(resp.results[0], 0x12345678U);
+    EXPECT_EQ(resp.results,
+              (std::vector<std::uint8_t>{1, 0, 1, 1, 0, 0, 0, 1, 1}));
 
-    // Dump/Load: batch_size errcodes (one per entry)
-    std::uint8_t flag2[2 * kKvFlagEntrySize] = {0x78, 0x56, 0x34, 0x12, 0x00, 0x00, 0x00, 0x00};
+    std::uint8_t dumpFlag[] = {0x10, 0xF2, 0x03};
     resp.results.clear();
-    status = mgr_.UnpackResponse(flag2, KvOpcode::Dump, 2, resp);
+    status = mgr_.UnpackResponse(dumpFlag, KvOpcode::Dump, 5, resp);
     ASSERT_TRUE(status.ok()) << status.message;
-    ASSERT_EQ(resp.results.size(), 2u);
-    EXPECT_EQ(resp.results[0], 0x12345678U);
-    EXPECT_EQ(resp.results[1], 0x00000000U);
+    EXPECT_EQ(resp.results, (std::vector<std::uint8_t>{0, 1, 2, 15, 3}));
 }
 
 TEST_F(KvProtocolTest, ServerRoundTripDumpLoad)
@@ -276,10 +272,11 @@ TEST_F(KvProtocolTest, ServerRoundTripDumpLoad)
     // server packs response, client unpacks it
     KvResponse resp;
     resp.results = {0x0};  // batch_size == 1 errcode
-    std::uint8_t flag[kKvFlagEntrySize] = {0};
-    ASSERT_TRUE(mgr_.PackResponse(flag, req.opcode, resp).ok());
+    std::vector<std::uint8_t> flag(
+        mgr_.GetPackedResponseSize(req.opcode, resp.results.size()), 0xFF);
+    ASSERT_TRUE(mgr_.PackResponse(flag.data(), req.opcode, resp).ok());
     KvResponse resp2;
-    ASSERT_TRUE(mgr_.UnpackResponse(flag, req.opcode, req.batch_size, resp2).ok());
+    ASSERT_TRUE(mgr_.UnpackResponse(flag.data(), req.opcode, req.batch_size, resp2).ok());
     ASSERT_EQ(resp2.results.size(), 1u);
     EXPECT_EQ(resp2.results[0], 0x0U);
 }
@@ -310,15 +307,15 @@ TEST_F(KvProtocolTest, ServerRoundTripLookup)
     EXPECT_EQ(std::memcmp(lk.entries[0].key.data(), e0.key.data(), kKvKeySize), 0);
     EXPECT_EQ(std::memcmp(lk.entries[1].key.data(), e1.key.data(), kKvKeySize), 0);
 
-    // server packs the single idx response, client unpacks it
+    // server packs one existence bit per key, client unpacks it
     KvResponse resp;
-    resp.results = {0xCAFEBABEU};
-    std::uint8_t flag[kKvFlagEntrySize] = {0};
-    ASSERT_TRUE(mgr_.PackResponse(flag, req.opcode, resp).ok());
+    resp.results = {1, 0};
+    std::vector<std::uint8_t> flag(
+        mgr_.GetPackedResponseSize(req.opcode, resp.results.size()), 0xFF);
+    ASSERT_TRUE(mgr_.PackResponse(flag.data(), req.opcode, resp).ok());
     KvResponse resp2;
-    ASSERT_TRUE(mgr_.UnpackResponse(flag, req.opcode, 1, resp2).ok());
-    ASSERT_EQ(resp2.results.size(), 1u);
-    EXPECT_EQ(resp2.results[0], 0xCAFEBABEU);
+    ASSERT_TRUE(mgr_.UnpackResponse(flag.data(), req.opcode, req.batch_size, resp2).ok());
+    EXPECT_EQ(resp2.results, resp.results);
 }
 
 // ---------------------------------------------------------------------------
@@ -531,20 +528,24 @@ TEST_F(KvProtocolTest, PackResponseRejectsNullData)
     EXPECT_FALSE(status.ok());
 }
 
-TEST_F(KvProtocolTest, PackResponseLookupRejectsWrongCount)
+TEST_F(KvProtocolTest, PackResponseRejectsValuesThatDoNotFitWireWidth)
 {
-    KvResponse resp;
-    resp.results = {0x0, 0x1};  // size 2, but Lookup must return exactly 1
-    std::uint8_t flag[2 * kKvFlagEntrySize] = {0};
-    auto status = mgr_.PackResponse(flag, KvOpcode::Lookup, resp);
-    EXPECT_FALSE(status.ok());
-    EXPECT_NE(status.message.find("must be 1"), std::string::npos);
+    std::uint8_t flag[1] = {0};
+    KvResponse lookup;
+    lookup.results = {2};
+    auto status = mgr_.PackResponse(flag, KvOpcode::Lookup, lookup);
+    EXPECT_FALSE(status.ok()) << status.message;
+
+    KvResponse dump;
+    dump.results = {16};
+    status = mgr_.PackResponse(flag, KvOpcode::Dump, dump);
+    EXPECT_FALSE(status.ok()) << status.message;
 }
 
 TEST_F(KvProtocolTest, PackResponseLookupRejectsZeroCount)
 {
     KvResponse resp;  // empty results
-    std::uint8_t flag[kKvFlagEntrySize] = {0};
+    std::uint8_t flag[1] = {0};
     auto status = mgr_.PackResponse(flag, KvOpcode::Lookup, resp);
     EXPECT_FALSE(status.ok());
 }
@@ -554,7 +555,7 @@ TEST_F(KvProtocolTest, PackResponseDumpLoadZeroErrcodes)
     KvResponse resp;  // empty, result_count=0
     std::uint8_t flag[1] = {0xFF};
     auto status = mgr_.PackResponse(flag, KvOpcode::Dump, resp);
-    EXPECT_TRUE(status.ok());  // 0 errcodes is valid (memcpy 0 bytes)
+    EXPECT_TRUE(status.ok());
 }
 
 // ---------------------------------------------------------------------------
@@ -568,13 +569,15 @@ TEST_F(KvProtocolTest, UnpackResponseRejectsNullData)
     EXPECT_FALSE(status.ok());
 }
 
-TEST_F(KvProtocolTest, UnpackResponseLookupRejectsWrongCount)
+TEST_F(KvProtocolTest, PackedResponseSizesRoundUpAtBitBoundaries)
 {
-    std::uint8_t flag[2 * kKvFlagEntrySize] = {0x78, 0x56, 0x34, 0x12, 0x00, 0x00, 0x00, 0x00};
-    KvResponse resp;
-    auto status = mgr_.UnpackResponse(flag, KvOpcode::Lookup, 2, resp);
-    EXPECT_FALSE(status.ok());
-    EXPECT_NE(status.message.find("result_count"), std::string::npos);
+    EXPECT_EQ(mgr_.GetPackedResponseSize(KvOpcode::Lookup, 1), 1U);
+    EXPECT_EQ(mgr_.GetPackedResponseSize(KvOpcode::Lookup, 8), 1U);
+    EXPECT_EQ(mgr_.GetPackedResponseSize(KvOpcode::Lookup, 9), 2U);
+    EXPECT_EQ(mgr_.GetPackedResponseSize(KvOpcode::Dump, 1), 1U);
+    EXPECT_EQ(mgr_.GetPackedResponseSize(KvOpcode::Dump, 2), 1U);
+    EXPECT_EQ(mgr_.GetPackedResponseSize(KvOpcode::Load, 3), 2U);
+    EXPECT_EQ(mgr_.GetPackedResponseSize(KvOpcode::None, 3), 0U);
 }
 
 // ---------------------------------------------------------------------------
@@ -584,11 +587,13 @@ TEST_F(KvProtocolTest, UnpackResponseLookupRejectsWrongCount)
 TEST_F(KvProtocolTest, ResponseSymmetryMultipleErrcodes)
 {
     KvResponse resp;
-    resp.results = {0x0, 0x1, 0x2, 0xDEADBEEF, 0xFFFFFFFF};
+    resp.results = {0x0, 0x1, 0x2, 0xE, 0xF};
     constexpr std::uint16_t kCount = 5;
-    std::vector<std::uint8_t> flag(kCount * kKvFlagEntrySize, 0);
+    std::vector<std::uint8_t> flag(
+        mgr_.GetPackedResponseSize(KvOpcode::Dump, kCount), 0xFF);
 
     ASSERT_TRUE(mgr_.PackResponse(flag.data(), KvOpcode::Dump, resp).ok());
+    EXPECT_EQ(flag, (std::vector<std::uint8_t>{0x10, 0xE2, 0x0F}));
     KvResponse resp2;
     ASSERT_TRUE(mgr_.UnpackResponse(flag.data(), KvOpcode::Dump, kCount, resp2).ok());
     ASSERT_EQ(resp2.results.size(), kCount);
@@ -651,12 +656,12 @@ TEST_F(KvProtocolTest, MultiRoundSequentialPacks)
 
         // response round-trip each iteration
         KvResponse resp;
-        resp.results = {static_cast<std::uint32_t>(round)};
-        std::uint8_t flag[kKvFlagEntrySize] = {0};
+        resp.results = {round};
+        std::uint8_t flag[1] = {0xFF};
         ASSERT_TRUE(mgr_.PackResponse(flag, opcode, resp).ok()) << "round " << round;
         KvResponse resp2;
         ASSERT_TRUE(mgr_.UnpackResponse(flag, opcode, 1, resp2).ok()) << "round " << round;
-        EXPECT_EQ(resp2.results[0], static_cast<std::uint32_t>(round)) << "round " << round;
+        EXPECT_EQ(resp2.results[0], round) << "round " << round;
     }
 }
 
@@ -664,19 +669,21 @@ TEST_F(KvProtocolTest, MultiRoundSequentialPacks)
 // Full client-server round-trip with response values spanning the range
 // ---------------------------------------------------------------------------
 
-TEST_F(KvProtocolTest, LookupIdxFullRangeSymmetry)
+TEST_F(KvProtocolTest, LookupPackedResponseOverwritesNonZeroBufferAndRoundTrips)
 {
-    const std::uint32_t kValues[] = {0x0, 0x1, 0x7FFFFFFF, 0x80000000, 0xDEADBEEF, 0xFFFFFFFF};
-    for (std::uint32_t v : kValues) {
-        KvResponse resp;
-        resp.results = {v};
-        std::uint8_t flag[kKvFlagEntrySize] = {0};
-        ASSERT_TRUE(mgr_.PackResponse(flag, KvOpcode::Lookup, resp).ok());
-        KvResponse resp2;
-        ASSERT_TRUE(mgr_.UnpackResponse(flag, KvOpcode::Lookup, 1, resp2).ok());
-        ASSERT_EQ(resp2.results.size(), 1u);
-        EXPECT_EQ(resp2.results[0], v);
-    }
+    KvResponse resp;
+    resp.results = {1, 0, 1, 1, 0, 0, 0, 1, 1};
+    std::vector<std::uint8_t> flag(
+        mgr_.GetPackedResponseSize(KvOpcode::Lookup, resp.results.size()), 0xFF);
+
+    ASSERT_TRUE(mgr_.PackResponse(flag.data(), KvOpcode::Lookup, resp).ok());
+    EXPECT_EQ(flag, (std::vector<std::uint8_t>{0x8D, 0x01}));
+
+    KvResponse unpacked;
+    ASSERT_TRUE(mgr_.UnpackResponse(flag.data(), KvOpcode::Lookup,
+                                    static_cast<std::uint16_t>(resp.results.size()),
+                                    unpacked).ok());
+    EXPECT_EQ(unpacked.results, resp.results);
 }
 
 }  // namespace

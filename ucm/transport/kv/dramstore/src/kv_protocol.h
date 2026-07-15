@@ -54,7 +54,12 @@ constexpr std::size_t kKvDumpEntrySize =
 constexpr std::size_t kKvLoadEntrySize =
     kKvKeySize + sizeof(std::uint64_t) + sizeof(std::uint32_t) + sizeof(std::uint32_t);
 constexpr std::size_t kKvLookupEntrySize = kKvKeySize;
-constexpr std::size_t kKvFlagEntrySize = sizeof(std::uint32_t);
+
+constexpr std::size_t Packed1BitResultSize(std::size_t resultCount)
+{ return resultCount / 8U + (resultCount % 8U != 0U ? 1U : 0U); }
+
+constexpr std::size_t Packed4BitResultSize(std::size_t resultCount)
+{ return resultCount / 2U + (resultCount % 2U != 0U ? 1U : 0U); }
 
 // Wire offsets shared by the client (pack) and server (unpack) sides.
 constexpr std::size_t kOpcodeOffset = 0;
@@ -125,7 +130,7 @@ public:
 
 class KvResponse {
 public:
-    std::vector<std::uint32_t> results;
+    std::vector<std::uint8_t> results;
 };
 
 // ---------------------------------------------------------------------------
@@ -176,6 +181,7 @@ public:
 
     // Client side: pack request struct -> wire; unpack response wire -> struct.
     virtual std::size_t PackedSize(const KvRequest& req) const = 0;
+    virtual std::size_t PackedResponseSize(std::size_t result_count) const = 0;
     virtual Status PackRequest(const KvRequest& req, void* target) = 0;
     virtual Status UnpackResponse(const void* data, std::uint16_t result_count,
                                   KvResponse& out) const = 0;
@@ -190,6 +196,7 @@ class KvDumpProtocol : public KvProtocol {
 public:
     // Client side
     std::size_t PackedSize(const KvRequest& req) const override;
+    std::size_t PackedResponseSize(std::size_t result_count) const override;
     Status PackRequest(const KvRequest& req, void* target) override;
     Status UnpackResponse(const void* data, std::uint16_t result_count,
                           KvResponse& out) const override;
@@ -206,6 +213,7 @@ class KvLoadProtocol : public KvProtocol {
 public:
     // Client side
     std::size_t PackedSize(const KvRequest& req) const override;
+    std::size_t PackedResponseSize(std::size_t result_count) const override;
     Status PackRequest(const KvRequest& req, void* target) override;
     Status UnpackResponse(const void* data, std::uint16_t result_count,
                           KvResponse& out) const override;
@@ -222,6 +230,7 @@ class KvLookupProtocol : public KvProtocol {
 public:
     // Client side
     std::size_t PackedSize(const KvRequest& req) const override;
+    std::size_t PackedResponseSize(std::size_t result_count) const override;
     Status PackRequest(const KvRequest& req, void* target) override;
     Status UnpackResponse(const void* data, std::uint16_t result_count,
                           KvResponse& out) const override;
@@ -244,6 +253,7 @@ public:
 
     // Client side
     std::size_t GetPackedSize(KvOpcode opcode, const KvRequest& req) const;
+    std::size_t GetPackedResponseSize(KvOpcode opcode, std::size_t result_count) const;
     Status PackRequest(void* data, KvOpcode opcode, const KvRequest& req);
     Status UnpackResponse(const void* data, KvOpcode opcode, std::uint16_t result_count,
                           KvResponse& out);

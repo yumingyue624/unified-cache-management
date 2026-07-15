@@ -76,6 +76,10 @@ public:
         std::lock_guard<std::mutex> guard(mutex_);
         handle = nextTransferHandle_++;
         transfers_.emplace(handle, newTransferStatus_);
+        latestOperationLength_ = 0;
+        for (const auto& segment : operation.ops) {
+            latestOperationLength_ += segment.length;
+        }
         ++asyncExecutionCount_;
         return transport::Status::Ok;
     }
@@ -139,6 +143,12 @@ public:
                                         : nextTransferHandle_ - 1;
     }
 
+    std::uint64_t LatestOperationLength() const
+    {
+        std::lock_guard<std::mutex> guard(mutex_);
+        return latestOperationLength_;
+    }
+
     void SetNewTransferStatus(transport::TransferStatus status)
     {
         std::lock_guard<std::mutex> guard(mutex_);
@@ -153,6 +163,7 @@ private:
     std::unordered_map<transport::TransferHandle, transport::TransferStatus> transfers_;
     std::unordered_map<transport::TransferHandle, std::size_t> queryCounts_;
     transport::TransferStatus newTransferStatus_{transport::TransferStatus::Completed};
+    std::uint64_t latestOperationLength_{0};
     std::size_t syncExecutionCount_{0};
     std::size_t asyncExecutionCount_{0};
 };
