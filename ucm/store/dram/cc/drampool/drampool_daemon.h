@@ -1,7 +1,7 @@
 /**
  * MIT License
  *
- * Copyright (c) 2025 Huawei Technologies Co., Ltd. All rights reserved.
+ * Copyright (c) 2026 Huawei Technologies Co., Ltd. All rights reserved.
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -21,32 +21,26 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
  * */
+#pragma once
 
-#include "logger.h"
-#include <iostream>
-namespace UC::Logger {
+#include <atomic>
+#include "drampool_config.h"
+#include "drampool_server.h"
+#include "status/status.h"
 
-void Log(Level lv, std::string file, std::string func, int line, std::string msg)
-{
-    Logger::GetInstance().Log(std::move(lv), SourceLocation{file.c_str(), func.c_str(), line},
-                              std::move(msg));
-}
+namespace UC::DramPool {
 
-void LogRateLimit(Level lv, std::string file, std::string func, int line, std::string msg)
-{
-    if (Logger::GetInstance().FilterCallSite(file.c_str(), line)) {
-        Logger::GetInstance().Log(std::move(lv), SourceLocation{file.c_str(), func.c_str(), line},
-                                  std::move(msg));
-    }
-}
+class DramPoolDaemon {
+public:
+    int Run(int argc, char** argv);
 
-void Setup(const std::string& path, int max_files, int max_size)
-{
-    Logger::GetInstance().Setup(path, max_files, max_size);
-}
+private:
+    Status SetupLogger();
+    Status SetupSignals();
+    void WaitForShutdown();
 
-void Flush() { Logger::GetInstance().Flush(); }
+    static void HandleSignal(int signum);
+    inline static std::atomic_bool shutdownRequested_{false};
+};
 
-bool isEnabledFor(Level lv) { return Logger::GetInstance().IsEnabledFor(lv); }
-
-}  // namespace UC::Logger
+}  // namespace UC::DramPool

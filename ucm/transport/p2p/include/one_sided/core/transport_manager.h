@@ -22,6 +22,7 @@ public:
 
     Status Init();
     Status InstallTransport(TransportProtocol protocol, const InitAttrs& options);
+    Status InstallTransport(TransportPtr transport, const InitAttrs& options);
 
     Status ExchangeMetadata(const ManagerID& manager_id);
     Status Shutdown();
@@ -66,8 +67,11 @@ private:
     mutable std::recursive_mutex peer_mutex_;
     std::unordered_map<TransportProtocol, Transport*> protocol_map_;
     std::vector<InstalledTransport> transports_;
+    mutable std::mutex memory_mutex_;
     std::unordered_map<MemoryHandle, MemoryRecord> memories_;
     MemoryHandle next_memory_handle_ = 1;
+    // Submit and polling run on different DramPool threads.
+    mutable std::mutex transfer_mutex_;
     std::unordered_map<TransferHandle, TransferRecord> transfers_;
     TransferHandle next_transfer_handle_ = 1;
 };
