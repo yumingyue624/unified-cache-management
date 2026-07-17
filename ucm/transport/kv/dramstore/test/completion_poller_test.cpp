@@ -339,7 +339,7 @@ TEST_F(CompletionPollerTest, SendsResponseReadyRecordWithoutBlocking)
     const auto responseHandle = testTransport_->LatestTransferHandle();
     ASSERT_NE(responseHandle, transport::kInvalidTransferHandle);
     EXPECT_EQ(testTransport_->SyncExecutionCount(), 0U);
-    EXPECT_EQ(testTransport_->LatestOperationLength(), 2U);
+    EXPECT_EQ(testTransport_->LatestOperationLength(), 3U);
     EXPECT_EQ(testTransport_->ActiveMemoryCount(), 1U);
     std::vector<BufferHandle> fillerHandles;
     for (std::size_t index = 0; index < kQueueCapacity - 1; ++index) {

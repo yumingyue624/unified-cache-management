@@ -44,6 +44,11 @@ enum class KvOpcode : std::uint8_t {
     Lookup = 0x3,
 };
 
+enum class ResponseStatus : std::uint8_t {
+    Pending = 0,
+    Ready = 1,
+};
+
 constexpr std::size_t kKvKeySize = sizeof(BlockId);
 static_assert(kKvKeySize == 16, "DramPool wire protocol requires a 16-byte BlockId");
 constexpr std::size_t kKvHeaderSize =
@@ -55,6 +60,8 @@ constexpr std::size_t kKvDumpEntrySize =
 constexpr std::size_t kKvLoadEntrySize =
     kKvKeySize + sizeof(std::uint64_t) + sizeof(std::uint32_t) + sizeof(std::uint32_t);
 constexpr std::size_t kKvLookupEntrySize = kKvKeySize;
+constexpr std::size_t kResponseStatusOffset = 0;
+constexpr std::size_t kResponseResultsOffset = sizeof(std::uint8_t);
 
 constexpr std::size_t Packed1BitResultSize(std::size_t resultCount)
 {
@@ -257,6 +264,7 @@ public:
     std::size_t GetPackedSize(KvOpcode opcode, const KvRequest& req) const;
     std::size_t GetPackedResponseSize(KvOpcode opcode, std::size_t result_count) const;
     Status PackRequest(void* data, KvOpcode opcode, const KvRequest& req);
+    Status IsResponseReady(const void* data, bool& ready) const;
     Status UnpackResponse(const void* data, KvOpcode opcode, std::uint16_t result_count,
                           KvResponse& out);
     // Server side

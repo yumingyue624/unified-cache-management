@@ -10,7 +10,7 @@ add_library(drampool_core STATIC
     ${DRAMPOOL_SOURCE_DIR}/drampool_daemon.cpp
     ${DRAMPOOL_SOURCE_DIR}/drampool_yaml_config.cpp
     ${DRAMPOOL_SOURCE_DIR}/drampool_server.cpp
-    ${DRAMPOOL_SOURCE_DIR}/kv_protocol.cpp
+    ${CMAKE_SOURCE_DIR}/ucm/store/dram/cc/kv_protocol.cpp
     ${DRAMPOOL_SOURCE_DIR}/task_worker.cpp
 )
 
@@ -67,6 +67,20 @@ if(BUILD_UNIT_TESTS)
         target_link_options(drampool_startup.test PRIVATE /PROFILE)
     endif()
     gtest_discover_tests(drampool_startup.test)
+
+    add_executable(drampool_kv_protocol.test
+        test/kv_protocol_test.cpp
+    )
+    target_link_libraries(drampool_kv_protocol.test
+        PRIVATE
+            drampool_core
+            gtest_main
+            gtest
+    )
+    if(MSVC)
+        target_link_options(drampool_kv_protocol.test PRIVATE /PROFILE)
+    endif()
+    gtest_discover_tests(drampool_kv_protocol.test)
 
     add_executable(completion_poller.integration.test EXCLUDE_FROM_ALL
             test/completion_poller_test.cpp

@@ -150,7 +150,7 @@ std::size_t KvDumpProtocol::PackedSize(const KvRequest& req) const
 
 std::size_t KvDumpProtocol::PackedResponseSize(std::size_t result_count) const
 {
-    return Packed4BitResultSize(result_count);
+    return kResponseResultsOffset + Packed4BitResultSize(result_count);
 }
 
 Status KvDumpProtocol::PackRequest(const KvRequest& req, void* target)
@@ -177,7 +177,8 @@ Status KvDumpProtocol::UnpackResponse(const void* data, std::uint16_t result_cou
                                       KvResponse& out) const
 {
     if (!data) { return Status::InvalidParam("Dump: UnpackResponse data is null"); }
-    Unpack4BitResults(data, result_count, out.results);
+    const auto* bytes = static_cast<const std::uint8_t*>(data);
+    Unpack4BitResults(bytes + kResponseResultsOffset, result_count, out.results);
     return Status::OK();
 }
 
@@ -251,7 +252,11 @@ Status KvDumpProtocol::UnpackRequest(const void* data, std::size_t size,
 Status KvDumpProtocol::PackResponse(void* data, const KvResponse& resp) const
 {
     if (!data) { return Status::InvalidParam("Dump: PackResponse data is null"); }
-    return Pack4BitResults(data, resp.results, "Dump");
+    auto* bytes = static_cast<std::uint8_t*>(data);
+    const auto status = Pack4BitResults(bytes + kResponseResultsOffset, resp.results, "Dump");
+    if (status.Failure()) { return status; }
+    bytes[kResponseStatusOffset] = static_cast<std::uint8_t>(ResponseStatus::Ready);
+    return Status::OK();
 }
 
 // ===========================================================================
@@ -268,7 +273,7 @@ std::size_t KvLoadProtocol::PackedSize(const KvRequest& req) const
 
 std::size_t KvLoadProtocol::PackedResponseSize(std::size_t result_count) const
 {
-    return Packed4BitResultSize(result_count);
+    return kResponseResultsOffset + Packed4BitResultSize(result_count);
 }
 
 Status KvLoadProtocol::PackRequest(const KvRequest& req, void* target)
@@ -295,7 +300,8 @@ Status KvLoadProtocol::UnpackResponse(const void* data, std::uint16_t result_cou
                                       KvResponse& out) const
 {
     if (!data) { return Status::InvalidParam("Load: UnpackResponse data is null"); }
-    Unpack4BitResults(data, result_count, out.results);
+    const auto* bytes = static_cast<const std::uint8_t*>(data);
+    Unpack4BitResults(bytes + kResponseResultsOffset, result_count, out.results);
     return Status::OK();
 }
 
@@ -368,7 +374,11 @@ Status KvLoadProtocol::UnpackRequest(const void* data, std::size_t size,
 Status KvLoadProtocol::PackResponse(void* data, const KvResponse& resp) const
 {
     if (!data) { return Status::InvalidParam("Load: PackResponse data is null"); }
-    return Pack4BitResults(data, resp.results, "Load");
+    auto* bytes = static_cast<std::uint8_t*>(data);
+    const auto status = Pack4BitResults(bytes + kResponseResultsOffset, resp.results, "Load");
+    if (status.Failure()) { return status; }
+    bytes[kResponseStatusOffset] = static_cast<std::uint8_t>(ResponseStatus::Ready);
+    return Status::OK();
 }
 
 // ===========================================================================
@@ -385,7 +395,7 @@ std::size_t KvLookupProtocol::PackedSize(const KvRequest& req) const
 
 std::size_t KvLookupProtocol::PackedResponseSize(std::size_t result_count) const
 {
-    return Packed1BitResultSize(result_count);
+    return kResponseResultsOffset + Packed1BitResultSize(result_count);
 }
 
 Status KvLookupProtocol::PackRequest(const KvRequest& req, void* target)
@@ -409,7 +419,8 @@ Status KvLookupProtocol::UnpackResponse(const void* data, std::uint16_t result_c
                                         KvResponse& out) const
 {
     if (!data) { return Status::InvalidParam("Lookup: UnpackResponse data is null"); }
-    Unpack1BitResults(data, result_count, out.results);
+    const auto* bytes = static_cast<const std::uint8_t*>(data);
+    Unpack1BitResults(bytes + kResponseResultsOffset, result_count, out.results);
     return Status::OK();
 }
 
@@ -469,7 +480,11 @@ Status KvLookupProtocol::PackResponse(void* data, const KvResponse& resp) const
 {
     if (!data) { return Status::InvalidParam("Lookup: PackResponse data is null"); }
     if (resp.results.empty()) { return Status::InvalidParam("Lookup: results must not be empty"); }
-    return Pack1BitResults(data, resp.results, "Lookup");
+    auto* bytes = static_cast<std::uint8_t*>(data);
+    const auto status = Pack1BitResults(bytes + kResponseResultsOffset, resp.results, "Lookup");
+    if (status.Failure()) { return status; }
+    bytes[kResponseStatusOffset] = static_cast<std::uint8_t>(ResponseStatus::Ready);
+    return Status::OK();
 }
 
 // ===========================================================================
@@ -511,11 +526,30 @@ Status ProtocolManager::PackRequest(void* data, KvOpcode opcode, const KvRequest
     return proto->PackRequest(req, data);
 }
 
+Status ProtocolManager::IsResponseReady(const void* data, bool& ready) const
+{
+    ready = false;
+    if (!data) { return Status::InvalidParam("IsResponseReady data is null"); }
+
+    // The flag can be updated by remote DMA, so each poll must reload the status byte.
+    const auto* bytes = static_cast<const volatile std::uint8_t*>(data);
+    const auto status = static_cast<ResponseStatus>(bytes[kResponseStatusOffset]);
+    switch (status) {
+        case ResponseStatus::Pending: return Status::OK();
+        case ResponseStatus::Ready: ready = true; return Status::OK();
+        default: return Status::InvalidParam("unknown response status");
+    }
+}
+
 Status ProtocolManager::UnpackResponse(const void* data, KvOpcode opcode,
                                        std::uint16_t result_count, KvResponse& out)
 {
     KvProtocol* proto = GetProtocol(opcode);
     if (!proto) { return Status::InvalidParam("unknown opcode in UnpackResponse"); }
+    bool ready = false;
+    const auto status = IsResponseReady(data, ready);
+    if (status.Failure()) { return status; }
+    if (!ready) { return Status::Retry(); }
     return proto->UnpackResponse(data, result_count, out);
 }
 
