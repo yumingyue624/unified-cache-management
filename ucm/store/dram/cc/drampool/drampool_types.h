@@ -41,7 +41,6 @@ using RequestQueue = UC::SpscRingQueue<RequestTaskPtr>;
 struct BufferHandle {
     std::uint64_t value{0};
     std::uint32_t class_id{0};
-    transport::MemoryHandle memory_handle{transport::kInvalidMemoryHandle};
 
     bool Valid() const noexcept { return value != 0; }
 };

@@ -7,7 +7,6 @@
 #include <limits>
 #include <string>
 #include <utility>
-#include "core/transport_manager.h"
 #include "drampool_config.h"
 #include "pool/buffer_pool.h"
 
@@ -32,24 +31,12 @@ UC::Expected<BufferSlot> AllocateBuffer(DramPoolRuntime& runtime, std::uint32_t 
         }
 
         BufferSlot slot;
-        slot.handle =
-            BufferHandle{static_cast<std::uint64_t>(poolSlot.slot_index) + 1,
-                         static_cast<std::uint32_t>(index), transport::kInvalidMemoryHandle};
+        slot.handle = BufferHandle{static_cast<std::uint64_t>(poolSlot.slot_index) + 1,
+                                   static_cast<std::uint32_t>(index)};
         slot.addr = reinterpret_cast<std::uint64_t>(poolSlot.local_addr);
         slot.len = len;
         slot.class_id = static_cast<std::uint32_t>(index);
-
-        // Whole-pool registration will replace this temporary per-slot registration.
-        transport::MemoryRegion memory;
-        memory.addr = reinterpret_cast<void*>(slot.addr);
-        memory.length = slot.len;
-        memory.type = transport::MemoryType::Host;
-        const auto registerStatus =
-            runtime.transport.RegisterMemory(memory, slot.handle.memory_handle);
-        if (registerStatus == transport::Status::Ok) { return std::move(slot); }
-
-        (void)runtime.bufferPools[index]->Free(poolSlot.slot_index);
-        return ToUcStatus(registerStatus, "TransportManager::RegisterMemory");
+        return std::move(slot);
     }
 
     return foundSuitablePool ? Status::NoSpace()
@@ -62,11 +49,6 @@ Status FreeBuffer(DramPoolRuntime& runtime, const BufferHandle& handle)
         handle.value > std::numeric_limits<std::uint32_t>::max()) {
         return Status::NotFound();
     }
-    if (handle.memory_handle != transport::kInvalidMemoryHandle) {
-        // The host slot remains owned by BufferPool even if transport is already down.
-        (void)runtime.transport.UnregisterMemory(handle.memory_handle);
-    }
-
     const auto slotIndex = static_cast<std::uint32_t>(handle.value - 1);
     return runtime.bufferPools[handle.class_id]->Free(slotIndex);
 }
