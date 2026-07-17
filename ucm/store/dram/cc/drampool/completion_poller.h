@@ -21,7 +21,7 @@ public:
     void RequestDrainAllAsFailed() noexcept;
 
 private:
-    std::size_t DrainNewCompletions();
+    std::size_t FillPendingWindow();
     void PollPendingCompletions();
     // Returns true after the data transfer has been settled and the record is ready
     // to advance to response submission. Waiting transfers remain pending.

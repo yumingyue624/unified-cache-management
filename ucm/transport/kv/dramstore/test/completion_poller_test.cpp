@@ -73,9 +73,7 @@ protected:
         ASSERT_EQ(manager_.InstallTransport(testTransport_, transport::InitAttrs{}),
                   transport::Status::Ok);
 
-        g_config.pollerDrainBudget = kDrainBudget;
-        g_config.pollerScanBudget = kHeadScanBudget;
-        g_config.pollerMaxPending = kQueueCapacity;
+        g_config.pollerPendingDepth = kTestPendingDepth;
         g_config.opTimeoutMs = kTestOperationTimeoutMs;
         g_config.poolBlockSizes = {kValueLength};
         g_config.poolSlotCounts = {static_cast<std::uint32_t>(kQueueCapacity)};
@@ -154,8 +152,7 @@ protected:
     }
 
     static constexpr std::size_t kQueueCapacity = 16;
-    static constexpr std::size_t kDrainBudget = 8;
-    static constexpr std::size_t kHeadScanBudget = 2;
+    static constexpr std::size_t kTestPendingDepth = 2;
 
     RequestQueue requestQueue_;
     CompletionQueue ingress_;
@@ -169,7 +166,7 @@ protected:
     DramPoolConfig savedConfig_;
 };
 
-TEST_F(CompletionPollerTest, ScansOnlyConfiguredHeadWindowAndThenPublishesAll)
+TEST_F(CompletionPollerTest, RefillsConfiguredPendingWindowAfterCompletedRecordsAreRemoved)
 {
     TransportHandle firstHandle = transport::kInvalidTransferHandle;
     TransportHandle secondHandle = transport::kInvalidTransferHandle;
@@ -214,8 +211,7 @@ TEST_F(CompletionPollerTest, ScansOnlyConfiguredHeadWindowAndThenPublishesAll)
 
 TEST_F(CompletionPollerTest, TimeoutWaitsForTerminalThenAbortsDump)
 {
-    g_config.pollerDrainBudget = 1;
-    g_config.pollerScanBudget = 1;
+    g_config.pollerPendingDepth = 1;
     g_config.opTimeoutMs = 1;
 
     TransportHandle handle = transport::kInvalidTransferHandle;
@@ -249,8 +245,7 @@ TEST_F(CompletionPollerTest, TimeoutWaitsForTerminalThenAbortsDump)
 
 TEST_F(CompletionPollerTest, KeepsResponseBufferUntilAsyncWriteReachesTerminal)
 {
-    g_config.pollerDrainBudget = 1;
-    g_config.pollerScanBudget = 1;
+    g_config.pollerPendingDepth = 1;
 
     TransportHandle dataHandle = transport::kInvalidTransferHandle;
     auto record = MakeDumpRecord(9, 109, dataHandle);

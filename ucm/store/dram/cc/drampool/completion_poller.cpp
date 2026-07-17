@@ -4,7 +4,6 @@
  * Copyright (c) 2026 Huawei Technologies Co., Ltd. All rights reserved.
  */
 #include "completion_poller.h"
-#include <algorithm>
 #include <chrono>
 #include <limits>
 #include <utility>
@@ -39,10 +38,10 @@ void CompletionPoller::Run(const std::atomic_bool& stop)
             failAllRequested_.store(true, std::memory_order_release);
         }
 
-        const auto drained = DrainNewCompletions();
+        const auto filled = FillPendingWindow();
         PollPendingCompletions();
 
-        if (stop.load(std::memory_order_acquire) && drained == 0 && pending_.empty()) { break; }
+        if (stop.load(std::memory_order_acquire) && filled == 0 && pending_.empty()) { break; }
     }
 }
 
@@ -51,25 +50,25 @@ void CompletionPoller::RequestDrainAllAsFailed() noexcept
     failAllRequested_.store(true, std::memory_order_release);
 }
 
-std::size_t CompletionPoller::DrainNewCompletions()
+std::size_t CompletionPoller::FillPendingWindow()
 {
-    std::size_t drained = 0;
-    while (drained < g_config.pollerDrainBudget && pending_.size() < g_config.pollerMaxPending) {
+    std::size_t filled = 0;
+    while (pending_.size() < g_config.pollerPendingDepth) {
         CompletionRecord record;
         if (!runtime_.completionQueue.TryPop(record)) { break; }
         pending_.emplace_back(std::move(record));
-        ++drained;
+        ++filled;
     }
-    return drained;
+    return filled;
 }
 
 void CompletionPoller::PollPendingCompletions()
 {
-    const std::size_t scanCount =
-        std::min(static_cast<std::size_t>(g_config.pollerScanBudget), pending_.size());
+    const std::size_t scanCount = pending_.size();
     auto iter = pending_.begin();
 
-    // Scan only this head snapshot. Erase never pulls extra work into this round.
+    // Scan the whole pending snapshot. Completed records free slots that are refilled
+    // from completionQueue at the beginning of the next round.
     for (std::size_t scanned = 0; scanned < scanCount; ++scanned) {
         switch (iter->stage) {
             case CompletionStage::DataTransfer:
