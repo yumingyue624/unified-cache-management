@@ -1,7 +1,5 @@
 find_package(Threads REQUIRED)
 
-set(DRAMPOOL_BUFFER_MANAGER_SOURCE_DIR
-    ${CMAKE_SOURCE_DIR}/ucm/transport/kv/asu/trans/src)
 set(DRAMPOOL_SOURCE_DIR
     ${CMAKE_SOURCE_DIR}/ucm/store/dram/cc/drampool)
 
@@ -21,8 +19,6 @@ target_include_directories(drampool_core
         ${DRAMPOOL_SOURCE_DIR}
         ${CMAKE_SOURCE_DIR}/ucm/store/dram/cc
         ${CMAKE_SOURCE_DIR}/ucm/store/detail
-    PRIVATE
-        ${DRAMPOOL_BUFFER_MANAGER_SOURCE_DIR}
 )
 
 target_link_libraries(drampool_core
@@ -31,9 +27,9 @@ target_link_libraries(drampool_core
         infra_logger
         infra_template
         infra_thread
+        buffer_pool
         p2p_transport
-        asu_transport
-        asu_ascend_deps
+        trans
         dramstore
         Threads::Threads
 )
@@ -63,8 +59,6 @@ if(BUILD_UNIT_TESTS)
             gtest_main
             gtest
     )
-    target_include_directories(drampool_startup.test
-        PRIVATE ${DRAMPOOL_BUFFER_MANAGER_SOURCE_DIR})
     if(BUILD_DRAMPOOL_RUNTIME_INTEGRATION_TESTS)
         target_compile_definitions(drampool_startup.test
             PRIVATE UCM_DRAMPOOL_RUNTIME_INTEGRATION_TESTS=1)
@@ -83,8 +77,6 @@ if(BUILD_UNIT_TESTS)
             gtest_main
             gtest
     )
-    target_include_directories(completion_poller.integration.test
-        PRIVATE ${DRAMPOOL_BUFFER_MANAGER_SOURCE_DIR})
     if(MSVC)
         target_link_options(completion_poller.integration.test PRIVATE /PROFILE)
     endif()

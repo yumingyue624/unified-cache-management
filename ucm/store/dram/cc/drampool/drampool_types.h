@@ -20,8 +20,8 @@ namespace transport {
 class TransportManager;
 }
 
-namespace UC::ASU {
-class BufferManager;
+namespace UC {
+class BufferPool;
 }
 
 namespace UC::DramPool {
@@ -120,16 +120,15 @@ struct CompletionRecord {
 
 using CompletionQueue = UC::SpscRingQueue<CompletionRecord>;
 
-using BufferManagerList = std::vector<std::unique_ptr<UC::ASU::BufferManager>>;
+using BufferPoolList = std::vector<std::unique_ptr<UC::BufferPool>>;
 
 // Non-owning runtime view. DramPoolServer owns every referenced component.
 struct DramPoolRuntime {
-    DramPoolRuntime(UC::DramPool::MetadataManager& metadataRef,
-                    BufferManagerList& bufferManagersRef, transport::TransportManager& transportRef,
-                    ProtocolManager& protocolRef, RequestQueue& requestQueueRef,
-                    CompletionQueue& completionQueueRef)
+    DramPoolRuntime(UC::DramPool::MetadataManager& metadataRef, BufferPoolList& bufferPoolsRef,
+                    transport::TransportManager& transportRef, ProtocolManager& protocolRef,
+                    RequestQueue& requestQueueRef, CompletionQueue& completionQueueRef)
         : metadata(metadataRef),
-          bufferManagers(bufferManagersRef),
+          bufferPools(bufferPoolsRef),
           transport(transportRef),
           protocol(protocolRef),
           requestQueue(requestQueueRef),
@@ -138,7 +137,7 @@ struct DramPoolRuntime {
     }
 
     UC::DramPool::MetadataManager& metadata;
-    BufferManagerList& bufferManagers;
+    BufferPoolList& bufferPools;
     transport::TransportManager& transport;
     ProtocolManager& protocol;
     RequestQueue& requestQueue;

@@ -11,11 +11,11 @@
 #include <thread>
 #include <utility>
 #include <vector>
-#include "buffer_manager.h"
 #include "core/transport_manager.h"
 #include "drampool_buffer.h"
 #include "drampool_config.h"
 #include "metadata.h"
+#include "pool/buffer_pool.h"
 #include "task_worker.h"
 #include "test_transport.h"
 
@@ -78,7 +78,7 @@ protected:
         g_config.poolBlockSizes = {kValueLength};
         g_config.poolSlotCounts = {static_cast<std::uint32_t>(kQueueCapacity)};
 
-        // BufferManager uses aclrtMallocHost for its HOST allocation.
+        // BufferPool uses aclrtMallocHost for its HOST allocation.
         const auto aclInitStatus = aclInit(nullptr);
         if (aclInitStatus == ACL_SUCCESS) {
             ownsAclRuntime_ = true;
@@ -87,21 +87,21 @@ protected:
         }
         ASSERT_EQ(aclrtSetDevice(g_config.transportDeviceId), ACL_SUCCESS);
 
-        auto bufferManager = std::make_unique<UC::ASU::BufferManager>();
+        auto bufferPool = std::make_unique<UC::BufferPool>();
         const auto bufferStatus =
-            bufferManager->Init("completion-poller-test", UC::ASU::MemoryType::HOST, kValueLength,
-                                kQueueCapacity, nullptr);
-        ASSERT_TRUE(bufferStatus.ok()) << bufferStatus.message;
-        bufferManagers_.push_back(std::move(bufferManager));
+            bufferPool->Init("completion-poller-test", UC::BufferPool::MemoryType::HOST,
+                             kValueLength, kQueueCapacity);
+        ASSERT_TRUE(bufferStatus.Success()) << bufferStatus.ToString();
+        bufferPools_.push_back(std::move(bufferPool));
 
-        runtime_ = std::make_unique<DramPoolRuntime>(metadata_, bufferManagers_, manager_,
-                                                     protocols_, requestQueue_, ingress_);
+        runtime_ = std::make_unique<DramPoolRuntime>(metadata_, bufferPools_, manager_, protocols_,
+                                                     requestQueue_, ingress_);
     }
 
     void TearDown() override
     {
         runtime_.reset();
-        bufferManagers_.clear();
+        bufferPools_.clear();
         if (ownsAclRuntime_) {
             (void)aclrtResetDevice(g_config.transportDeviceId);
             (void)aclFinalize();
@@ -157,7 +157,7 @@ protected:
     RequestQueue requestQueue_;
     CompletionQueue ingress_;
     UC::DramPool::MetadataManager metadata_{MakeMetadataConfig()};
-    BufferManagerList bufferManagers_;
+    BufferPoolList bufferPools_;
     bool ownsAclRuntime_{false};
     ProtocolManager protocols_;
     std::shared_ptr<TEST::TestTransport> testTransport_{TEST::MakeTestTransport()};
@@ -165,6 +165,23 @@ protected:
     std::unique_ptr<DramPoolRuntime> runtime_;
     DramPoolConfig savedConfig_;
 };
+
+TEST_F(CompletionPollerTest, BufferAllocationPreservesRequestedLengthAndReleasesPoolSlot)
+{
+    constexpr std::uint32_t kRequestedLength = kValueLength / 2;
+    auto allocated = AllocateBuffer(*runtime_, kRequestedLength);
+    ASSERT_TRUE(allocated.HasValue());
+    auto slot = std::move(allocated).Value();
+
+    EXPECT_EQ(slot.len, kRequestedLength);
+    EXPECT_EQ(testTransport_->ActiveMemoryCount(), 1U);
+    EXPECT_TRUE(FreeBuffer(*runtime_, slot.handle).Success());
+    EXPECT_EQ(testTransport_->ActiveMemoryCount(), 0U);
+
+    auto reused = AllocateBuffer(*runtime_, kRequestedLength);
+    ASSERT_TRUE(reused.HasValue());
+    EXPECT_TRUE(FreeBuffer(*runtime_, std::move(reused).Value().handle).Success());
+}
 
 TEST_F(CompletionPollerTest, RefillsConfiguredPendingWindowAfterCompletedRecordsAreRemoved)
 {
