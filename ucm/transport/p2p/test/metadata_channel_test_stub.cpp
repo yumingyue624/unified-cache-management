@@ -43,7 +43,9 @@ Status MetadataChannel::Init(const Endpoint& endpoint, MetadataRequestHandler ha
 }
 
 Status MetadataChannel::ExchangeMetadata(const Endpoint&, const Metadata&, Metadata&)
-{ return Status::Failed; }
+{
+    return Status::Failed;
+}
 
 void MetadataChannel::Close()
 {

@@ -125,9 +125,9 @@ using BufferManagerList = std::vector<std::unique_ptr<UC::ASU::BufferManager>>;
 // Non-owning runtime view. DramPoolServer owns every referenced component.
 struct DramPoolRuntime {
     DramPoolRuntime(UC::DramPool::MetadataManager& metadataRef,
-                    BufferManagerList& bufferManagersRef,
-                    transport::TransportManager& transportRef, ProtocolManager& protocolRef,
-                    RequestQueue& requestQueueRef, CompletionQueue& completionQueueRef)
+                    BufferManagerList& bufferManagersRef, transport::TransportManager& transportRef,
+                    ProtocolManager& protocolRef, RequestQueue& requestQueueRef,
+                    CompletionQueue& completionQueueRef)
         : metadata(metadataRef),
           bufferManagers(bufferManagersRef),
           transport(transportRef),

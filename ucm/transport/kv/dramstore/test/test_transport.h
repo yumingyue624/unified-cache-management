@@ -12,7 +12,9 @@ namespace UC::DramPool::TEST {
 class TestTransport final : public transport::Transport {
 public:
     transport::TransportProtocol Protocol() const override
-    { return transport::TransportProtocol::Hixl; }
+    {
+        return transport::TransportProtocol::Hixl;
+    }
 
     transport::Status Init(const transport::InitAttrs&) override { return transport::Status::Ok; }
 
@@ -49,13 +51,19 @@ public:
 
     transport::Status ImportMetadata(const transport::ManagerID&,
                                      const transport::Metadata&) override
-    { return transport::Status::Ok; }
+    {
+        return transport::Status::Ok;
+    }
 
     transport::Status Connect(const transport::ManagerID&) override
-    { return transport::Status::Ok; }
+    {
+        return transport::Status::Ok;
+    }
 
     transport::Status Disconnect(const transport::ManagerID&) override
-    { return transport::Status::Ok; }
+    {
+        return transport::Status::Ok;
+    }
 
     transport::Status ExecuteSync(const transport::Operation& operation) override
     {
@@ -77,9 +85,7 @@ public:
         handle = nextTransferHandle_++;
         transfers_.emplace(handle, newTransferStatus_);
         latestOperationLength_ = 0;
-        for (const auto& segment : operation.ops) {
-            latestOperationLength_ += segment.length;
-        }
+        for (const auto& segment : operation.ops) { latestOperationLength_ += segment.length; }
         ++asyncExecutionCount_;
         return transport::Status::Ok;
     }
@@ -169,6 +175,8 @@ private:
 };
 
 inline std::shared_ptr<TestTransport> MakeTestTransport()
-{ return std::make_shared<TestTransport>(); }
+{
+    return std::make_shared<TestTransport>();
+}
 
 }  // namespace UC::DramPool::TEST

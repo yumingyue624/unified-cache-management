@@ -100,7 +100,9 @@ void Unpack1BitResults(const void* data, std::size_t resultCount,
 // ---------------------------------------------------------------------------
 
 KvOpcode PeekOpcode(const void* data)
-{ return static_cast<KvOpcode>(static_cast<const std::uint8_t*>(data)[kOpcodeOffset]); }
+{
+    return static_cast<KvOpcode>(static_cast<const std::uint8_t*>(data)[kOpcodeOffset]);
+}
 
 bool IsAllZeroKey(const BlockId& key)
 {
@@ -147,7 +149,9 @@ std::size_t KvDumpProtocol::PackedSize(const KvRequest& req) const
 }
 
 std::size_t KvDumpProtocol::PackedResponseSize(std::size_t result_count) const
-{ return Packed4BitResultSize(result_count); }
+{
+    return Packed4BitResultSize(result_count);
+}
 
 Status KvDumpProtocol::PackRequest(const KvRequest& req, void* target)
 {
@@ -263,7 +267,9 @@ std::size_t KvLoadProtocol::PackedSize(const KvRequest& req) const
 }
 
 std::size_t KvLoadProtocol::PackedResponseSize(std::size_t result_count) const
-{ return Packed4BitResultSize(result_count); }
+{
+    return Packed4BitResultSize(result_count);
+}
 
 Status KvLoadProtocol::PackRequest(const KvRequest& req, void* target)
 {
@@ -378,7 +384,9 @@ std::size_t KvLookupProtocol::PackedSize(const KvRequest& req) const
 }
 
 std::size_t KvLookupProtocol::PackedResponseSize(std::size_t result_count) const
-{ return Packed1BitResultSize(result_count); }
+{
+    return Packed1BitResultSize(result_count);
+}
 
 Status KvLookupProtocol::PackRequest(const KvRequest& req, void* target)
 {

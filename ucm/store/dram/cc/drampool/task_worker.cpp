@@ -95,14 +95,14 @@ Status TaskWorker::EnsurePeerReady(const transport::ManagerID& targetOneSidedId)
 {
     return ToUcStatus(
         runtime_.transport.Connect(transport::TransportProtocol::Hixl, targetOneSidedId),
-                      "TransportManager::Connect");
+        "TransportManager::Connect");
 }
 
 Status TaskWorker::ProcessDump(const KvDumpRequest& request,
-                                   const transport::ManagerID& peerOneSidedId)
+                               const transport::ManagerID& peerOneSidedId)
 {
-    const std::uint64_t ttl_ms = request.ttl != 0 ? static_cast<std::uint64_t>(request.ttl)
-                                                  : g_config.defaultDumpTtlMs;
+    const std::uint64_t ttl_ms =
+        request.ttl != 0 ? static_cast<std::uint64_t>(request.ttl) : g_config.defaultDumpTtlMs;
     const auto lifeTimeout = LifeTimeout(ttl_ms);
     std::vector<std::uint8_t> results(request.batch_size,
                                       static_cast<std::uint8_t>(ResultCode::Ok));
@@ -170,8 +170,7 @@ Status TaskWorker::ProcessDump(const KvDumpRequest& request,
     }
 
     if (transfer_items.empty()) {
-        return QueueResponse(KvOpcode::Dump, request.resp_addr, peerOneSidedId,
-                             std::move(results));
+        return QueueResponse(KvOpcode::Dump, request.resp_addr, peerOneSidedId, std::move(results));
     }
 
     TransportHandle handle = transport::kInvalidTransferHandle;
@@ -182,8 +181,7 @@ Status TaskWorker::ProcessDump(const KvDumpRequest& request,
         for (const auto& item : transfer_items) {
             results[item.index_in_request] = static_cast<std::uint8_t>(ResultCode::Failed);
         }
-        return QueueResponse(KvOpcode::Dump, request.resp_addr, peerOneSidedId,
-                             std::move(results));
+        return QueueResponse(KvOpcode::Dump, request.resp_addr, peerOneSidedId, std::move(results));
     }
 
     CompletionRecord record;
@@ -199,7 +197,7 @@ Status TaskWorker::ProcessDump(const KvDumpRequest& request,
 }
 
 Status TaskWorker::ProcessLoad(const KvLoadRequest& request,
-                                   const transport::ManagerID& peerOneSidedId)
+                               const transport::ManagerID& peerOneSidedId)
 {
     std::vector<std::uint8_t> results(request.batch_size,
                                       static_cast<std::uint8_t>(ResultCode::Ok));
@@ -224,8 +222,7 @@ Status TaskWorker::ProcessLoad(const KvLoadRequest& request,
             entry.len > metadataEntry->size) {
             const auto releaseStatus = runtime_.metadata.LoadEnd(entry.key);
             if (releaseStatus.Failure()) {
-                UC_ERROR("Load[{}] LoadEnd after len mismatch failed: {}", index,
-                         releaseStatus);
+                UC_ERROR("Load[{}] LoadEnd after len mismatch failed: {}", index, releaseStatus);
             }
             UC_ERROR("Load[{}] invalid len, requested={}, stored={}", index, entry.len,
                      metadataEntry->size);
@@ -235,13 +232,11 @@ Status TaskWorker::ProcessLoad(const KvLoadRequest& request,
 
         // The LOAD pin keeps metadata and buffer alive through async transport.
         transfer_items.emplace_back(TransferItem{index, entry.key, {}});
-        operation.ops.emplace_back(
-            transport::Segment{metadataEntry->addr, entry.addr, entry.len});
+        operation.ops.emplace_back(transport::Segment{metadataEntry->addr, entry.addr, entry.len});
     }
 
     if (transfer_items.empty()) {
-        return QueueResponse(KvOpcode::Load, request.resp_addr, peerOneSidedId,
-                             std::move(results));
+        return QueueResponse(KvOpcode::Load, request.resp_addr, peerOneSidedId, std::move(results));
     }
 
     TransportHandle handle = transport::kInvalidTransferHandle;
@@ -252,8 +247,7 @@ Status TaskWorker::ProcessLoad(const KvLoadRequest& request,
         for (const auto& item : transfer_items) {
             results[item.index_in_request] = static_cast<std::uint8_t>(ResultCode::Failed);
         }
-        return QueueResponse(KvOpcode::Load, request.resp_addr, peerOneSidedId,
-                             std::move(results));
+        return QueueResponse(KvOpcode::Load, request.resp_addr, peerOneSidedId, std::move(results));
     }
 
     CompletionRecord record;
@@ -269,18 +263,17 @@ Status TaskWorker::ProcessLoad(const KvLoadRequest& request,
 }
 
 Status TaskWorker::ProcessLookup(const KvLookupRequest& request,
-                                     const transport::ManagerID& peerOneSidedId)
+                                 const transport::ManagerID& peerOneSidedId)
 {
-    std::vector<std::uint8_t> results(
-        request.batch_size, static_cast<std::uint8_t>(LookupResult::NotFound));
+    std::vector<std::uint8_t> results(request.batch_size,
+                                      static_cast<std::uint8_t>(LookupResult::NotFound));
     for (std::uint16_t index = 0; index < request.batch_size; ++index) {
         if (runtime_.metadata.Exist(request.entries[index].key)) {
             results[index] = static_cast<std::uint8_t>(LookupResult::Exists);
         }
     }
 
-    return QueueResponse(KvOpcode::Lookup, request.resp_addr, peerOneSidedId,
-                         std::move(results));
+    return QueueResponse(KvOpcode::Lookup, request.resp_addr, peerOneSidedId, std::move(results));
 }
 
 void TaskWorker::RollbackDumpItems(const std::vector<TransferItem>& items)
@@ -306,8 +299,8 @@ void TaskWorker::UnpinLoadItems(const std::vector<TransferItem>& items)
 }
 
 Status TaskWorker::QueueResponse(KvOpcode opcode, std::uint64_t responseAddr,
-                                     const transport::ManagerID& peerOneSidedId,
-                                     std::vector<std::uint8_t>&& results)
+                                 const transport::ManagerID& peerOneSidedId,
+                                 std::vector<std::uint8_t>&& results)
 {
     CompletionRecord record;
     record.stage = CompletionStage::ResponseReady;

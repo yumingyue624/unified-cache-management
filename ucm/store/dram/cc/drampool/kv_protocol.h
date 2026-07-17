@@ -57,10 +57,14 @@ constexpr std::size_t kKvLoadEntrySize =
 constexpr std::size_t kKvLookupEntrySize = kKvKeySize;
 
 constexpr std::size_t Packed1BitResultSize(std::size_t resultCount)
-{ return resultCount / 8U + (resultCount % 8U != 0U ? 1U : 0U); }
+{
+    return resultCount / 8U + (resultCount % 8U != 0U ? 1U : 0U);
+}
 
 constexpr std::size_t Packed4BitResultSize(std::size_t resultCount)
-{ return resultCount / 2U + (resultCount % 2U != 0U ? 1U : 0U); }
+{
+    return resultCount / 2U + (resultCount % 2U != 0U ? 1U : 0U);
+}
 
 // Wire offsets shared by the client (pack) and server (unpack) sides.
 constexpr std::size_t kOpcodeOffset = 0;

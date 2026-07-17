@@ -4,7 +4,6 @@
  * Copyright (c) 2026 Huawei Technologies Co., Ltd. All rights reserved.
  * */
 #include "drampool_buffer.h"
-
 #include <limits>
 #include <string>
 #include <utility>
@@ -47,9 +46,9 @@ UC::Expected<BufferSlot> AllocateBuffer(DramPoolRuntime& runtime, std::uint32_t 
         }
 
         BufferSlot slot;
-        slot.handle = BufferHandle{static_cast<std::uint64_t>(sge.slot_index) + 1,
-                                   static_cast<std::uint32_t>(index),
-                                   transport::kInvalidMemoryHandle};
+        slot.handle =
+            BufferHandle{static_cast<std::uint64_t>(sge.slot_index) + 1,
+                         static_cast<std::uint32_t>(index), transport::kInvalidMemoryHandle};
         slot.addr = sge.local_addr;
         slot.len = sge.length;
         slot.class_id = static_cast<std::uint32_t>(index);
@@ -68,8 +67,7 @@ UC::Expected<BufferSlot> AllocateBuffer(DramPoolRuntime& runtime, std::uint32_t 
     }
 
     return foundSuitablePool ? Status::NoSpace()
-                             : Status::Error("no buffer pool fits len=" +
-                                                 std::to_string(len));
+                             : Status::Error("no buffer pool fits len=" + std::to_string(len));
 }
 
 Status FreeBuffer(DramPoolRuntime& runtime, const BufferHandle& handle)

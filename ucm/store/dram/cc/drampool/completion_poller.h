@@ -28,8 +28,7 @@ private:
     bool ProcessDataTransfer(CompletionRecord& record);
     Status SubmitResponse(CompletionRecord& record);
     bool ProcessResponseTransfer(CompletionRecord& record);
-    void SettleDataTransfer(CompletionRecord& record,
-                            transport::TransferStatus terminalStatus);
+    void SettleDataTransfer(CompletionRecord& record, transport::TransferStatus terminalStatus);
     bool OperationTimedOut(const CompletionRecord& record, std::uint64_t nowMs) const;
 
     DramPoolRuntime& runtime_;

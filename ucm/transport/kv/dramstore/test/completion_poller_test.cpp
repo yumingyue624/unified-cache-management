@@ -91,8 +91,8 @@ protected:
 
         auto bufferManager = std::make_unique<UC::ASU::BufferManager>();
         const auto bufferStatus =
-            bufferManager->Init("completion-poller-test", UC::ASU::MemoryType::HOST,
-                                kValueLength, kQueueCapacity, nullptr);
+            bufferManager->Init("completion-poller-test", UC::ASU::MemoryType::HOST, kValueLength,
+                                kQueueCapacity, nullptr);
         ASSERT_TRUE(bufferStatus.ok()) << bufferStatus.message;
         bufferManagers_.push_back(std::move(bufferManager));
 
@@ -136,7 +136,9 @@ protected:
             transport::Segment{reinterpret_cast<void*>(slot.addr), responseAddr, slot.len});
         EXPECT_EQ(manager_.ExecuteAsync(operation, handleOut), transport::Status::Ok);
 
-        std::vector<TransferItem> items{TransferItem{0, entry->key, slot.handle}};
+        std::vector<TransferItem> items{
+            TransferItem{0, entry->key, slot.handle}
+        };
         std::vector<std::uint8_t> results{static_cast<std::uint8_t>(ResultCode::Failed)};
 
         CompletionRecord record;
@@ -267,8 +269,7 @@ TEST_F(CompletionPollerTest, KeepsResponseBufferUntilAsyncWriteReachesTerminal)
     // The published Dump buffer and the response source buffer are both still registered.
     EXPECT_EQ(testTransport_->ActiveMemoryCount(), 2U);
 
-    ASSERT_TRUE(
-        testTransport_->SetStatus(responseHandle, transport::TransferStatus::Completed));
+    ASSERT_TRUE(testTransport_->SetStatus(responseHandle, transport::TransferStatus::Completed));
     const bool responseReleased = WaitUntil([&]() {
         return testTransport_->ActiveTransferCount() == 0 &&
                testTransport_->ActiveMemoryCount() == 1;
@@ -304,8 +305,7 @@ TEST_F(CompletionPollerTest, SendsResponseReadyRecordWithoutBlocking)
     EXPECT_EQ(testTransport_->LatestOperationLength(), 2U);
     EXPECT_EQ(testTransport_->ActiveMemoryCount(), 1U);
 
-    ASSERT_TRUE(
-        testTransport_->SetStatus(responseHandle, transport::TransferStatus::Completed));
+    ASSERT_TRUE(testTransport_->SetStatus(responseHandle, transport::TransferStatus::Completed));
     const bool responseReleased = WaitUntil([&]() {
         return testTransport_->ActiveTransferCount() == 0 &&
                testTransport_->ActiveMemoryCount() == 0;

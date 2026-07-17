@@ -25,7 +25,9 @@ std::uint64_t SteadyNowMs()
 }
 
 bool IsSuccessful(transport::TransferStatus status)
-{ return status == transport::TransferStatus::Completed; }
+{
+    return status == transport::TransferStatus::Completed;
+}
 
 }  // namespace
 
@@ -45,7 +47,9 @@ void CompletionPoller::Run(const std::atomic_bool& stop)
 }
 
 void CompletionPoller::RequestDrainAllAsFailed() noexcept
-{ failAllRequested_.store(true, std::memory_order_release); }
+{
+    failAllRequested_.store(true, std::memory_order_release);
+}
 
 std::size_t CompletionPoller::DrainNewCompletions()
 {
@@ -68,37 +72,37 @@ void CompletionPoller::PollPendingCompletions()
     // Scan only this head snapshot. Erase never pulls extra work into this round.
     for (std::size_t scanned = 0; scanned < scanCount; ++scanned) {
         switch (iter->stage) {
-        case CompletionStage::DataTransfer:
-            if (!ProcessDataTransfer(*iter)) {
-                ++iter;
+            case CompletionStage::DataTransfer:
+                if (!ProcessDataTransfer(*iter)) {
+                    ++iter;
+                    break;
+                }
+                // Data settlement moves the record to ResponseReady. Submit its response
+                // in this scan instead of deferring it to the next poll round.
+                [[fallthrough]];
+            case CompletionStage::ResponseReady: {
+                const auto status = SubmitResponse(*iter);
+                if (status.Failure()) {
+                    UC_ERROR("CompletionPoller SubmitResponse failed, opcode={}, error={}",
+                             static_cast<int>(iter->opcode), status);
+                    iter = pending_.erase(iter);
+                } else {
+                    ++iter;
+                }
                 break;
             }
-            // Data settlement moves the record to ResponseReady. Submit its response
-            // in this scan instead of deferring it to the next poll round.
-            [[fallthrough]];
-        case CompletionStage::ResponseReady: {
-            const auto status = SubmitResponse(*iter);
-            if (status.Failure()) {
-                UC_ERROR("CompletionPoller SubmitResponse failed, opcode={}, error={}",
-                         static_cast<int>(iter->opcode), status);
+            case CompletionStage::ResponseTransfer:
+                if (ProcessResponseTransfer(*iter)) {
+                    iter = pending_.erase(iter);
+                } else {
+                    ++iter;
+                }
+                break;
+            default:
+                UC_ERROR("CompletionPoller got invalid completion stage={}",
+                         static_cast<int>(iter->stage));
                 iter = pending_.erase(iter);
-            } else {
-                ++iter;
-            }
-            break;
-        }
-        case CompletionStage::ResponseTransfer:
-            if (ProcessResponseTransfer(*iter)) {
-                iter = pending_.erase(iter);
-            } else {
-                ++iter;
-            }
-            break;
-        default:
-            UC_ERROR("CompletionPoller got invalid completion stage={}",
-                     static_cast<int>(iter->stage));
-            iter = pending_.erase(iter);
-            break;
+                break;
         }
     }
 }
@@ -121,8 +125,7 @@ bool CompletionPoller::ProcessDataTransfer(CompletionRecord& record)
             failAllRequested_.load(std::memory_order_acquire)) {
             record.phase = InflightPhase::FailurePending;
         }
-        if (record.phase == InflightPhase::Polling &&
-            OperationTimedOut(record, SteadyNowMs())) {
+        if (record.phase == InflightPhase::Polling && OperationTimedOut(record, SteadyNowMs())) {
             record.phase = InflightPhase::FailurePending;
         }
         return false;
@@ -174,8 +177,7 @@ Status CompletionPoller::SubmitResponse(CompletionRecord& record)
 
     TransportHandle handle = transport::kInvalidTransferHandle;
     const auto submitStatus = runtime_.transport.ExecuteAsync(operation, handle);
-    if (submitStatus != transport::Status::Ok ||
-        handle == transport::kInvalidTransferHandle) {
+    if (submitStatus != transport::Status::Ok || handle == transport::kInvalidTransferHandle) {
         const auto freeStatus = FreeBuffer(runtime_, slot.handle);
         if (freeStatus.Failure()) {
             UC_ERROR("CompletionPoller Free response buffer after submit failure failed: {}",
@@ -198,17 +200,14 @@ Status CompletionPoller::SubmitResponse(CompletionRecord& record)
 bool CompletionPoller::ProcessResponseTransfer(CompletionRecord& record)
 {
     transport::TransferStatus transportStatus = transport::TransferStatus::Failed;
-    const auto queryStatus =
-        runtime_.transport.GetStatus(record.response_handle, transportStatus);
+    const auto queryStatus = runtime_.transport.GetStatus(record.response_handle, transportStatus);
     if (queryStatus != transport::Status::Ok) {
         // GetStatus removes failed handles, so the response source buffer is no longer in use.
-        UC_ERROR("CompletionPoller response GetStatus failed, handle={}",
-                 record.response_handle);
+        UC_ERROR("CompletionPoller response GetStatus failed, handle={}", record.response_handle);
     } else if (transportStatus == transport::TransferStatus::Waiting) {
         return false;
     } else if (!IsSuccessful(transportStatus)) {
-        UC_ERROR("CompletionPoller response transfer failed, handle={}",
-                 record.response_handle);
+        UC_ERROR("CompletionPoller response transfer failed, handle={}", record.response_handle);
     }
 
     const auto freeStatus = FreeBuffer(runtime_, record.response_buffer);
@@ -252,8 +251,8 @@ void CompletionPoller::SettleDataTransfer(CompletionRecord& record,
         } else if (record.opcode == KvOpcode::Load) {
             const auto releaseStatus = runtime_.metadata.LoadEnd(item.key);
             if (releaseStatus.Failure()) {
-                UC_ERROR("CompletionPoller LoadEnd failed, handle={}, error={}",
-                         record.data_handle, releaseStatus);
+                UC_ERROR("CompletionPoller LoadEnd failed, handle={}, error={}", record.data_handle,
+                         releaseStatus);
             } else if (IsSuccessful(terminalStatus)) {
                 result = ResultCode::Ok;
             }
@@ -269,8 +268,7 @@ void CompletionPoller::SettleDataTransfer(CompletionRecord& record,
     record.transfer_items.clear();
 }
 
-bool CompletionPoller::OperationTimedOut(const CompletionRecord& record,
-                                         std::uint64_t nowMs) const
+bool CompletionPoller::OperationTimedOut(const CompletionRecord& record, std::uint64_t nowMs) const
 {
     if (nowMs < record.submit_ms) { return false; }
     return nowMs - record.submit_ms >= g_config.opTimeoutMs;

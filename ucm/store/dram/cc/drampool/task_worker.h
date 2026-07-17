@@ -42,13 +42,13 @@ private:
     Status ProcessDump(const KvDumpRequest& request, const transport::ManagerID& peerOneSidedId);
     Status ProcessLoad(const KvLoadRequest& request, const transport::ManagerID& peerOneSidedId);
     Status ProcessLookup(const KvLookupRequest& request,
-                             const transport::ManagerID& peerOneSidedId);
+                         const transport::ManagerID& peerOneSidedId);
 
     void RollbackDumpItems(const std::vector<TransferItem>& items);
     void UnpinLoadItems(const std::vector<TransferItem>& items);
     Status QueueResponse(KvOpcode opcode, std::uint64_t responseAddr,
-                             const transport::ManagerID& peerOneSidedId,
-                             std::vector<std::uint8_t>&& results);
+                         const transport::ManagerID& peerOneSidedId,
+                         std::vector<std::uint8_t>&& results);
     Status SubmitCompletion(CompletionRecord&& record);
 
     DramPoolRuntime& runtime_;
