@@ -126,14 +126,16 @@ void PackHeader(std::uint8_t* out, KvOpcode opcode, std::uint64_t resp_addr,
 {
     out[kOpcodeOffset] = static_cast<std::uint8_t>(opcode);
     std::memcpy(out + kRespAddrOffset, &resp_addr, sizeof(resp_addr));
-    std::memcpy(out + kBatchSizeOffset, &batch_size, sizeof(batch_size));
+    std::memcpy(out + kLoadLookupBatchSizeOffset, &batch_size, sizeof(batch_size));
 }
 
-void PackDumpHeader(std::uint8_t* out, KvOpcode opcode, std::uint64_t resp_addr,
-                    std::uint16_t batch_size, std::uint32_t ttl)
+void PackDumpHeader(std::uint8_t* out, KvOpcode opcode, std::uint64_t resp_addr, std::uint32_t ttl,
+                    std::uint16_t batch_size)
 {
-    PackHeader(out, opcode, resp_addr, batch_size);
+    out[kOpcodeOffset] = static_cast<std::uint8_t>(opcode);
+    std::memcpy(out + kRespAddrOffset, &resp_addr, sizeof(resp_addr));
     std::memcpy(out + kDumpTtlOffset, &ttl, sizeof(ttl));
+    std::memcpy(out + kDumpBatchSizeOffset, &batch_size, sizeof(batch_size));
 }
 
 // ===========================================================================
@@ -160,7 +162,7 @@ Status KvDumpProtocol::PackRequest(const KvRequest& req, void* target)
     if (!status.Success()) { return status; }
 
     auto* out = static_cast<std::uint8_t*>(target);
-    PackDumpHeader(out, r.opcode, r.resp_addr, r.batch_size, r.ttl);
+    PackDumpHeader(out, r.opcode, r.resp_addr, r.ttl, r.batch_size);
 
     for (std::size_t i = 0; i < r.entries.size(); ++i) {
         const auto& entry = r.entries[i];
@@ -220,7 +222,9 @@ Status KvDumpProtocol::UnpackRequest(const void* data, std::size_t size,
     std::memcpy(&req->resp_addr, bytes + kRespAddrOffset, sizeof(req->resp_addr));
     if (req->resp_addr == 0) { return Status::InvalidParam("Dump: resp_addr is zero"); }
 
-    std::memcpy(&req->batch_size, bytes + kBatchSizeOffset, sizeof(req->batch_size));
+    std::memcpy(&req->ttl, bytes + kDumpTtlOffset, sizeof(req->ttl));
+
+    std::memcpy(&req->batch_size, bytes + kDumpBatchSizeOffset, sizeof(req->batch_size));
     if (req->batch_size == 0) { return Status::InvalidParam("Dump: batch_size is zero"); }
 
     std::size_t expected_size =
@@ -230,7 +234,6 @@ Status KvDumpProtocol::UnpackRequest(const void* data, std::size_t size,
                                     std::to_string(expected_size) + ")");
     }
 
-    std::memcpy(&req->ttl, bytes + kDumpTtlOffset, sizeof(req->ttl));
     req->entries.resize(req->batch_size);
     for (std::size_t i = 0; i < req->batch_size; ++i) {
         const std::uint8_t* base = bytes + kKvDumpRequestHeaderSize + i * kKvDumpEntrySize;
@@ -346,7 +349,7 @@ Status KvLoadProtocol::UnpackRequest(const void* data, std::size_t size,
     std::memcpy(&req->resp_addr, bytes + kRespAddrOffset, sizeof(req->resp_addr));
     if (req->resp_addr == 0) { return Status::InvalidParam("Load: resp_addr is zero"); }
 
-    std::memcpy(&req->batch_size, bytes + kBatchSizeOffset, sizeof(req->batch_size));
+    std::memcpy(&req->batch_size, bytes + kLoadLookupBatchSizeOffset, sizeof(req->batch_size));
     if (req->batch_size == 0) { return Status::InvalidParam("Load: batch_size is zero"); }
 
     std::size_t expected_size =
@@ -463,7 +466,7 @@ Status KvLookupProtocol::UnpackRequest(const void* data, std::size_t size,
     std::memcpy(&req->resp_addr, bytes + kRespAddrOffset, sizeof(req->resp_addr));
     if (req->resp_addr == 0) { return Status::InvalidParam("Lookup: resp_addr is zero"); }
 
-    std::memcpy(&req->batch_size, bytes + kBatchSizeOffset, sizeof(req->batch_size));
+    std::memcpy(&req->batch_size, bytes + kLoadLookupBatchSizeOffset, sizeof(req->batch_size));
     if (req->batch_size == 0) { return Status::InvalidParam("Lookup: batch_size is zero"); }
 
     std::size_t expected_size =

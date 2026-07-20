@@ -85,8 +85,8 @@ TEST_F(KvProtocolTest, PackDumpRequestMatchesLayout)
 
     EXPECT_EQ(packed[0], static_cast<std::uint8_t>(KvOpcode::Dump));
     ExpectLe64(packed, 1, req.resp_addr);
-    ExpectLe16(packed, 9, req.batch_size);
-    ExpectLe32(packed, kDumpTtlOffset, req.ttl);
+    ExpectLe32(packed, 9, req.ttl);
+    ExpectLe16(packed, 13, req.batch_size);
     EXPECT_EQ(packed.size(), kKvDumpRequestHeaderSize + kKvDumpEntrySize);
     EXPECT_EQ(std::memcmp(packed.data() + kKvDumpRequestHeaderSize, entry.key.data(), kKvKeySize),
               0);

@@ -56,7 +56,7 @@ constexpr std::size_t kKvLoadRequestHeaderSize =
 constexpr std::size_t kKvLookupRequestHeaderSize =
     sizeof(std::uint8_t) + sizeof(std::uint64_t) + sizeof(std::uint16_t);
 constexpr std::size_t kKvDumpRequestHeaderSize =
-    sizeof(std::uint8_t) + sizeof(std::uint64_t) + sizeof(std::uint16_t) + sizeof(std::uint32_t);
+    sizeof(std::uint8_t) + sizeof(std::uint64_t) + sizeof(std::uint32_t) + sizeof(std::uint16_t);
 constexpr std::size_t kKvDumpEntrySize =
     kKvKeySize + sizeof(std::uint64_t) + sizeof(std::uint32_t) + sizeof(std::uint32_t);
 constexpr std::size_t kKvLoadEntrySize =
@@ -78,8 +78,9 @@ constexpr std::size_t Packed4BitResultSize(std::size_t resultCount)
 // Wire offsets shared by the client (pack) and server (unpack) sides.
 constexpr std::size_t kOpcodeOffset = 0;
 constexpr std::size_t kRespAddrOffset = 1;
-constexpr std::size_t kBatchSizeOffset = 9;
-constexpr std::size_t kDumpTtlOffset = 11;
+constexpr std::size_t kLoadLookupBatchSizeOffset = 9;
+constexpr std::size_t kDumpTtlOffset = 9;
+constexpr std::size_t kDumpBatchSizeOffset = 13;
 
 constexpr std::size_t kDumpEntryKeyOffset = 0;
 constexpr std::size_t kDumpEntryAddrOffset = 16;
@@ -123,8 +124,8 @@ public:
 class KvDumpRequest : public KvRequest {
 public:
     std::uint64_t resp_addr{0};
-    std::uint16_t batch_size{0};
     std::uint32_t ttl{0};
+    std::uint16_t batch_size{0};
     std::vector<KvDumpEntry> entries;
 };
 
@@ -164,9 +165,9 @@ const char* ProtocolName(KvOpcode opcode);
 void PackHeader(std::uint8_t* out, KvOpcode opcode, std::uint64_t resp_addr,
                 std::uint16_t batch_size);
 
-// Write the Dump header (opcode + resp_addr + batch_size + ttl) into out.
-void PackDumpHeader(std::uint8_t* out, KvOpcode opcode, std::uint64_t resp_addr,
-                    std::uint16_t batch_size, std::uint32_t ttl);
+// Write the Dump header (opcode + resp_addr + ttl + batch_size) into out.
+void PackDumpHeader(std::uint8_t* out, KvOpcode opcode, std::uint64_t resp_addr, std::uint32_t ttl,
+                    std::uint16_t batch_size);
 
 // Validate resp_addr != 0 and batch_size == entries.size() (and non-zero).
 template <typename Req>
