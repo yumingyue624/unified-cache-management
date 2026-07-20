@@ -63,16 +63,6 @@ constexpr std::size_t kKvLookupEntrySize = kKvKeySize;
 constexpr std::size_t kResponseStatusOffset = 0;
 constexpr std::size_t kResponseResultsOffset = sizeof(std::uint8_t);
 
-constexpr std::size_t Packed1BitResultSize(std::size_t resultCount)
-{
-    return resultCount / 8U + (resultCount % 8U != 0U ? 1U : 0U);
-}
-
-constexpr std::size_t Packed4BitResultSize(std::size_t resultCount)
-{
-    return resultCount / 2U + (resultCount % 2U != 0U ? 1U : 0U);
-}
-
 // Wire offsets shared by the client (pack) and server (unpack) sides.
 constexpr std::size_t kOpcodeOffset = 0;
 constexpr std::size_t kRespAddrOffset = 1;
@@ -114,8 +104,22 @@ public:
     KvOpcode opcode{KvOpcode::None};
 };
 
+class KvResponse {
+public:
+    std::vector<std::uint8_t> results;
+};
+
 class KvDumpRequest : public KvRequest {
 public:
+    std::size_t GetPackedRequestSize() const;
+    Status PackRequest(void* target) const;
+    Status UnpackRequest(const void* data, std::size_t size);
+
+    static std::size_t GetPackedResponseSize(std::size_t result_count);
+    static Status IsResponseReady(const void* data, bool& ready);
+    static Status PackResponse(void* data, const KvResponse& response);
+    static Status UnpackResponse(const void* data, std::uint16_t result_count, KvResponse& out);
+
     std::uint64_t resp_addr{0};
     std::uint32_t ttl{0};
     std::uint16_t batch_size{0};
@@ -124,6 +128,15 @@ public:
 
 class KvLoadRequest : public KvRequest {
 public:
+    std::size_t GetPackedRequestSize() const;
+    Status PackRequest(void* target) const;
+    Status UnpackRequest(const void* data, std::size_t size);
+
+    static std::size_t GetPackedResponseSize(std::size_t result_count);
+    static Status IsResponseReady(const void* data, bool& ready);
+    static Status PackResponse(void* data, const KvResponse& response);
+    static Status UnpackResponse(const void* data, std::uint16_t result_count, KvResponse& out);
+
     std::uint64_t resp_addr{0};
     std::uint16_t batch_size{0};
     std::vector<KvLoadEntry> entries;
@@ -131,30 +144,32 @@ public:
 
 class KvLookupRequest : public KvRequest {
 public:
+    std::size_t GetPackedRequestSize() const;
+    Status PackRequest(void* target) const;
+    Status UnpackRequest(const void* data, std::size_t size);
+
+    static std::size_t GetPackedResponseSize(std::size_t result_count);
+    static Status IsResponseReady(const void* data, bool& ready);
+    static Status PackResponse(void* data, const KvResponse& response);
+    static Status UnpackResponse(const void* data, std::uint16_t result_count, KvResponse& out);
+
     std::uint64_t resp_addr{0};
     std::uint16_t batch_size{0};
     std::vector<KvLookupEntry> entries;
 };
 
-class KvResponse {
-public:
-    std::vector<std::uint8_t> results;
-};
-
-// ---------------------------------------------------------------------------
-// Protocol classes
-// ---------------------------------------------------------------------------
-
-// Implemented in kv_protocol.cpp and explicitly instantiated for the supported request types.
+// Thin adapter used by ProtocolManager for type-safe dispatch.
 template <typename RequestT>
 class KvProtocol {
 public:
-    std::size_t PackedSize(const RequestT& req) const;
-    std::size_t PackedResponseSize(std::size_t result_count) const;
-    Status PackRequest(const RequestT& req, void* target) const;
-    Status UnpackResponse(const void* data, std::uint16_t result_count, KvResponse& out) const;
+    std::size_t GetPackedRequestSize(const RequestT& request) const;
+    Status PackRequest(const RequestT& request, void* target) const;
     Status UnpackRequest(const void* data, std::size_t size, std::unique_ptr<RequestT>& out) const;
-    Status PackResponse(void* data, const KvResponse& resp) const;
+
+    std::size_t GetPackedResponseSize(std::size_t result_count) const;
+    Status IsResponseReady(const void* data, bool& ready) const;
+    Status PackResponse(void* data, const KvResponse& response) const;
+    Status UnpackResponse(const void* data, std::uint16_t result_count, KvResponse& out) const;
 };
 
 using KvDumpProtocol = KvProtocol<KvDumpRequest>;
@@ -168,20 +183,21 @@ public:
     ProtocolManager(const ProtocolManager&) = delete;
     ProtocolManager& operator=(const ProtocolManager&) = delete;
 
-    // Client side
+    // DramStore side: pack requests and poll/unpack responses.
     template <typename RequestT>
-    std::size_t GetPackedSize(const RequestT& req) const;
+    std::size_t GetPackedRequestSize(const RequestT& request) const;
 
     template <typename RequestT>
-    Status PackRequest(void* data, const RequestT& req) const;
+    Status PackRequest(void* data, const RequestT& request) const;
 
     std::size_t GetPackedResponseSize(KvOpcode opcode, std::size_t result_count) const;
     Status IsResponseReady(const void* data, bool& ready) const;
     Status UnpackResponse(const void* data, KvOpcode opcode, std::uint16_t result_count,
                           KvResponse& out);
-    // Server side
+
+    // DramPool side: unpack requests and pack responses.
     Status UnpackRequest(const void* data, std::size_t size, std::unique_ptr<KvRequest>& out);
-    Status PackResponse(void* data, KvOpcode opcode, const KvResponse& resp);
+    Status PackResponse(void* data, KvOpcode opcode, const KvResponse& response);
 };
 
 }  // namespace UC::DramPool

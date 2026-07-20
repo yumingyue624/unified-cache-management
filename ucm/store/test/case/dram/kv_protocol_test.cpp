@@ -60,6 +60,97 @@ protected:
     ProtocolManager mgr_;
 };
 
+TEST_F(KvProtocolTest, DumpRequestOwnsRequestAndResponseProtocolOperations)
+{
+    KvDumpRequest request;
+    request.opcode = KvOpcode::Dump;
+    request.resp_addr = 0x1000;
+    request.ttl = 30;
+    request.batch_size = 1;
+    request.entries = {
+        KvDumpEntry{KeyFromHex("10"), 0x2000, 64, 7}
+    };
+
+    std::vector<std::uint8_t> packed(request.GetPackedRequestSize());
+    ASSERT_TRUE(request.PackRequest(packed.data()).Success());
+    KvDumpRequest unpackedRequest;
+    ASSERT_TRUE(unpackedRequest.UnpackRequest(packed.data(), packed.size()).Success());
+    EXPECT_EQ(unpackedRequest.ttl, request.ttl);
+    EXPECT_EQ(unpackedRequest.entries[0].idx, request.entries[0].idx);
+
+    KvResponse response{{0x0F}};
+    std::vector<std::uint8_t> packedResponse(
+        KvDumpRequest::GetPackedResponseSize(response.results.size()));
+    ASSERT_TRUE(KvDumpRequest::PackResponse(packedResponse.data(), response).Success());
+    bool ready = false;
+    ASSERT_TRUE(KvDumpRequest::IsResponseReady(packedResponse.data(), ready).Success());
+    EXPECT_TRUE(ready);
+    KvResponse unpackedResponse;
+    ASSERT_TRUE(
+        KvDumpRequest::UnpackResponse(packedResponse.data(), 1, unpackedResponse).Success());
+    EXPECT_EQ(unpackedResponse.results, response.results);
+}
+
+TEST_F(KvProtocolTest, LoadRequestOwnsRequestAndResponseProtocolOperations)
+{
+    KvLoadRequest request;
+    request.opcode = KvOpcode::Load;
+    request.resp_addr = 0x3000;
+    request.batch_size = 1;
+    request.entries = {
+        KvLoadEntry{KeyFromHex("20"), 0x4000, 128, 9}
+    };
+
+    std::vector<std::uint8_t> packed(request.GetPackedRequestSize());
+    ASSERT_TRUE(request.PackRequest(packed.data()).Success());
+    KvLoadRequest unpackedRequest;
+    ASSERT_TRUE(unpackedRequest.UnpackRequest(packed.data(), packed.size()).Success());
+    EXPECT_EQ(unpackedRequest.entries[0].len, request.entries[0].len);
+
+    KvResponse response{
+        {1, 2}
+    };
+    std::vector<std::uint8_t> packedResponse(
+        KvLoadRequest::GetPackedResponseSize(response.results.size()));
+    ASSERT_TRUE(KvLoadRequest::PackResponse(packedResponse.data(), response).Success());
+    bool ready = false;
+    ASSERT_TRUE(KvLoadRequest::IsResponseReady(packedResponse.data(), ready).Success());
+    EXPECT_TRUE(ready);
+    KvResponse unpackedResponse;
+    ASSERT_TRUE(
+        KvLoadRequest::UnpackResponse(packedResponse.data(), 2, unpackedResponse).Success());
+    EXPECT_EQ(unpackedResponse.results, response.results);
+}
+
+TEST_F(KvProtocolTest, LookupRequestOwnsRequestAndResponseProtocolOperations)
+{
+    KvLookupRequest request;
+    request.opcode = KvOpcode::Lookup;
+    request.resp_addr = 0x5000;
+    request.batch_size = 1;
+    request.entries = {KvLookupEntry{KeyFromHex("30")}};
+
+    std::vector<std::uint8_t> packed(request.GetPackedRequestSize());
+    ASSERT_TRUE(request.PackRequest(packed.data()).Success());
+    KvLookupRequest unpackedRequest;
+    ASSERT_TRUE(unpackedRequest.UnpackRequest(packed.data(), packed.size()).Success());
+    EXPECT_EQ(unpackedRequest.entries[0].key, request.entries[0].key);
+
+    KvResponse response{
+        {1, 0, 1}
+    };
+    std::vector<std::uint8_t> packedResponse(
+        KvLookupRequest::GetPackedResponseSize(response.results.size()));
+    ASSERT_TRUE(KvLookupRequest::PackResponse(packedResponse.data(), response).Success());
+    bool ready = false;
+    ASSERT_TRUE(KvLookupRequest::IsResponseReady(packedResponse.data(), ready).Success());
+    EXPECT_TRUE(ready);
+    KvResponse unpackedResponse;
+    ASSERT_TRUE(
+        KvLookupRequest::UnpackResponse(packedResponse.data(), 3, unpackedResponse).Success());
+    EXPECT_EQ(unpackedResponse.results, response.results);
+}
+
 TEST_F(KvProtocolTest, PackDumpRequestMatchesLayout)
 {
     KvDumpEntry entry;
@@ -75,7 +166,7 @@ TEST_F(KvProtocolTest, PackDumpRequestMatchesLayout)
     req.ttl = 0x99AABBCCU;
     req.entries = {entry};
 
-    std::vector<std::uint8_t> packed(mgr_.GetPackedSize(req), 0);
+    std::vector<std::uint8_t> packed(mgr_.GetPackedRequestSize(req), 0);
     auto status = mgr_.PackRequest(packed.data(), req);
     ASSERT_TRUE(status.Success()) << status.ToString();
 
@@ -105,7 +196,7 @@ TEST_F(KvProtocolTest, PackLoadRequestMatchesLayout)
     req.batch_size = 1;
     req.entries = {entry};
 
-    std::vector<std::uint8_t> packed(mgr_.GetPackedSize(req), 0);
+    std::vector<std::uint8_t> packed(mgr_.GetPackedRequestSize(req), 0);
     auto status = mgr_.PackRequest(packed.data(), req);
     ASSERT_TRUE(status.Success()) << status.ToString();
 
@@ -129,7 +220,7 @@ TEST_F(KvProtocolTest, PackLookupRequestMatchesLayout)
     req.batch_size = 2;
     req.entries = {entry0, entry1};
 
-    std::vector<std::uint8_t> packed(mgr_.GetPackedSize(req), 0);
+    std::vector<std::uint8_t> packed(mgr_.GetPackedRequestSize(req), 0);
     auto status = mgr_.PackRequest(packed.data(), req);
     ASSERT_TRUE(status.Success()) << status.ToString();
 
@@ -170,7 +261,7 @@ TEST_F(KvProtocolTest, RejectsAllZeroKey)
     req.batch_size = 1;
     req.entries = {entry};
 
-    std::vector<std::uint8_t> packed(mgr_.GetPackedSize(req), 0);
+    std::vector<std::uint8_t> packed(mgr_.GetPackedRequestSize(req), 0);
     auto status = mgr_.PackRequest(packed.data(), req);
     EXPECT_FALSE(status.Success());
     EXPECT_NE(status.ToString().find("key"), std::string::npos);
@@ -189,7 +280,7 @@ TEST_F(KvProtocolTest, RejectsZeroDumpLoadAddrAndLen)
     req.batch_size = 1;
     req.entries = {entry};
 
-    std::vector<std::uint8_t> packed(mgr_.GetPackedSize(req), 0);
+    std::vector<std::uint8_t> packed(mgr_.GetPackedRequestSize(req), 0);
     auto status = mgr_.PackRequest(packed.data(), req);
     EXPECT_FALSE(status.Success());
     EXPECT_NE(status.ToString().find("addr"), std::string::npos);
@@ -212,7 +303,7 @@ TEST_F(KvProtocolTest, UnpackRequestRejectsWrongSize)
     req.batch_size = 1;
     req.entries = {entry};
 
-    std::vector<std::uint8_t> packed(mgr_.GetPackedSize(req), 0);
+    std::vector<std::uint8_t> packed(mgr_.GetPackedRequestSize(req), 0);
     auto status = mgr_.PackRequest(packed.data(), req);
     ASSERT_TRUE(status.Success()) << status.ToString();
 
@@ -252,7 +343,7 @@ TEST_F(KvProtocolTest, ServerRoundTripDumpLoad)
     req.entries = {entry};
 
     // client packs
-    std::vector<std::uint8_t> packed(mgr_.GetPackedSize(req), 0);
+    std::vector<std::uint8_t> packed(mgr_.GetPackedRequestSize(req), 0);
     ASSERT_TRUE(mgr_.PackRequest(packed.data(), req).Success());
 
     // server unpacks (validation merged into UnpackRequest)
@@ -292,7 +383,7 @@ TEST_F(KvProtocolTest, ServerRoundTripLookup)
     req.entries = {e0, e1};
 
     // client packs
-    std::vector<std::uint8_t> packed(mgr_.GetPackedSize(req), 0);
+    std::vector<std::uint8_t> packed(mgr_.GetPackedRequestSize(req), 0);
     ASSERT_TRUE(mgr_.PackRequest(packed.data(), req).Success());
 
     // server verifies + unpacks
@@ -334,7 +425,7 @@ TEST_F(KvProtocolTest, DumpLoadMaxFieldValuesRoundTrip)
     req.batch_size = 1;
     req.entries = {entry};
 
-    std::vector<std::uint8_t> packed(mgr_.GetPackedSize(req), 0);
+    std::vector<std::uint8_t> packed(mgr_.GetPackedRequestSize(req), 0);
     ASSERT_TRUE(mgr_.PackRequest(packed.data(), req).Success());
 
     std::unique_ptr<KvRequest> parsed;
@@ -368,7 +459,7 @@ TEST_F(KvProtocolTest, DumpLoadMultiEntryRoundTrip)
         req.entries.push_back(e);
     }
 
-    std::vector<std::uint8_t> packed(mgr_.GetPackedSize(req), 0);
+    std::vector<std::uint8_t> packed(mgr_.GetPackedRequestSize(req), 0);
     ASSERT_TRUE(mgr_.PackRequest(packed.data(), req).Success());
 
     std::unique_ptr<KvRequest> parsed;
@@ -398,7 +489,7 @@ TEST_F(KvProtocolTest, LookupMultiEntryRoundTrip)
         req.entries.push_back(e);
     }
 
-    std::vector<std::uint8_t> packed(mgr_.GetPackedSize(req), 0);
+    std::vector<std::uint8_t> packed(mgr_.GetPackedRequestSize(req), 0);
     ASSERT_TRUE(mgr_.PackRequest(packed.data(), req).Success());
 
     std::unique_ptr<KvRequest> parsed;
@@ -424,7 +515,7 @@ TEST_F(KvProtocolTest, RejectsNoneOpcodeOnDumpLoad)
         KvDumpEntry{KeyFromHex("10"), 0x2000, 0x100, 0}
     };
 
-    std::vector<std::uint8_t> buf(mgr_.GetPackedSize(req), 0);
+    std::vector<std::uint8_t> buf(mgr_.GetPackedRequestSize(req), 0);
     auto status = mgr_.PackRequest(buf.data(), req);
     EXPECT_FALSE(status.Success());
     EXPECT_NE(status.ToString().find("opcode"), std::string::npos);
@@ -440,7 +531,7 @@ TEST_F(KvProtocolTest, RejectsOpcodeMismatch)
         KvDumpEntry{KeyFromHex("10"), 0x2000, 0x100, 0}
     };
 
-    std::vector<std::uint8_t> buf(mgr_.GetPackedSize(req), 0);
+    std::vector<std::uint8_t> buf(mgr_.GetPackedRequestSize(req), 0);
     auto status = mgr_.PackRequest(buf.data(), req);
     EXPECT_FALSE(status.Success());
     EXPECT_NE(status.ToString().find("opcode"), std::string::npos);
@@ -481,7 +572,7 @@ TEST_F(KvProtocolTest, UnpackRequestRejectsExtraBytes)
     req.batch_size = 1;
     req.entries = {KvLookupEntry{KeyFromHex("70")}};
 
-    std::vector<std::uint8_t> packed(mgr_.GetPackedSize(req), 0);
+    std::vector<std::uint8_t> packed(mgr_.GetPackedRequestSize(req), 0);
     ASSERT_TRUE(mgr_.PackRequest(packed.data(), req).Success());
     packed.push_back(0x00);  // one extra byte
     std::unique_ptr<KvRequest> parsed;
@@ -531,7 +622,7 @@ TEST_F(KvProtocolTest, UnpackRequestRejectsSizeMismatch)
         KvDumpEntry{KeyFromHex("20"), 0x3000, 0x200, 1}
     };
 
-    std::vector<std::uint8_t> packed(mgr_.GetPackedSize(req), 0);
+    std::vector<std::uint8_t> packed(mgr_.GetPackedRequestSize(req), 0);
     ASSERT_TRUE(mgr_.PackRequest(packed.data(), req).Success());
     std::unique_ptr<KvRequest> out;
     // truncated by 1 byte
@@ -691,7 +782,7 @@ TEST_F(KvProtocolTest, MultiRoundSequentialPacks)
             req.entries = {
                 KvDumpEntry{KeyFromHex(std::to_string(round + 1U).c_str()), addr, len, round}
             };
-            packed.resize(mgr_.GetPackedSize(req), 0);
+            packed.resize(mgr_.GetPackedRequestSize(req), 0);
             ASSERT_TRUE(mgr_.PackRequest(packed.data(), req).Success()) << "round " << round;
         } else {
             KvLoadRequest req;
@@ -701,7 +792,7 @@ TEST_F(KvProtocolTest, MultiRoundSequentialPacks)
             req.entries = {
                 KvLoadEntry{KeyFromHex(std::to_string(round + 1U).c_str()), addr, len, round}
             };
-            packed.resize(mgr_.GetPackedSize(req), 0);
+            packed.resize(mgr_.GetPackedRequestSize(req), 0);
             ASSERT_TRUE(mgr_.PackRequest(packed.data(), req).Success()) << "round " << round;
         }
 
