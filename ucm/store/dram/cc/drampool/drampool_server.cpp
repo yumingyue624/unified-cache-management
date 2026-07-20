@@ -229,9 +229,11 @@ Status DramPoolServer::StartTransportService()
         status.Failure()) {
         return status;
     }
-    const bool isIpv6 = managerEndpoint.host.find(':') != std::string::npos;
-    attrs.local_engine = (isIpv6 ? "[" + managerEndpoint.host + "]" : managerEndpoint.host) + ":-1";
-    attrs.device_id = g_config.transportDeviceId;
+    attrs.ip = managerEndpoint.host;
+    transport::HixlInitAttrs::Instance instance;
+    instance.port = -1;
+    instance.device_id = g_config.transportDeviceId;
+    attrs.instances.push_back(std::move(instance));
     attrs.connect_timeout_ms = static_cast<std::int32_t>(g_config.opTimeoutMs);
     attrs.transfer_timeout_ms = static_cast<std::int32_t>(g_config.opTimeoutMs);
     auto status = transportManager_->InstallTransport(transport::TransportProtocol::Hixl, attrs);
@@ -529,7 +531,7 @@ void DramPoolServer::ResetInitializedComponents()
     metadataManager_.reset();
     tcpMessageChannel_.reset();
     bufferPoolMemoryHandles_.clear();
-    bufferManager_.Reset();
+    bufferManager_.reset();
     transportManager_.reset();
     if (aclRuntimeOwned_) {
         (void)aclrtResetDevice(g_config.transportDeviceId);
