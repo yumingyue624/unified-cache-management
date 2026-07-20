@@ -50,28 +50,30 @@ const char* ProtocolName(KvOpcode opcode)
     }
 }
 
-constexpr KvOpcode RequestOpcode(const KvDumpRequest&) { return KvOpcode::Dump; }
-constexpr KvOpcode RequestOpcode(const KvLoadRequest&) { return KvOpcode::Load; }
-constexpr KvOpcode RequestOpcode(const KvLookupRequest&) { return KvOpcode::Lookup; }
+template <KvOpcode Opcode, std::size_t HeaderSize, std::size_t EntrySize, std::size_t BatchOffset>
+struct RequestLayout {
+    static constexpr KvOpcode kOpcode = Opcode;
+    static constexpr std::size_t kHeaderSize = HeaderSize;
+    static constexpr std::size_t kEntrySize = EntrySize;
+    static constexpr std::size_t kBatchOffset = BatchOffset;
+};
 
-constexpr std::size_t RequestHeaderSize(const KvDumpRequest&) { return kKvDumpRequestHeaderSize; }
+template <typename RequestT>
+struct RequestTraits;
 
-constexpr std::size_t RequestHeaderSize(const KvLoadRequest&) { return kKvLoadRequestHeaderSize; }
+template <>
+struct RequestTraits<KvDumpRequest> : RequestLayout<KvOpcode::Dump, kKvDumpRequestHeaderSize,
+                                                    kKvDumpEntrySize, kDumpBatchSizeOffset> {};
 
-constexpr std::size_t RequestHeaderSize(const KvLookupRequest&)
-{
-    return kKvLookupRequestHeaderSize;
-}
+template <>
+struct RequestTraits<KvLoadRequest> : RequestLayout<KvOpcode::Load, kKvLoadRequestHeaderSize,
+                                                    kKvLoadEntrySize, kLoadLookupBatchSizeOffset> {
+};
 
-constexpr std::size_t RequestEntrySize(const KvDumpRequest&) { return kKvDumpEntrySize; }
-constexpr std::size_t RequestEntrySize(const KvLoadRequest&) { return kKvLoadEntrySize; }
-constexpr std::size_t RequestEntrySize(const KvLookupRequest&) { return kKvLookupEntrySize; }
-
-constexpr std::size_t BatchSizeOffset(const KvDumpRequest&) { return kDumpBatchSizeOffset; }
-
-constexpr std::size_t BatchSizeOffset(const KvLoadRequest&) { return kLoadLookupBatchSizeOffset; }
-
-constexpr std::size_t BatchSizeOffset(const KvLookupRequest&) { return kLoadLookupBatchSizeOffset; }
+template <>
+struct RequestTraits<KvLookupRequest>
+    : RequestLayout<KvOpcode::Lookup, kKvLookupRequestHeaderSize, kKvLookupEntrySize,
+                    kLoadLookupBatchSizeOffset> {};
 
 template <typename Entry>
 void PackDumpLoadEntry(std::uint8_t* output, const Entry& entry)
@@ -157,7 +159,7 @@ Status UnpackEntry(const std::uint8_t* input, KvLookupEntry& entry, std::size_t 
 template <typename Request>
 Status ValidateRequest(const Request& request)
 {
-    const auto opcode = RequestOpcode(request);
+    constexpr auto opcode = RequestTraits<Request>::kOpcode;
     const std::string protocol = ProtocolName(opcode);
     if (request.opcode != opcode) { return Status::InvalidParam(protocol + ": opcode mismatch"); }
     if (request.resp_addr == 0) { return Status::InvalidParam(protocol + ": resp_addr is zero"); }
@@ -319,8 +321,8 @@ Status UnpackTypedRequest(const void* data, std::size_t size, std::unique_ptr<Kv
 template <typename RequestT>
 std::size_t KvProtocol<RequestT>::PackedSize(const RequestT& req) const
 {
-    return RequestHeaderSize(req) +
-           static_cast<std::size_t>(req.batch_size) * RequestEntrySize(req);
+    return RequestTraits<RequestT>::kHeaderSize +
+           static_cast<std::size_t>(req.batch_size) * RequestTraits<RequestT>::kEntrySize;
 }
 
 template <typename RequestT>
@@ -333,7 +335,7 @@ template <typename RequestT>
 Status KvProtocol<RequestT>::PackRequest(const RequestT& req, void* target) const
 {
     if (!target) {
-        return Status::InvalidParam(std::string{ProtocolName(RequestOpcode(req))} +
+        return Status::InvalidParam(std::string{ProtocolName(RequestTraits<RequestT>::kOpcode)} +
                                     ": PackRequest target is null");
     }
     if (auto status = ValidateRequest(req); status.Failure()) { return status; }
@@ -341,7 +343,8 @@ Status KvProtocol<RequestT>::PackRequest(const RequestT& req, void* target) cons
     auto* output = static_cast<std::uint8_t*>(target);
     PackRequestHeader(output, req);
     for (std::size_t index = 0; index < req.entries.size(); ++index) {
-        PackEntry(output + RequestHeaderSize(req) + index * RequestEntrySize(req),
+        PackEntry(output + RequestTraits<RequestT>::kHeaderSize +
+                      index * RequestTraits<RequestT>::kEntrySize,
                   req.entries[index]);
     }
     return Status::OK();
@@ -352,7 +355,7 @@ Status KvProtocol<RequestT>::UnpackResponse(const void* data, std::uint16_t resu
                                             KvResponse& out) const
 {
     if (!data) {
-        return Status::InvalidParam(std::string{ProtocolName(RequestOpcode(RequestT{}))} +
+        return Status::InvalidParam(std::string{ProtocolName(RequestTraits<RequestT>::kOpcode)} +
                                     ": UnpackResponse data is null");
     }
     const auto* bytes = static_cast<const std::uint8_t*>(data);
@@ -364,10 +367,9 @@ template <typename RequestT>
 Status KvProtocol<RequestT>::UnpackRequest(const void* data, std::size_t size,
                                            std::unique_ptr<RequestT>& out) const
 {
-    const RequestT requestTag;
-    const auto opcode = RequestOpcode(requestTag);
+    constexpr auto opcode = RequestTraits<RequestT>::kOpcode;
     const std::string protocol = ProtocolName(opcode);
-    if (!data || size < RequestHeaderSize(requestTag)) {
+    if (!data || size < RequestTraits<RequestT>::kHeaderSize) {
         return Status::InvalidParam(protocol + ": invalid data or size smaller than header");
     }
 
@@ -378,15 +380,15 @@ Status KvProtocol<RequestT>::UnpackRequest(const void* data, std::size_t size,
     std::memcpy(&request->resp_addr, bytes + kRespAddrOffset, sizeof(request->resp_addr));
     if (request->resp_addr == 0) { return Status::InvalidParam(protocol + ": resp_addr is zero"); }
     UnpackExtraHeader(bytes, *request);
-    std::memcpy(&request->batch_size, bytes + BatchSizeOffset(*request),
+    std::memcpy(&request->batch_size, bytes + RequestTraits<RequestT>::kBatchOffset,
                 sizeof(request->batch_size));
     if (request->batch_size == 0) {
         return Status::InvalidParam(protocol + ": batch_size is zero");
     }
 
     const std::size_t expectedSize =
-        RequestHeaderSize(*request) +
-        static_cast<std::size_t>(request->batch_size) * RequestEntrySize(*request);
+        RequestTraits<RequestT>::kHeaderSize +
+        static_cast<std::size_t>(request->batch_size) * RequestTraits<RequestT>::kEntrySize;
     if (size != expectedSize) {
         return Status::InvalidParam(protocol + ": size(" + std::to_string(size) + ") != expected(" +
                                     std::to_string(expectedSize) + ")");
@@ -394,9 +396,9 @@ Status KvProtocol<RequestT>::UnpackRequest(const void* data, std::size_t size,
 
     request->entries.resize(request->batch_size);
     for (std::size_t index = 0; index < request->entries.size(); ++index) {
-        if (auto status = UnpackEntry(
-                bytes + RequestHeaderSize(*request) + index * RequestEntrySize(*request),
-                request->entries[index], index);
+        if (auto status = UnpackEntry(bytes + RequestTraits<RequestT>::kHeaderSize +
+                                          index * RequestTraits<RequestT>::kEntrySize,
+                                      request->entries[index], index);
             status.Failure()) {
             return status;
         }
@@ -408,8 +410,7 @@ Status KvProtocol<RequestT>::UnpackRequest(const void* data, std::size_t size,
 template <typename RequestT>
 Status KvProtocol<RequestT>::PackResponse(void* data, const KvResponse& resp) const
 {
-    const RequestT request;
-    const std::string protocol = ProtocolName(RequestOpcode(request));
+    const std::string protocol = ProtocolName(RequestTraits<RequestT>::kOpcode);
     if (!data) { return Status::InvalidParam(protocol + ": PackResponse data is null"); }
     if (!ResultCodec<RequestT>::kAllowEmpty && resp.results.empty()) {
         return Status::InvalidParam(protocol + ": results must not be empty");
