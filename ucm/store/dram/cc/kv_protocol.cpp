@@ -29,6 +29,39 @@
 namespace UC::DramPool {
 namespace {
 
+template <typename Entry>
+void PackDumpLoadEntry(std::uint8_t* output, const Entry& entry)
+{
+    std::memcpy(output + kDumpLoadEntryKeyOffset, entry.key.data(), kKvKeySize);
+    std::memcpy(output + kDumpLoadEntryAddrOffset, &entry.addr, sizeof(entry.addr));
+    std::memcpy(output + kDumpLoadEntryLenOffset, &entry.len, sizeof(entry.len));
+    std::memcpy(output + kDumpLoadEntryIdxOffset, &entry.idx, sizeof(entry.idx));
+}
+
+template <typename Entry>
+Status UnpackDumpLoadEntry(const std::uint8_t* input, Entry& entry, const char* protocol,
+                           std::size_t index)
+{
+    std::memcpy(entry.key.data(), input + kDumpLoadEntryKeyOffset, kKvKeySize);
+    std::memcpy(&entry.addr, input + kDumpLoadEntryAddrOffset, sizeof(entry.addr));
+    std::memcpy(&entry.len, input + kDumpLoadEntryLenOffset, sizeof(entry.len));
+    std::memcpy(&entry.idx, input + kDumpLoadEntryIdxOffset, sizeof(entry.idx));
+
+    if (IsAllZeroKey(entry.key)) {
+        return Status::InvalidParam(std::string{protocol} + ": entry[" + std::to_string(index) +
+                                    "] key is all zero");
+    }
+    if (entry.addr == 0) {
+        return Status::InvalidParam(std::string{protocol} + ": entry[" + std::to_string(index) +
+                                    "] addr is zero");
+    }
+    if (entry.len == 0) {
+        return Status::InvalidParam(std::string{protocol} + ": entry[" + std::to_string(index) +
+                                    "] len is zero");
+    }
+    return Status::OK();
+}
+
 Status Pack4BitResults(void* data, const std::vector<std::uint8_t>& results, const char* protocol)
 {
     for (std::size_t index = 0; index < results.size(); ++index) {
@@ -167,10 +200,7 @@ Status KvDumpProtocol::PackRequest(const KvRequest& req, void* target)
     for (std::size_t i = 0; i < r.entries.size(); ++i) {
         const auto& entry = r.entries[i];
         std::uint8_t* base = out + kKvDumpRequestHeaderSize + i * kKvDumpEntrySize;
-        std::memcpy(base + kDumpEntryKeyOffset, entry.key.data(), kKvKeySize);
-        std::memcpy(base + kDumpEntryAddrOffset, &entry.addr, sizeof(entry.addr));
-        std::memcpy(base + kDumpEntryLenOffset, &entry.len, sizeof(entry.len));
-        std::memcpy(base + kDumpEntryIdxOffset, &entry.idx, sizeof(entry.idx));
+        PackDumpLoadEntry(base, entry);
     }
     return Status::OK();
 }
@@ -237,19 +267,10 @@ Status KvDumpProtocol::UnpackRequest(const void* data, std::size_t size,
     req->entries.resize(req->batch_size);
     for (std::size_t i = 0; i < req->batch_size; ++i) {
         const std::uint8_t* base = bytes + kKvDumpRequestHeaderSize + i * kKvDumpEntrySize;
-        std::memcpy(req->entries[i].key.data(), base + kDumpEntryKeyOffset, kKvKeySize);
-        if (IsAllZeroKey(req->entries[i].key)) {
-            return Status::InvalidParam("Dump: entry[" + std::to_string(i) + "] key is all zero");
+        if (auto status = UnpackDumpLoadEntry(base, req->entries[i], "Dump", i);
+            status.Failure()) {
+            return status;
         }
-        std::memcpy(&req->entries[i].addr, base + kDumpEntryAddrOffset, sizeof(std::uint64_t));
-        if (req->entries[i].addr == 0) {
-            return Status::InvalidParam("Dump: entry[" + std::to_string(i) + "] addr is zero");
-        }
-        std::memcpy(&req->entries[i].len, base + kDumpEntryLenOffset, sizeof(std::uint32_t));
-        if (req->entries[i].len == 0) {
-            return Status::InvalidParam("Dump: entry[" + std::to_string(i) + "] len is zero");
-        }
-        std::memcpy(&req->entries[i].idx, base + kDumpEntryIdxOffset, sizeof(std::uint32_t));
     }
     out = std::move(req);
     return Status::OK();
@@ -294,10 +315,7 @@ Status KvLoadProtocol::PackRequest(const KvRequest& req, void* target)
     for (std::size_t i = 0; i < r.entries.size(); ++i) {
         const auto& entry = r.entries[i];
         std::uint8_t* base = out + kKvLoadRequestHeaderSize + i * kKvLoadEntrySize;
-        std::memcpy(base + kLoadEntryKeyOffset, entry.key.data(), kKvKeySize);
-        std::memcpy(base + kLoadEntryAddrOffset, &entry.addr, sizeof(entry.addr));
-        std::memcpy(base + kLoadEntryLenOffset, &entry.len, sizeof(entry.len));
-        std::memcpy(base + kLoadEntryIdxOffset, &entry.idx, sizeof(entry.idx));
+        PackDumpLoadEntry(base, entry);
     }
     return Status::OK();
 }
@@ -362,19 +380,10 @@ Status KvLoadProtocol::UnpackRequest(const void* data, std::size_t size,
     req->entries.resize(req->batch_size);
     for (std::size_t i = 0; i < req->batch_size; ++i) {
         const std::uint8_t* base = bytes + kKvLoadRequestHeaderSize + i * kKvLoadEntrySize;
-        std::memcpy(req->entries[i].key.data(), base + kLoadEntryKeyOffset, kKvKeySize);
-        if (IsAllZeroKey(req->entries[i].key)) {
-            return Status::InvalidParam("Load: entry[" + std::to_string(i) + "] key is all zero");
+        if (auto status = UnpackDumpLoadEntry(base, req->entries[i], "Load", i);
+            status.Failure()) {
+            return status;
         }
-        std::memcpy(&req->entries[i].addr, base + kLoadEntryAddrOffset, sizeof(std::uint64_t));
-        if (req->entries[i].addr == 0) {
-            return Status::InvalidParam("Load: entry[" + std::to_string(i) + "] addr is zero");
-        }
-        std::memcpy(&req->entries[i].len, base + kLoadEntryLenOffset, sizeof(std::uint32_t));
-        if (req->entries[i].len == 0) {
-            return Status::InvalidParam("Load: entry[" + std::to_string(i) + "] len is zero");
-        }
-        std::memcpy(&req->entries[i].idx, base + kLoadEntryIdxOffset, sizeof(std::uint32_t));
     }
     out = std::move(req);
     return Status::OK();

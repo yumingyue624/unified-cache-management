@@ -82,15 +82,10 @@ constexpr std::size_t kLoadLookupBatchSizeOffset = 9;
 constexpr std::size_t kDumpTtlOffset = 9;
 constexpr std::size_t kDumpBatchSizeOffset = 13;
 
-constexpr std::size_t kDumpEntryKeyOffset = 0;
-constexpr std::size_t kDumpEntryAddrOffset = 16;
-constexpr std::size_t kDumpEntryLenOffset = 24;
-constexpr std::size_t kDumpEntryIdxOffset = 28;
-
-constexpr std::size_t kLoadEntryKeyOffset = 0;
-constexpr std::size_t kLoadEntryAddrOffset = 16;
-constexpr std::size_t kLoadEntryLenOffset = 24;
-constexpr std::size_t kLoadEntryIdxOffset = 28;
+constexpr std::size_t kDumpLoadEntryKeyOffset = 0;
+constexpr std::size_t kDumpLoadEntryAddrOffset = 16;
+constexpr std::size_t kDumpLoadEntryLenOffset = 24;
+constexpr std::size_t kDumpLoadEntryIdxOffset = 28;
 
 constexpr std::size_t kLookupEntryKeyOffset = 0;
 
