@@ -28,16 +28,12 @@
 #include <gtest/gtest.h>
 #include <string>
 #include <vector>
+#include "dram/dram_test_common.h"
 
 namespace UC::DramPool {
 namespace {
 
-BlockId MakeKey(std::uint8_t seed)
-{
-    BlockId key{};
-    for (std::size_t i = 0; i < key.size(); ++i) { key[i] = static_cast<std::byte>(seed + i); }
-    return key;
-}
+using UC::Test::Dram::KeyFromHex;
 
 void ExpectLe16(const std::vector<std::uint8_t>& buf, std::size_t offset, std::uint16_t value)
 {
@@ -67,7 +63,7 @@ protected:
 TEST_F(KvProtocolTest, PackDumpRequestMatchesLayout)
 {
     KvDumpEntry entry;
-    entry.key = MakeKey(0x10);
+    entry.key = KeyFromHex("10");
     entry.addr = 0x1122334455667788ULL;
     entry.len = 0xAABBCCDD;
     entry.idx = 0x12345678;
@@ -98,7 +94,7 @@ TEST_F(KvProtocolTest, PackDumpRequestMatchesLayout)
 TEST_F(KvProtocolTest, PackLoadRequestMatchesLayout)
 {
     KvLoadEntry entry;
-    entry.key = MakeKey(0x20);
+    entry.key = KeyFromHex("20");
     entry.addr = 0x8877665544332211ULL;
     entry.len = 0x1000;
     entry.idx = 7;
@@ -123,9 +119,9 @@ TEST_F(KvProtocolTest, PackLoadRequestMatchesLayout)
 TEST_F(KvProtocolTest, PackLookupRequestMatchesLayout)
 {
     KvLookupEntry entry0;
-    entry0.key = MakeKey(0x30);
+    entry0.key = KeyFromHex("30");
     KvLookupEntry entry1;
-    entry1.key = MakeKey(0x40);
+    entry1.key = KeyFromHex("40");
 
     KvLookupRequest req;
     req.opcode = KvOpcode::Lookup;
@@ -150,7 +146,7 @@ TEST_F(KvProtocolTest, PackLookupRequestMatchesLayout)
 TEST_F(KvProtocolTest, RejectsBatchSizeMismatch)
 {
     KvLookupEntry entry;
-    entry.key = MakeKey(0x50);
+    entry.key = KeyFromHex("50");
 
     KvLookupRequest req;
     req.opcode = KvOpcode::Lookup;
@@ -183,7 +179,7 @@ TEST_F(KvProtocolTest, RejectsAllZeroKey)
 TEST_F(KvProtocolTest, RejectsZeroDumpLoadAddrAndLen)
 {
     KvDumpEntry entry;
-    entry.key = MakeKey(0x60);
+    entry.key = KeyFromHex("60");
     entry.addr = 0;
     entry.len = 1;
 
@@ -208,7 +204,7 @@ TEST_F(KvProtocolTest, RejectsZeroDumpLoadAddrAndLen)
 TEST_F(KvProtocolTest, UnpackRequestRejectsWrongSize)
 {
     KvLookupEntry entry;
-    entry.key = MakeKey(0x70);
+    entry.key = KeyFromHex("70");
 
     KvLookupRequest req;
     req.opcode = KvOpcode::Lookup;
@@ -244,7 +240,7 @@ TEST_F(KvProtocolTest, UnpackResponseReadsPackedResults)
 TEST_F(KvProtocolTest, ServerRoundTripDumpLoad)
 {
     KvLoadEntry entry;
-    entry.key = MakeKey(0x80);
+    entry.key = KeyFromHex("80");
     entry.addr = 0xAABBCCDDEEFF0011ULL;
     entry.len = 0x2000;
     entry.idx = 0x55;
@@ -286,9 +282,9 @@ TEST_F(KvProtocolTest, ServerRoundTripDumpLoad)
 TEST_F(KvProtocolTest, ServerRoundTripLookup)
 {
     KvLookupEntry e0;
-    e0.key = MakeKey(0x90);
+    e0.key = KeyFromHex("90");
     KvLookupEntry e1;
-    e1.key = MakeKey(0xA0);
+    e1.key = KeyFromHex("a0");
     KvLookupRequest req;
     req.opcode = KvOpcode::Lookup;
     req.resp_addr = 0x0E0E0E0E0E0E0E0EULL;
@@ -365,7 +361,7 @@ TEST_F(KvProtocolTest, DumpLoadMultiEntryRoundTrip)
     req.ttl = 0x10203040U;
     for (std::uint16_t i = 0; i < kBatch; ++i) {
         KvDumpEntry e;
-        e.key = MakeKey(static_cast<std::uint8_t>(i * 0x10));
+        e.key = KeyFromHex(std::to_string(i + 1U).c_str());
         e.addr = 0x1000ULL * (i + 1);
         e.len = 0x200U * (i + 1);
         e.idx = i;
@@ -398,7 +394,7 @@ TEST_F(KvProtocolTest, LookupMultiEntryRoundTrip)
     req.batch_size = kBatch;
     for (std::uint16_t i = 0; i < kBatch; ++i) {
         KvLookupEntry e;
-        e.key = MakeKey(static_cast<std::uint8_t>(0x50 + i));
+        e.key = KeyFromHex(std::to_string(i + 1U).c_str());
         req.entries.push_back(e);
     }
 
@@ -425,7 +421,7 @@ TEST_F(KvProtocolTest, RejectsNoneOpcodeOnDumpLoad)
     req.resp_addr = 0x1000;
     req.batch_size = 1;
     req.entries = {
-        KvDumpEntry{MakeKey(0x10), 0x2000, 0x100, 0}
+        KvDumpEntry{KeyFromHex("10"), 0x2000, 0x100, 0}
     };
 
     std::vector<std::uint8_t> buf(mgr_.GetPackedSize(KvOpcode::Dump, req), 0);
@@ -441,7 +437,7 @@ TEST_F(KvProtocolTest, RejectsOpcodeMismatch)
     req.resp_addr = 0x1000;
     req.batch_size = 1;
     req.entries = {
-        KvDumpEntry{MakeKey(0x10), 0x2000, 0x100, 0}
+        KvDumpEntry{KeyFromHex("10"), 0x2000, 0x100, 0}
     };
 
     std::vector<std::uint8_t> buf(mgr_.GetPackedSize(KvOpcode::Dump, req), 0);
@@ -470,7 +466,7 @@ TEST_F(KvProtocolTest, UnpackRequestRejectsExtraBytes)
     req.opcode = KvOpcode::Lookup;
     req.resp_addr = 0x1000;
     req.batch_size = 1;
-    req.entries = {KvLookupEntry{MakeKey(0x70)}};
+    req.entries = {KvLookupEntry{KeyFromHex("70")}};
 
     std::vector<std::uint8_t> packed(mgr_.GetPackedSize(req.opcode, req), 0);
     ASSERT_TRUE(mgr_.PackRequest(packed.data(), req.opcode, req).Success());
@@ -518,8 +514,8 @@ TEST_F(KvProtocolTest, UnpackRequestRejectsSizeMismatch)
     req.resp_addr = 0x1000;
     req.batch_size = 2;
     req.entries = {
-        KvDumpEntry{MakeKey(0x10), 0x2000, 0x100, 0},
-        KvDumpEntry{MakeKey(0x20), 0x3000, 0x200, 1}
+        KvDumpEntry{KeyFromHex("10"), 0x2000, 0x100, 0},
+        KvDumpEntry{KeyFromHex("20"), 0x3000, 0x200, 1}
     };
 
     std::vector<std::uint8_t> packed(mgr_.GetPackedSize(req.opcode, req), 0);
@@ -680,7 +676,7 @@ TEST_F(KvProtocolTest, MultiRoundSequentialPacks)
             req.batch_size = 1;
             req.ttl = 0x500U * (round + 1);
             req.entries = {
-                KvDumpEntry{MakeKey(round), addr, len, round}
+                KvDumpEntry{KeyFromHex(std::to_string(round + 1U).c_str()), addr, len, round}
             };
             packed.resize(mgr_.GetPackedSize(opcode, req), 0);
             ASSERT_TRUE(mgr_.PackRequest(packed.data(), opcode, req).Success())
@@ -691,7 +687,7 @@ TEST_F(KvProtocolTest, MultiRoundSequentialPacks)
             req.resp_addr = resp_addr;
             req.batch_size = 1;
             req.entries = {
-                KvLoadEntry{MakeKey(round), addr, len, round}
+                KvLoadEntry{KeyFromHex(std::to_string(round + 1U).c_str()), addr, len, round}
             };
             packed.resize(mgr_.GetPackedSize(opcode, req), 0);
             ASSERT_TRUE(mgr_.PackRequest(packed.data(), opcode, req).Success())
