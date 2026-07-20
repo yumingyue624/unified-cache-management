@@ -27,7 +27,7 @@
 #include <chrono>
 #include <cstdint>
 #include <memory>
-#include "buffer.h"
+#include "drampool_buffer.h"
 #include "thread/lock.h"
 #include "type/types.h"
 
@@ -57,7 +57,7 @@ struct Entry {
 
     // Attributes for buffer
     std::size_t size{0};
-    Buffer buffer;
+    BufferLease buffer;
 
     // Mutable attributes guarded by Spinlock
     Spinlock lock;

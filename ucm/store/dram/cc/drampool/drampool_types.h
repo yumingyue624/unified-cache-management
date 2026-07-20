@@ -11,6 +11,7 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include "drampool_buffer.h"
 #include "core/transport.h"
 #include "kv_protocol.h"
 #include "status/status.h"
@@ -18,10 +19,6 @@
 
 namespace transport {
 class TransportManager;
-}
-
-namespace UC {
-class BufferPool;
 }
 
 namespace UC::DramPool {
@@ -38,20 +35,6 @@ struct RequestTask {
 using RequestTaskPtr = std::unique_ptr<RequestTask>;
 using RequestQueue = UC::SpscRingQueue<RequestTaskPtr>;
 
-struct BufferHandle {
-    std::uint64_t value{0};
-    std::uint32_t class_id{0};
-
-    bool Valid() const noexcept { return value != 0; }
-};
-
-struct BufferSlot {
-    BufferHandle handle;
-    std::uint64_t addr{0};
-    std::uint32_t len{0};
-    std::uint32_t class_id{0};
-};
-
 using TransportHandle = transport::TransferHandle;
 
 inline Status ToUcStatus(transport::Status status, const char* operation)
@@ -67,9 +50,6 @@ struct TransferItem {
     // State needed to settle one item after the batch reaches terminal.
     std::uint16_t index_in_request{0};
     BlockId key{};
-    // DUMP owns a newly allocated buffer until StoreEnd/Delete settlement.
-    // LOAD leaves this invalid because MetadataManager owns the stored buffer.
-    BufferHandle buffer_handle;
 };
 
 enum class ResultCode : std::uint8_t {
@@ -114,20 +94,18 @@ struct CompletionRecord {
 
     // Ownership held from response submission until its handle reaches terminal.
     TransportHandle response_handle{transport::kInvalidTransferHandle};
-    BufferHandle response_buffer;
+    BufferLease response_buffer;
 };
 
 using CompletionQueue = UC::SpscRingQueue<CompletionRecord>;
 
-using BufferPoolList = std::vector<std::unique_ptr<UC::BufferPool>>;
-
 // Non-owning runtime view. DramPoolServer owns every referenced component.
 struct DramPoolRuntime {
-    DramPoolRuntime(UC::DramPool::MetadataManager& metadataRef, BufferPoolList& bufferPoolsRef,
+    DramPoolRuntime(UC::DramPool::MetadataManager& metadataRef, BufferManager& bufferManagerRef,
                     transport::TransportManager& transportRef, ProtocolManager& protocolRef,
                     RequestQueue& requestQueueRef, CompletionQueue& completionQueueRef)
         : metadata(metadataRef),
-          bufferPools(bufferPoolsRef),
+          bufferManager(bufferManagerRef),
           transport(transportRef),
           protocol(protocolRef),
           requestQueue(requestQueueRef),
@@ -136,7 +114,7 @@ struct DramPoolRuntime {
     }
 
     UC::DramPool::MetadataManager& metadata;
-    BufferPoolList& bufferPools;
+    BufferManager& bufferManager;
     transport::TransportManager& transport;
     ProtocolManager& protocol;
     RequestQueue& requestQueue;

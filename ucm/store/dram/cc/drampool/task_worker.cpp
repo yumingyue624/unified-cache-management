@@ -26,7 +26,6 @@
 #include <thread>
 #include <utility>
 #include "core/transport_manager.h"
-#include "drampool_buffer.h"
 #include "drampool_config.h"
 #include "logger/logger.h"
 #include "metadata.h"
@@ -121,52 +120,27 @@ Status TaskWorker::ProcessDump(const KvDumpRequest& request,
     for (std::uint16_t index = 0; index < request.batch_size; ++index) {
         const auto& entry = request.entries[index];
 
-        auto allocated = AllocateBuffer(runtime_, entry.len);
-        if (!allocated.HasValue()) {
-            UC_ERROR("Dump[{}] Allocate failed, len={}", index, entry.len);
-            mark_remaining_failed(index);
-            break;
-        }
-        auto slot = std::move(allocated).Value();
-
-        if (slot.handle.value > std::numeric_limits<std::uint32_t>::max()) {
-            UC_ERROR("Dump[{}] buffer slot id exceeds Entry::slot", index);
-            (void)FreeBuffer(runtime_, slot.handle);
-            mark_remaining_failed(index);
-            break;
-        }
-
         auto metadataEntry = std::make_shared<UC::DramPool::Entry>();
         metadataEntry->key = entry.key;
-        metadataEntry->slot = static_cast<std::uint32_t>(slot.handle.value);
-        metadataEntry->addr = reinterpret_cast<void*>(slot.addr);
         metadataEntry->size = entry.len;
         metadataEntry->lifeTimeout = lifeTimeout;
         metadataEntry->position = entry.idx;
 
         const auto storeStatus = runtime_.metadata.StoreBegin(entry.key, metadataEntry);
         if (storeStatus == Status::DuplicateKey()) {
-            const auto freeStatus = FreeBuffer(runtime_, slot.handle);
-            if (freeStatus.Failure()) {
-                UC_ERROR("Dump[{}] Free duplicate allocation failed: {}", index, freeStatus);
-            }
             results[index] = static_cast<std::uint8_t>(ResultCode::Ok);
             continue;
         }
         if (storeStatus.Failure()) {
-            const auto freeStatus = FreeBuffer(runtime_, slot.handle);
-            if (freeStatus.Failure()) {
-                UC_ERROR("Dump[{}] Free failed reservation failed: {}", index, freeStatus);
-            }
             UC_ERROR("Dump[{}] StoreBegin failed: {}", index, storeStatus);
             mark_remaining_failed(index);
             break;
         }
 
-        // A RESERVED entry owns this buffer until Poller publishes or aborts it.
-        transfer_items.emplace_back(TransferItem{index, entry.key, slot.handle});
+        // The metadata entry owns its buffer until it is deleted.
+        transfer_items.emplace_back(TransferItem{index, entry.key});
         operation.ops.emplace_back(
-            transport::Segment{reinterpret_cast<void*>(slot.addr), entry.addr, entry.len});
+            transport::Segment{metadataEntry->buffer.Get().addr, entry.addr, entry.len});
     }
 
     if (transfer_items.empty()) {
@@ -231,8 +205,9 @@ Status TaskWorker::ProcessLoad(const KvLoadRequest& request,
         }
 
         // The LOAD pin keeps metadata and buffer alive through async transport.
-        transfer_items.emplace_back(TransferItem{index, entry.key, {}});
-        operation.ops.emplace_back(transport::Segment{metadataEntry->addr, entry.addr, entry.len});
+        transfer_items.emplace_back(TransferItem{index, entry.key});
+        operation.ops.emplace_back(
+            transport::Segment{metadataEntry->buffer.Get().addr, entry.addr, entry.len});
     }
 
     if (transfer_items.empty()) {
@@ -283,10 +258,7 @@ void TaskWorker::RollbackDumpItems(const std::vector<TransferItem>& items)
         const auto abortStatus = runtime_.metadata.Delete(item.key);
         if (abortStatus.Failure()) {
             UC_ERROR("RollbackDumpItems Delete reserved DUMP failed: {}", abortStatus);
-            continue;
         }
-        const auto freeStatus = FreeBuffer(runtime_, item.buffer_handle);
-        if (freeStatus.Failure()) { UC_ERROR("RollbackDumpItems Free failed: {}", freeStatus); }
     }
 }
 

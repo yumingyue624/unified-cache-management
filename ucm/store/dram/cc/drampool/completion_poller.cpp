@@ -8,7 +8,6 @@
 #include <limits>
 #include <utility>
 #include "core/transport_manager.h"
-#include "drampool_buffer.h"
 #include "drampool_config.h"
 #include "logger/logger.h"
 #include "metadata.h"
@@ -152,36 +151,23 @@ Status CompletionPoller::SubmitResponse(CompletionRecord& record)
         return Status::InvalidParam("invalid packed response size");
     }
     const auto len = static_cast<std::uint32_t>(packedSize);
-    auto allocated = AllocateBuffer(runtime_, len);
-    if (!allocated.HasValue()) { return allocated.Error(); }
-    auto slot = std::move(allocated).Value();
+    auto allocateStatus = AcquireBufferAtLeast(runtime_.bufferManager, len, record.response_buffer);
+    if (allocateStatus.Failure()) { return allocateStatus; }
+    const auto& responseBuffer = record.response_buffer.Get();
 
-    const auto protocolStatus = runtime_.protocol.PackResponse(
-        reinterpret_cast<void*>(slot.addr), record.opcode, KvResponse{record.results});
-    if (protocolStatus.Failure()) {
-        const auto freeStatus = FreeBuffer(runtime_, slot.handle);
-        if (freeStatus.Failure()) {
-            UC_ERROR("CompletionPoller Free response buffer after pack failure failed: {}",
-                     freeStatus);
-        }
-        return protocolStatus;
-    }
+    const auto protocolStatus = runtime_.protocol.PackResponse(responseBuffer.addr, record.opcode,
+                                                               KvResponse{record.results});
+    if (protocolStatus.Failure()) { return protocolStatus; }
 
     transport::Operation operation;
     operation.opcode = transport::Opcode::Write;
     operation.direct = transport::OperationDirect::RemoteDeviceHost;
     operation.target_manager = record.peer_one_sided_id;
-    operation.ops.emplace_back(
-        transport::Segment{reinterpret_cast<void*>(slot.addr), record.response_addr, len});
+    operation.ops.emplace_back(transport::Segment{responseBuffer.addr, record.response_addr, len});
 
     TransportHandle handle = transport::kInvalidTransferHandle;
     const auto submitStatus = runtime_.transport.ExecuteAsync(operation, handle);
     if (submitStatus != transport::Status::Ok || handle == transport::kInvalidTransferHandle) {
-        const auto freeStatus = FreeBuffer(runtime_, slot.handle);
-        if (freeStatus.Failure()) {
-            UC_ERROR("CompletionPoller Free response buffer after submit failure failed: {}",
-                     freeStatus);
-        }
         if (submitStatus != transport::Status::Ok) {
             return ToUcStatus(submitStatus, "ExecuteAsync response");
         }
@@ -190,7 +176,6 @@ Status CompletionPoller::SubmitResponse(CompletionRecord& record)
 
     // ExecuteAsync now owns access to the bytes; retain the buffer until handle terminal.
     record.response_handle = handle;
-    record.response_buffer = slot.handle;
     record.results.clear();
     record.stage = CompletionStage::ResponseTransfer;
     return Status::OK();
@@ -209,10 +194,10 @@ bool CompletionPoller::ProcessResponseTransfer(CompletionRecord& record)
         UC_ERROR("CompletionPoller response transfer failed, handle={}", record.response_handle);
     }
 
-    const auto freeStatus = FreeBuffer(runtime_, record.response_buffer);
-    if (freeStatus.Failure()) {
-        UC_ERROR("CompletionPoller Free response buffer failed, handle={}, error={}",
-                 record.response_handle, freeStatus);
+    const auto releaseStatus = record.response_buffer.Reset();
+    if (releaseStatus.Failure()) {
+        UC_ERROR("CompletionPoller release response buffer failed, handle={}, error={}",
+                 record.response_handle, releaseStatus);
     }
     return true;
 }
@@ -232,17 +217,17 @@ void CompletionPoller::SettleDataTransfer(CompletionRecord& record,
                 } else {
                     UC_ERROR("CompletionPoller StoreEnd failed, handle={}, error={}",
                              record.data_handle, status);
+                    const auto abortStatus = runtime_.metadata.Delete(item.key);
+                    if (abortStatus.Failure()) {
+                        UC_ERROR(
+                            "CompletionPoller Delete failed after StoreEnd error, handle={}, "
+                            "error={}",
+                            record.data_handle, abortStatus);
+                    }
                 }
             } else {
                 const auto abortStatus = runtime_.metadata.Delete(item.key);
-                if (abortStatus.Success()) {
-                    const auto freeStatus = FreeBuffer(runtime_, item.buffer_handle);
-                    if (freeStatus.Failure()) {
-                        UC_ERROR(
-                            "CompletionPoller Free failed after DUMP abort, handle={}, error={}",
-                            record.data_handle, freeStatus);
-                    }
-                } else {
+                if (abortStatus.Failure()) {
                     UC_ERROR("CompletionPoller Delete reserved DUMP failed, handle={}, error={}",
                              record.data_handle, abortStatus);
                 }

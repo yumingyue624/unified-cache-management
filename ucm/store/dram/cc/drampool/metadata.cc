@@ -152,29 +152,28 @@ std::vector<EntryPtr> ShardMetadata::EvictDeep(double evict_ratio)
 
 Status MetadataManager::StoreBegin(const BlockId& key, EntryPtr entry)
 {
+    if (entry == nullptr) { return Status::InvalidParam(); }
     auto idx = ShardIdx(key);
     entry->shard = static_cast<uint32_t>(idx);
-    auto st = bufferManager_.Allocate(entry->size, entry->buffer);
+    auto st = AcquireBuffer(bufferManager_, entry->size, entry->buffer);
     if (st == Status::NoSpace()) {
         // TODO: Maybe the random shard doesn't have the data of current size
         EvictOneShard(*shards_[rand() % kShardCnt]);
-        st = bufferManager_.Allocate(entry->size, entry->buffer);
+        st = AcquireBuffer(bufferManager_, entry->size, entry->buffer);
     }
     if (st == Status::NoSpace()) {
         EvictOneShard(*shards_[rand() % kShardCnt], true);
-        st = bufferManager_.Allocate(entry->size, entry->buffer);
+        st = AcquireBuffer(bufferManager_, entry->size, entry->buffer);
     }
     if (!st.Success()) {
         UC_ERROR("StoreBegin: Allocate for size {} failed, status {}.", entry->size, st.ToString());
         return Status::Error();
     }
-    const auto bufSize = entry->size;
-    const auto bufSlot = entry->buffer.slot;
-    st = shards_[idx]->StoreBegin(key, std::move(entry));
+    st = shards_[idx]->StoreBegin(key, entry);
     if (!st.Success()) {
-        auto freeSt = bufferManager_.Free(bufSize, bufSlot);
-        if (!freeSt.Success()) {
-            UC_ERROR("StoreBegin: Free slot {} failed, status {}.", bufSlot, freeSt.ToString());
+        const auto resetStatus = entry->buffer.Reset();
+        if (resetStatus.Failure()) {
+            UC_ERROR("StoreBegin: release buffer lease failed, status {}.", resetStatus.ToString());
         }
     }
     return st;
@@ -183,14 +182,7 @@ Status MetadataManager::StoreBegin(const BlockId& key, EntryPtr entry)
 void MetadataManager::EvictOneShard(ShardMetadata& s, bool deep)
 {
     auto victims = deep ? s.EvictDeep(defaultEvictRatio_) : s.EvictPeriodic(defaultEvictRatio_);
-    for (const auto& entry : victims) {
-        auto st = bufferManager_.Free(entry->size, entry->buffer.slot);
-        if (!st.Success()) {
-            UC_ERROR("EvictOneShard: Free slot {} failed, status {}.", entry->buffer.slot,
-                     st.ToString());
-        }
-        s.Delete(entry->key);
-    }
+    for (const auto& entry : victims) { s.Delete(entry->key); }
 }
 
 }  // namespace UC::DramPool
