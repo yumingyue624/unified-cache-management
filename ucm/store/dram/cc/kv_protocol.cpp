@@ -29,6 +29,8 @@
 namespace UC::DramPool {
 namespace {
 
+bool IsAllZeroKey(const BlockId& key);
+
 template <typename Entry>
 void PackDumpLoadEntry(std::uint8_t* output, const Entry& entry)
 {
@@ -126,12 +128,6 @@ void Unpack1BitResults(const void* data, std::size_t resultCount,
     }
 }
 
-}  // namespace
-
-// ---------------------------------------------------------------------------
-// Free helpers
-// ---------------------------------------------------------------------------
-
 KvOpcode PeekOpcode(const void* data)
 {
     return static_cast<KvOpcode>(static_cast<const std::uint8_t*>(data)[kOpcodeOffset]);
@@ -154,6 +150,20 @@ const char* ProtocolName(KvOpcode opcode)
     return "Unknown";
 }
 
+template <typename Request>
+Status ValidateRequestHeader(const Request& request)
+{
+    const std::string protocol = ProtocolName(request.opcode);
+    if (request.resp_addr == 0) { return Status::InvalidParam(protocol + ": resp_addr is zero"); }
+    if (request.batch_size == 0 || request.batch_size != request.entries.size()) {
+        return Status::InvalidParam(protocol + ": batch_size(" +
+                                    std::to_string(request.batch_size) +
+                                    ") must be non-zero and equal to entries.size()(" +
+                                    std::to_string(request.entries.size()) + ")");
+    }
+    return Status::OK();
+}
+
 void PackHeader(std::uint8_t* out, KvOpcode opcode, std::uint64_t resp_addr,
                 std::uint16_t batch_size)
 {
@@ -170,6 +180,8 @@ void PackDumpHeader(std::uint8_t* out, KvOpcode opcode, std::uint64_t resp_addr,
     std::memcpy(out + kDumpTtlOffset, &ttl, sizeof(ttl));
     std::memcpy(out + kDumpBatchSizeOffset, &batch_size, sizeof(batch_size));
 }
+
+}  // namespace
 
 // ===========================================================================
 // KvDumpProtocol

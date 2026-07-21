@@ -27,7 +27,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <string>
 #include <unordered_map>
 #include <vector>
 #include "status/status.h"
@@ -142,41 +141,6 @@ class KvResponse {
 public:
     std::vector<std::uint8_t> results;
 };
-
-// ---------------------------------------------------------------------------
-// Free helpers (shared by pack / unpack paths)
-// ---------------------------------------------------------------------------
-
-// Peek the opcode byte from a packed request buffer (byte 0).
-KvOpcode PeekOpcode(const void* data);
-
-// True if every byte of the block identifier is zero.
-bool IsAllZeroKey(const BlockId& key);
-
-// Human-readable protocol name for log prefixes (Dump/Load/Lookup, "Unknown" otherwise).
-const char* ProtocolName(KvOpcode opcode);
-
-// Write the common header (opcode + resp_addr + batch_size) into out. Used by Load/Lookup.
-void PackHeader(std::uint8_t* out, KvOpcode opcode, std::uint64_t resp_addr,
-                std::uint16_t batch_size);
-
-// Write the Dump header (opcode + resp_addr + ttl + batch_size) into out.
-void PackDumpHeader(std::uint8_t* out, KvOpcode opcode, std::uint64_t resp_addr, std::uint32_t ttl,
-                    std::uint16_t batch_size);
-
-// Validate resp_addr != 0 and batch_size == entries.size() (and non-zero).
-template <typename Req>
-Status ValidateRequestHeader(const Req& req)
-{
-    const std::string name = ProtocolName(req.opcode);
-    if (req.resp_addr == 0) { return Status::InvalidParam(name + ": resp_addr is zero"); }
-    if (req.batch_size == 0 || req.batch_size != req.entries.size()) {
-        return Status::InvalidParam(name + ": batch_size(" + std::to_string(req.batch_size) +
-                                    ") must be non-zero and equal to entries.size()(" +
-                                    std::to_string(req.entries.size()) + ")");
-    }
-    return Status::OK();
-}
 
 // ---------------------------------------------------------------------------
 // Protocol classes
