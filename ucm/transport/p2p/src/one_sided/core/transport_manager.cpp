@@ -114,14 +114,7 @@ Status TransportManager::InstallTransport(TransportProtocol protocol, const Init
     if (protocol_map_.find(protocol) != protocol_map_.end()) { return Status::Ok; }
 
     auto transport = CreateTransport(protocol);
-    return InstallTransport(std::move(transport), options);
-}
-
-Status TransportManager::InstallTransport(TransportPtr transport, const InitAttrs& options)
-{
     if (!transport) { return Status::InvalidArgument; }
-    const auto protocol = transport->Protocol();
-    if (protocol_map_.find(protocol) != protocol_map_.end()) { return Status::Ok; }
     const auto status = transport->Init(options);
     if (status != Status::Ok) { return status; }
 
@@ -142,8 +135,6 @@ TransportPtr TransportManager::CreateTransport(TransportProtocol protocol) const
 
 Status TransportManager::Shutdown()
 {
-    std::lock_guard<std::mutex> transfer_lock(transfer_mutex_);
-    std::lock_guard<std::mutex> memory_lock(memory_mutex_);
     if (control_) { control_->Close(); }
 
     Status result = Status::Ok;
@@ -233,7 +224,6 @@ Status TransportManager::HandleMetadataExchange(const ManagerID& manager_id,
 
 Status TransportManager::RegisterMemory(const MemoryRegion& memory, MemoryHandle& handle)
 {
-    std::lock_guard<std::mutex> memory_lock(memory_mutex_);
     handle = kInvalidMemoryHandle;
     if (memory.addr == nullptr || memory.length == 0) { return Status::InvalidArgument; }
     const auto address = detail::PtrToU64(memory.addr);
@@ -275,7 +265,6 @@ Status TransportManager::RegisterMemory(const MemoryRegion& memory, MemoryHandle
 
 Status TransportManager::UnregisterMemory(MemoryHandle handle)
 {
-    std::lock_guard<std::mutex> memory_lock(memory_mutex_);
     if (handle == kInvalidMemoryHandle) { return Status::InvalidArgument; }
 
     const auto it = memories_.find(handle);
@@ -344,7 +333,6 @@ Status TransportManager::ExecuteSync(const Operation& batch)
 
 Status TransportManager::ExecuteAsync(const Operation& batch, TransferHandle& handle)
 {
-    std::lock_guard<std::mutex> transfer_lock(transfer_mutex_);
     handle = kInvalidTransferHandle;
     Transport* transport = nullptr;
     auto request = batch;
@@ -365,7 +353,6 @@ Status TransportManager::ExecuteAsync(const Operation& batch, TransferHandle& ha
 
 Status TransportManager::GetStatus(TransferHandle handle, TransferStatus& transfer_status)
 {
-    std::lock_guard<std::mutex> transfer_lock(transfer_mutex_);
     if (handle == kInvalidTransferHandle) { return Status::InvalidArgument; }
     const auto it = transfers_.find(handle);
     if (it == transfers_.end() || it->second.transport == nullptr) { return Status::Failed; }

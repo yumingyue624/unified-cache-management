@@ -151,23 +151,53 @@ Status CompletionPoller::SubmitResponse(CompletionRecord& record)
         return Status::InvalidParam("invalid packed response size");
     }
     const auto len = static_cast<std::uint32_t>(packedSize);
-    auto allocateStatus = AcquireBufferAtLeast(runtime_.bufferManager, len, record.response_buffer);
+    if (record.resp_buffer.local_addr != nullptr) {
+        return Status::InvalidParam("response flag buffer slot is already allocated");
+    }
+    auto allocateStatus = runtime_.flagBufferPool.Allocate(record.resp_buffer);
     if (allocateStatus.Failure()) { return allocateStatus; }
-    const auto& responseBuffer = record.response_buffer.Get();
+    if (packedSize > record.resp_buffer.length) {
+        const auto freeStatus = runtime_.flagBufferPool.Free(record.resp_buffer.slot_index);
+        if (freeStatus.Failure()) {
+            UC_ERROR("CompletionPoller release undersized flag buffer slot failed, slot={}, "
+                     "error={}",
+                     record.resp_buffer.slot_index, freeStatus);
+        }
+        record.resp_buffer = {};
+        return Status::InvalidParam(
+            "packed response size exceeds configured flag buffer slot size");
+    }
 
-    const auto protocolStatus = runtime_.protocol.PackResponse(responseBuffer.addr, record.opcode,
-                                                               KvResponse{record.results});
-    if (protocolStatus.Failure()) { return protocolStatus; }
+    const auto protocolStatus = runtime_.protocol.PackResponse(
+        record.resp_buffer.local_addr, record.opcode, KvResponse{record.results});
+    if (protocolStatus.Failure()) {
+        const auto freeStatus = runtime_.flagBufferPool.Free(record.resp_buffer.slot_index);
+        if (freeStatus.Failure()) {
+            UC_ERROR("CompletionPoller release flag buffer after pack failure failed, slot={}, "
+                     "error={}",
+                     record.resp_buffer.slot_index, freeStatus);
+        }
+        record.resp_buffer = {};
+        return protocolStatus;
+    }
 
     transport::Operation operation;
     operation.opcode = transport::Opcode::Write;
     operation.direct = transport::OperationDirect::RemoteDeviceHost;
     operation.target_manager = record.peer_one_sided_id;
-    operation.ops.emplace_back(transport::Segment{responseBuffer.addr, record.response_addr, len});
+    operation.ops.emplace_back(
+        transport::Segment{record.resp_buffer.local_addr, record.response_addr, len});
 
     TransportHandle handle = transport::kInvalidTransferHandle;
     const auto submitStatus = runtime_.transport.ExecuteAsync(operation, handle);
     if (submitStatus != transport::Status::Ok || handle == transport::kInvalidTransferHandle) {
+        const auto freeStatus = runtime_.flagBufferPool.Free(record.resp_buffer.slot_index);
+        if (freeStatus.Failure()) {
+            UC_ERROR("CompletionPoller release flag buffer after submit failure failed, slot={}, "
+                     "error={}",
+                     record.resp_buffer.slot_index, freeStatus);
+        }
+        record.resp_buffer = {};
         if (submitStatus != transport::Status::Ok) {
             return ToUcStatus(submitStatus, "ExecuteAsync response");
         }
@@ -194,10 +224,13 @@ bool CompletionPoller::ProcessResponseTransfer(CompletionRecord& record)
         UC_ERROR("CompletionPoller response transfer failed, handle={}", record.response_handle);
     }
 
-    const auto releaseStatus = record.response_buffer.Reset();
+    const auto releasedSlot = record.resp_buffer.slot_index;
+    const auto releaseStatus = runtime_.flagBufferPool.Free(releasedSlot);
+    record.resp_buffer = {};
     if (releaseStatus.Failure()) {
-        UC_ERROR("CompletionPoller release response buffer failed, handle={}, error={}",
-                 record.response_handle, releaseStatus);
+        UC_ERROR("CompletionPoller release response flag buffer failed, handle={}, slot={}, "
+                 "error={}",
+                 record.response_handle, releasedSlot, releaseStatus);
     }
     return true;
 }

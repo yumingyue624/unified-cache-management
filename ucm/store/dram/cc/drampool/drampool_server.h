@@ -36,6 +36,7 @@
 #include "drampool_config.h"
 #include "drampool_types.h"
 #include "kv_protocol.h"
+#include "pool/buffer_pool.h"
 #include "status/status.h"
 
 namespace transport {
@@ -68,6 +69,7 @@ private:
 
     Status InitializeAclRuntime();
     Status InitMemoryPool();
+    Status InitFlagBufferPool();
     Status InitMetadata();
     Status InitProtocol();
     Status InitQueues();
@@ -115,6 +117,8 @@ private:
     std::unique_ptr<transport::TcpMessageChannel> tcpMessageChannel_;
     std::unique_ptr<BufferManager> bufferManager_;
     std::vector<transport::MemoryHandle> bufferPoolMemoryHandles_;
+    UC::BufferPool flagBufferPool_;
+    transport::MemoryHandle flagBufferMemoryHandle_{transport::kInvalidMemoryHandle};
     std::unique_ptr<UC::DramPool::MetadataManager> metadataManager_;
     std::unique_ptr<ProtocolManager> protocolManager_;
     std::unique_ptr<DramPoolRuntime> runtime_;

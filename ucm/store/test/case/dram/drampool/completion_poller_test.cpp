@@ -24,6 +24,7 @@ constexpr auto kConditionWaitTimeout = std::chrono::seconds(2);
 constexpr auto kConditionPollInterval = std::chrono::milliseconds(1);
 constexpr std::uint64_t kTestOperationTimeoutMs = 60'000;
 constexpr std::uint32_t kValueLength = 16;
+constexpr std::size_t kFlagSlotSize = 64;
 constexpr char kTargetManager[] = "127.0.0.1:29000";
 
 std::uint64_t SteadyNowMs()
@@ -89,12 +90,20 @@ protected:
                 {kValueLength, kQueueCapacity}
         });
         metadata_ = std::make_unique<MetadataManager>(MakeMetadataConfig(), *bufferManager_);
+        ASSERT_TRUE(flagBufferPool_.Init("test_flag_buffer_pool", BufferPool::MemoryType::HOST,
+                                         kFlagSlotSize, kQueueCapacity)
+                        .Success());
 
         ASSERT_EQ(manager_.RegisterMemory(bufferManager_->MemoryRegions().front(),
                                           bufferPoolMemoryHandle_),
                   transport::Status::Ok);
+        transport::MemoryRegion flagRegion{flagBufferPool_.GetLocalAddr(),
+                                           flagBufferPool_.GetTotalSize(),
+                                           transport::MemoryType::Host};
+        ASSERT_EQ(manager_.RegisterMemory(flagRegion, flagBufferMemoryHandle_),
+                  transport::Status::Ok);
 
-        runtime_ = std::make_unique<DramPoolRuntime>(*metadata_, *bufferManager_, manager_,
+        runtime_ = std::make_unique<DramPoolRuntime>(*metadata_, flagBufferPool_, manager_,
                                                      protocols_, requestQueue_, ingress_);
     }
 
@@ -102,7 +111,9 @@ protected:
     {
         runtime_.reset();
         metadata_.reset();
+        EXPECT_EQ(manager_.UnregisterMemory(flagBufferMemoryHandle_), transport::Status::Ok);
         EXPECT_EQ(manager_.UnregisterMemory(bufferPoolMemoryHandle_), transport::Status::Ok);
+        flagBufferPool_.Reset();
         bufferManager_.reset();
         if (ownsAclRuntime_) {
             (void)aclrtResetDevice(g_config.transportDeviceId);
@@ -126,7 +137,7 @@ protected:
         operation.direct = transport::OperationDirect::RemoteDeviceHost;
         operation.target_manager = kTargetManager;
         operation.ops.push_back(
-            transport::Segment{entry->buffer.Get().addr, responseAddr, entry->size});
+            transport::Segment{entry->buffer.addr, responseAddr, entry->size});
         EXPECT_EQ(manager_.ExecuteAsync(operation, handleOut), transport::Status::Ok);
 
         std::vector<TransferItem> items{
@@ -153,7 +164,9 @@ protected:
     CompletionQueue ingress_;
     std::unique_ptr<BufferManager> bufferManager_;
     std::unique_ptr<MetadataManager> metadata_;
+    BufferPool flagBufferPool_;
     transport::MemoryHandle bufferPoolMemoryHandle_{transport::kInvalidMemoryHandle};
+    transport::MemoryHandle flagBufferMemoryHandle_{transport::kInvalidMemoryHandle};
     bool ownsAclRuntime_{false};
     ProtocolManager protocols_;
     std::shared_ptr<TEST::TestTransport> testTransport_{TEST::MakeTestTransport()};
@@ -162,19 +175,18 @@ protected:
     DramPoolConfig savedConfig_;
 };
 
-TEST_F(CompletionPollerTest, BufferAllocationPreservesRequestedLengthAndReleasesPoolSlot)
+TEST_F(CompletionPollerTest, FlagBufferPoolAllocatesAndReusesSlot)
 {
-    constexpr std::uint32_t kRequestedLength = kValueLength / 2;
-    BufferLease lease;
-    ASSERT_TRUE(AcquireBufferAtLeast(*bufferManager_, kRequestedLength, lease).Success());
+    BufferPool::Slot first;
+    ASSERT_TRUE(flagBufferPool_.Allocate(first).Success());
+    EXPECT_EQ(first.length, kFlagSlotSize);
+    EXPECT_EQ(testTransport_->ActiveMemoryCount(), 2U);
+    ASSERT_TRUE(flagBufferPool_.Free(first.slot_index).Success());
 
-    EXPECT_EQ(lease.Get().length, kValueLength);
-    EXPECT_EQ(testTransport_->ActiveMemoryCount(), 1U);
-    EXPECT_TRUE(lease.Reset().Success());
-    EXPECT_EQ(testTransport_->ActiveMemoryCount(), 1U);
-
-    BufferLease reused;
-    EXPECT_TRUE(AcquireBufferAtLeast(*bufferManager_, kRequestedLength, reused).Success());
+    BufferPool::Slot reused;
+    ASSERT_TRUE(flagBufferPool_.Allocate(reused).Success());
+    EXPECT_EQ(reused.slot_index, first.slot_index);
+    EXPECT_TRUE(flagBufferPool_.Free(reused.slot_index).Success());
 }
 
 TEST_F(CompletionPollerTest, RefillsConfiguredPendingWindowAfterCompletedRecordsAreRemoved)
@@ -238,7 +250,7 @@ TEST_F(CompletionPollerTest, TimeoutWaitsForTerminalThenAbortsDump)
     ASSERT_TRUE(WaitUntil([&]() { return testTransport_->QueryCount(handle) > 0; }));
     EXPECT_TRUE(metadata_->Query(MakeKey(7)));
     EXPECT_FALSE(metadata_->Exist(MakeKey(7)));
-    EXPECT_EQ(testTransport_->ActiveMemoryCount(), 1U);
+    EXPECT_EQ(testTransport_->ActiveMemoryCount(), 2U);
 
     ASSERT_TRUE(testTransport_->SetStatus(handle, transport::TransferStatus::Completed));
     const bool completed = WaitUntil([&]() {
@@ -250,7 +262,7 @@ TEST_F(CompletionPollerTest, TimeoutWaitsForTerminalThenAbortsDump)
 
     EXPECT_TRUE(completed);
     EXPECT_FALSE(metadata_->Query(MakeKey(7)));
-    EXPECT_EQ(testTransport_->ActiveMemoryCount(), 1U);
+    EXPECT_EQ(testTransport_->ActiveMemoryCount(), 2U);
     EXPECT_EQ(testTransport_->ActiveTransferCount(), 0U);
 }
 
@@ -273,24 +285,24 @@ TEST_F(CompletionPollerTest, KeepsResponseBufferUntilAsyncWriteReachesTerminal)
     EXPECT_EQ(testTransport_->SyncExecutionCount(), 0U);
     EXPECT_EQ(testTransport_->ActiveTransferCount(), 1U);
     // The complete pool remains registered while individual slots change ownership.
-    EXPECT_EQ(testTransport_->ActiveMemoryCount(), 1U);
-    std::vector<BufferLease> fillerLeases;
-    for (std::size_t index = 0; index < kQueueCapacity - 2; ++index) {
-        BufferLease filler;
-        ASSERT_TRUE(AcquireBuffer(*bufferManager_, kValueLength, filler).Success());
-        fillerLeases.push_back(std::move(filler));
+    EXPECT_EQ(testTransport_->ActiveMemoryCount(), 2U);
+    std::vector<BufferPool::Slot> fillerSlots;
+    for (std::size_t index = 0; index < kQueueCapacity - 1; ++index) {
+        BufferPool::Slot filler;
+        ASSERT_TRUE(flagBufferPool_.Allocate(filler).Success());
+        fillerSlots.push_back(filler);
     }
-    BufferLease exhausted;
-    EXPECT_EQ(AcquireBuffer(*bufferManager_, kValueLength, exhausted), Status::NoSpace());
+    BufferPool::Slot exhausted;
+    EXPECT_EQ(flagBufferPool_.Allocate(exhausted), Status::NoSpace());
 
     ASSERT_TRUE(testTransport_->SetStatus(responseHandle, transport::TransferStatus::Completed));
-    BufferLease releasedLease;
+    BufferPool::Slot releasedSlot;
     const bool responseReleased =
-        WaitUntil([&]() {
-            return AcquireBuffer(*bufferManager_, kValueLength, releasedLease).Success();
-        });
-    releasedLease.Reset();
-    fillerLeases.clear();
+        WaitUntil([&]() { return flagBufferPool_.Allocate(releasedSlot).Success(); });
+    if (responseReleased) { EXPECT_TRUE(flagBufferPool_.Free(releasedSlot.slot_index).Success()); }
+    for (const auto& filler : fillerSlots) {
+        EXPECT_TRUE(flagBufferPool_.Free(filler.slot_index).Success());
+    }
 
     stop.store(true, std::memory_order_release);
     pollerThread.join();
@@ -320,24 +332,24 @@ TEST_F(CompletionPollerTest, SendsResponseReadyRecordWithoutBlocking)
     ASSERT_NE(responseHandle, transport::kInvalidTransferHandle);
     EXPECT_EQ(testTransport_->SyncExecutionCount(), 0U);
     EXPECT_EQ(testTransport_->LatestOperationLength(), 3U);
-    EXPECT_EQ(testTransport_->ActiveMemoryCount(), 1U);
-    std::vector<BufferLease> fillerLeases;
+    EXPECT_EQ(testTransport_->ActiveMemoryCount(), 2U);
+    std::vector<BufferPool::Slot> fillerSlots;
     for (std::size_t index = 0; index < kQueueCapacity - 1; ++index) {
-        BufferLease filler;
-        ASSERT_TRUE(AcquireBuffer(*bufferManager_, kValueLength, filler).Success());
-        fillerLeases.push_back(std::move(filler));
+        BufferPool::Slot filler;
+        ASSERT_TRUE(flagBufferPool_.Allocate(filler).Success());
+        fillerSlots.push_back(filler);
     }
-    BufferLease exhausted;
-    EXPECT_EQ(AcquireBuffer(*bufferManager_, kValueLength, exhausted), Status::NoSpace());
+    BufferPool::Slot exhausted;
+    EXPECT_EQ(flagBufferPool_.Allocate(exhausted), Status::NoSpace());
 
     ASSERT_TRUE(testTransport_->SetStatus(responseHandle, transport::TransferStatus::Completed));
-    BufferLease releasedLease;
+    BufferPool::Slot releasedSlot;
     const bool responseReleased =
-        WaitUntil([&]() {
-            return AcquireBuffer(*bufferManager_, kValueLength, releasedLease).Success();
-        });
-    releasedLease.Reset();
-    fillerLeases.clear();
+        WaitUntil([&]() { return flagBufferPool_.Allocate(releasedSlot).Success(); });
+    if (responseReleased) { EXPECT_TRUE(flagBufferPool_.Free(releasedSlot.slot_index).Success()); }
+    for (const auto& filler : fillerSlots) {
+        EXPECT_TRUE(flagBufferPool_.Free(filler.slot_index).Success());
+    }
 
     stop.store(true, std::memory_order_release);
     pollerThread.join();

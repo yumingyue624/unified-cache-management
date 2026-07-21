@@ -5,7 +5,6 @@ set(DRAMPOOL_SOURCE_DIR
 
 add_library(drampool_core STATIC
     ${DRAMPOOL_SOURCE_DIR}/completion_poller.cpp
-    ${DRAMPOOL_SOURCE_DIR}/drampool_buffer.cpp
     ${DRAMPOOL_SOURCE_DIR}/drampool_launch_config.cpp
     ${DRAMPOOL_SOURCE_DIR}/drampool_daemon.cpp
     ${DRAMPOOL_SOURCE_DIR}/drampool_yaml_config.cpp

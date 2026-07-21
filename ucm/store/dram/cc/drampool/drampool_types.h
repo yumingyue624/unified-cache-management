@@ -11,9 +11,9 @@
 #include <string>
 #include <utility>
 #include <vector>
-#include "drampool_buffer.h"
 #include "core/transport.h"
 #include "kv_protocol.h"
+#include "pool/buffer_pool.h"
 #include "status/status.h"
 #include "template/spsc_ring_queue.h"
 
@@ -94,18 +94,19 @@ struct CompletionRecord {
 
     // Ownership held from response submission until its handle reaches terminal.
     TransportHandle response_handle{transport::kInvalidTransferHandle};
-    BufferLease response_buffer;
+    UC::BufferPool::Slot resp_buffer;
 };
 
 using CompletionQueue = UC::SpscRingQueue<CompletionRecord>;
 
 // Non-owning runtime view. DramPoolServer owns every referenced component.
 struct DramPoolRuntime {
-    DramPoolRuntime(UC::DramPool::MetadataManager& metadataRef, BufferManager& bufferManagerRef,
+    DramPoolRuntime(UC::DramPool::MetadataManager& metadataRef,
+                    UC::BufferPool& flagBufferPoolRef,
                     transport::TransportManager& transportRef, ProtocolManager& protocolRef,
                     RequestQueue& requestQueueRef, CompletionQueue& completionQueueRef)
         : metadata(metadataRef),
-          bufferManager(bufferManagerRef),
+          flagBufferPool(flagBufferPoolRef),
           transport(transportRef),
           protocol(protocolRef),
           requestQueue(requestQueueRef),
@@ -114,7 +115,7 @@ struct DramPoolRuntime {
     }
 
     UC::DramPool::MetadataManager& metadata;
-    BufferManager& bufferManager;
+    UC::BufferPool& flagBufferPool;
     transport::TransportManager& transport;
     ProtocolManager& protocol;
     RequestQueue& requestQueue;

@@ -85,6 +85,7 @@ Status DramPoolServer::Init()
     try {
         if (auto status = InitializeAclRuntime(); status.Failure()) { return status; }
         if (auto status = InitMemoryPool(); status.Failure()) { return status; }
+        if (auto status = InitFlagBufferPool(); status.Failure()) { return status; }
         if (auto status = InitMetadata(); status.Failure()) { return status; }
         if (auto status = InitProtocol(); status.Failure()) { return status; }
         if (auto status = InitQueues(); status.Failure()) { return status; }
@@ -169,6 +170,19 @@ Status DramPoolServer::InitMemoryPool()
         bufferManager_ = std::make_unique<BufferManager>(slots);
     } catch (const std::exception& error) {
         return Status::Error(std::string{"DramPool buffer manager init failed: "} + error.what());
+    }
+    return Status::OK();
+}
+
+Status DramPoolServer::InitFlagBufferPool()
+{
+    const auto status = flagBufferPool_.Init(
+        "drampool_flag_buffer_pool", UC::BufferPool::MemoryType::HOST,
+        static_cast<std::size_t>(g_config.flagBufferSlotSizeBytes),
+        static_cast<std::size_t>(g_config.flagBufferSlotCount), false,
+        kFlagBufferSlotAlignment);
+    if (status.Failure()) {
+        return Status::Error("DramPool flag buffer pool init failed: " + status.ToString());
     }
     return Status::OK();
 }
@@ -262,6 +276,17 @@ Status DramPoolServer::RegisterBufferPools()
         }
         bufferPoolMemoryHandles_.push_back(handle);
     }
+
+    transport::MemoryRegion flagBufferRegion;
+    flagBufferRegion.addr = flagBufferPool_.GetLocalAddr();
+    flagBufferRegion.length = flagBufferPool_.GetTotalSize();
+    flagBufferRegion.type = transport::MemoryType::Host;
+    const auto flagStatus =
+        transportManager_->RegisterMemory(flagBufferRegion, flagBufferMemoryHandle_);
+    if (flagStatus != transport::Status::Ok) {
+        flagBufferMemoryHandle_ = transport::kInvalidMemoryHandle;
+        return ToUcStatus(flagStatus, "TransportManager::RegisterMemory flag buffer");
+    }
     return Status::OK();
 }
 
@@ -289,7 +314,7 @@ Status DramPoolServer::CreateRuntimeContext()
         return Status::InvalidParam("DramPool runtime dependencies are not initialized");
     }
     try {
-        runtime_ = std::make_unique<DramPoolRuntime>(*metadataManager_, *bufferManager_,
+        runtime_ = std::make_unique<DramPoolRuntime>(*metadataManager_, flagBufferPool_,
                                                      *transportManager_, *protocolManager_,
                                                      requestQueue_, completionQueue_);
     } catch (const std::exception& error) {
@@ -421,6 +446,14 @@ void DramPoolServer::StopTransportService()
 
 void DramPoolServer::UnregisterBufferPools()
 {
+    if (flagBufferMemoryHandle_ != transport::kInvalidMemoryHandle) {
+        const auto status = transportManager_->UnregisterMemory(flagBufferMemoryHandle_);
+        if (status != transport::Status::Ok) {
+            UC_ERROR_UNLIMITED("DramPool flag buffer memory unregister failed, handle={}",
+                               flagBufferMemoryHandle_);
+        }
+        flagBufferMemoryHandle_ = transport::kInvalidMemoryHandle;
+    }
     for (auto iter = bufferPoolMemoryHandles_.rbegin(); iter != bufferPoolMemoryHandles_.rend();
          ++iter) {
         const auto status = transportManager_->UnregisterMemory(*iter);
@@ -530,7 +563,9 @@ void DramPoolServer::ResetInitializedComponents()
     protocolManager_.reset();
     metadataManager_.reset();
     tcpMessageChannel_.reset();
+    flagBufferMemoryHandle_ = transport::kInvalidMemoryHandle;
     bufferPoolMemoryHandles_.clear();
+    flagBufferPool_.Reset();
     bufferManager_.reset();
     transportManager_.reset();
     if (aclRuntimeOwned_) {

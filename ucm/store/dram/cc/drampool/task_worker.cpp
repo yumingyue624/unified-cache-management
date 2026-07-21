@@ -100,6 +100,10 @@ Status TaskWorker::EnsurePeerReady(const transport::ManagerID& targetOneSidedId)
 Status TaskWorker::ProcessDump(const KvDumpRequest& request,
                                const transport::ManagerID& peerOneSidedId)
 {
+    if (runtime_.protocol.GetPackedResponseSize(KvOpcode::Dump, request.batch_size) >
+        g_config.flagBufferSlotSizeBytes) {
+        return Status::InvalidParam("DUMP response exceeds configured flag buffer slot size");
+    }
     const std::uint64_t ttl_ms =
         request.ttl != 0 ? static_cast<std::uint64_t>(request.ttl) : g_config.defaultDumpTtlMs;
     const auto lifeTimeout = LifeTimeout(ttl_ms);
@@ -137,10 +141,10 @@ Status TaskWorker::ProcessDump(const KvDumpRequest& request,
             break;
         }
 
-        // The metadata entry owns its buffer until it is deleted.
+        // INITIALIZED entries are not eviction candidates while the DUMP is in flight.
         transfer_items.emplace_back(TransferItem{index, entry.key});
         operation.ops.emplace_back(
-            transport::Segment{metadataEntry->buffer.Get().addr, entry.addr, entry.len});
+            transport::Segment{metadataEntry->buffer.addr, entry.addr, entry.len});
     }
 
     if (transfer_items.empty()) {
@@ -173,6 +177,10 @@ Status TaskWorker::ProcessDump(const KvDumpRequest& request,
 Status TaskWorker::ProcessLoad(const KvLoadRequest& request,
                                const transport::ManagerID& peerOneSidedId)
 {
+    if (runtime_.protocol.GetPackedResponseSize(KvOpcode::Load, request.batch_size) >
+        g_config.flagBufferSlotSizeBytes) {
+        return Status::InvalidParam("LOAD response exceeds configured flag buffer slot size");
+    }
     std::vector<std::uint8_t> results(request.batch_size,
                                       static_cast<std::uint8_t>(ResultCode::Ok));
     std::vector<TransferItem> transfer_items;
@@ -207,7 +215,7 @@ Status TaskWorker::ProcessLoad(const KvLoadRequest& request,
         // The LOAD pin keeps metadata and buffer alive through async transport.
         transfer_items.emplace_back(TransferItem{index, entry.key});
         operation.ops.emplace_back(
-            transport::Segment{metadataEntry->buffer.Get().addr, entry.addr, entry.len});
+            transport::Segment{metadataEntry->buffer.addr, entry.addr, entry.len});
     }
 
     if (transfer_items.empty()) {
@@ -240,6 +248,10 @@ Status TaskWorker::ProcessLoad(const KvLoadRequest& request,
 Status TaskWorker::ProcessLookup(const KvLookupRequest& request,
                                  const transport::ManagerID& peerOneSidedId)
 {
+    if (runtime_.protocol.GetPackedResponseSize(KvOpcode::Lookup, request.batch_size) >
+        g_config.flagBufferSlotSizeBytes) {
+        return Status::InvalidParam("LOOKUP response exceeds configured flag buffer slot size");
+    }
     std::vector<std::uint8_t> results(request.batch_size,
                                       static_cast<std::uint8_t>(LookupResult::NotFound));
     for (std::uint16_t index = 0; index < request.batch_size; ++index) {
