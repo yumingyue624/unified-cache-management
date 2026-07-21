@@ -195,7 +195,7 @@ std::size_t KvDumpProtocol::GetPackedRequestSize(const KvRequest& req) const
     return kKvDumpRequestHeaderSize + static_cast<std::size_t>(r.batch_size) * kKvDumpEntrySize;
 }
 
-std::size_t KvDumpProtocol::PackedResponseSize(std::size_t result_count) const
+std::size_t KvDumpProtocol::GetPackedResponseSize(std::size_t result_count) const
 {
     return kResponseResultsOffset + Packed4BitResultSize(result_count);
 }
@@ -309,7 +309,7 @@ std::size_t KvLoadProtocol::GetPackedRequestSize(const KvRequest& req) const
     return kKvLoadRequestHeaderSize + static_cast<std::size_t>(r.batch_size) * kKvLoadEntrySize;
 }
 
-std::size_t KvLoadProtocol::PackedResponseSize(std::size_t result_count) const
+std::size_t KvLoadProtocol::GetPackedResponseSize(std::size_t result_count) const
 {
     return kResponseResultsOffset + Packed4BitResultSize(result_count);
 }
@@ -421,7 +421,7 @@ std::size_t KvLookupProtocol::GetPackedRequestSize(const KvRequest& req) const
     return kKvLookupRequestHeaderSize + static_cast<std::size_t>(r.batch_size) * kKvLookupEntrySize;
 }
 
-std::size_t KvLookupProtocol::PackedResponseSize(std::size_t result_count) const
+std::size_t KvLookupProtocol::GetPackedResponseSize(std::size_t result_count) const
 {
     return kResponseResultsOffset + Packed1BitResultSize(result_count);
 }
@@ -547,7 +547,7 @@ std::size_t ProtocolManager::GetPackedRequestSize(KvOpcode opcode, const KvReque
 std::size_t ProtocolManager::GetPackedResponseSize(KvOpcode opcode, std::size_t result_count) const
 {
     auto* proto = GetProtocol(opcode);
-    return proto ? proto->PackedResponseSize(result_count) : 0;
+    return proto ? proto->GetPackedResponseSize(result_count) : 0;
 }
 
 Status ProtocolManager::PackRequest(void* data, KvOpcode opcode, const KvRequest& req)
