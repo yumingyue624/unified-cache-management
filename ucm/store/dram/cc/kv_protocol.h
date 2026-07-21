@@ -187,7 +187,7 @@ public:
     virtual ~KvProtocol() = default;
 
     // Client side: pack request struct -> wire; unpack response wire -> struct.
-    virtual std::size_t PackedSize(const KvRequest& req) const = 0;
+    virtual std::size_t GetPackedRequestSize(const KvRequest& req) const = 0;
     virtual std::size_t PackedResponseSize(std::size_t result_count) const = 0;
     virtual Status PackRequest(const KvRequest& req, void* target) = 0;
     virtual Status UnpackResponse(const void* data, std::uint16_t result_count,
@@ -202,7 +202,7 @@ public:
 class KvDumpProtocol : public KvProtocol {
 public:
     // Client side
-    std::size_t PackedSize(const KvRequest& req) const override;
+    std::size_t GetPackedRequestSize(const KvRequest& req) const override;
     std::size_t PackedResponseSize(std::size_t result_count) const override;
     Status PackRequest(const KvRequest& req, void* target) override;
     Status UnpackResponse(const void* data, std::uint16_t result_count,
@@ -219,7 +219,7 @@ private:
 class KvLoadProtocol : public KvProtocol {
 public:
     // Client side
-    std::size_t PackedSize(const KvRequest& req) const override;
+    std::size_t GetPackedRequestSize(const KvRequest& req) const override;
     std::size_t PackedResponseSize(std::size_t result_count) const override;
     Status PackRequest(const KvRequest& req, void* target) override;
     Status UnpackResponse(const void* data, std::uint16_t result_count,
@@ -236,7 +236,7 @@ private:
 class KvLookupProtocol : public KvProtocol {
 public:
     // Client side
-    std::size_t PackedSize(const KvRequest& req) const override;
+    std::size_t GetPackedRequestSize(const KvRequest& req) const override;
     std::size_t PackedResponseSize(std::size_t result_count) const override;
     Status PackRequest(const KvRequest& req, void* target) override;
     Status UnpackResponse(const void* data, std::uint16_t result_count,
@@ -259,7 +259,7 @@ public:
     ProtocolManager& operator=(const ProtocolManager&) = delete;
 
     // Client side
-    std::size_t GetPackedSize(KvOpcode opcode, const KvRequest& req) const;
+    std::size_t GetPackedRequestSize(KvOpcode opcode, const KvRequest& req) const;
     std::size_t GetPackedResponseSize(KvOpcode opcode, std::size_t result_count) const;
     Status PackRequest(void* data, KvOpcode opcode, const KvRequest& req);
     Status IsResponseReady(const void* data, bool& ready) const;

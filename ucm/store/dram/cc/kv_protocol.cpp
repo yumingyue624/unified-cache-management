@@ -177,7 +177,7 @@ void PackDumpHeader(std::uint8_t* out, KvOpcode opcode, std::uint64_t resp_addr,
 
 // ---- Client side ----
 
-std::size_t KvDumpProtocol::PackedSize(const KvRequest& req) const
+std::size_t KvDumpProtocol::GetPackedRequestSize(const KvRequest& req) const
 {
     const auto& r = static_cast<const KvDumpRequest&>(req);
     return kKvDumpRequestHeaderSize + static_cast<std::size_t>(r.batch_size) * kKvDumpEntrySize;
@@ -267,8 +267,7 @@ Status KvDumpProtocol::UnpackRequest(const void* data, std::size_t size,
     req->entries.resize(req->batch_size);
     for (std::size_t i = 0; i < req->batch_size; ++i) {
         const std::uint8_t* base = bytes + kKvDumpRequestHeaderSize + i * kKvDumpEntrySize;
-        if (auto status = UnpackDumpLoadEntry(base, req->entries[i], "Dump", i);
-            status.Failure()) {
+        if (auto status = UnpackDumpLoadEntry(base, req->entries[i], "Dump", i); status.Failure()) {
             return status;
         }
     }
@@ -292,7 +291,7 @@ Status KvDumpProtocol::PackResponse(void* data, const KvResponse& resp) const
 
 // ---- Client side ----
 
-std::size_t KvLoadProtocol::PackedSize(const KvRequest& req) const
+std::size_t KvLoadProtocol::GetPackedRequestSize(const KvRequest& req) const
 {
     const auto& r = static_cast<const KvLoadRequest&>(req);
     return kKvLoadRequestHeaderSize + static_cast<std::size_t>(r.batch_size) * kKvLoadEntrySize;
@@ -380,8 +379,7 @@ Status KvLoadProtocol::UnpackRequest(const void* data, std::size_t size,
     req->entries.resize(req->batch_size);
     for (std::size_t i = 0; i < req->batch_size; ++i) {
         const std::uint8_t* base = bytes + kKvLoadRequestHeaderSize + i * kKvLoadEntrySize;
-        if (auto status = UnpackDumpLoadEntry(base, req->entries[i], "Load", i);
-            status.Failure()) {
+        if (auto status = UnpackDumpLoadEntry(base, req->entries[i], "Load", i); status.Failure()) {
             return status;
         }
     }
@@ -405,7 +403,7 @@ Status KvLoadProtocol::PackResponse(void* data, const KvResponse& resp) const
 
 // ---- Client side ----
 
-std::size_t KvLookupProtocol::PackedSize(const KvRequest& req) const
+std::size_t KvLookupProtocol::GetPackedRequestSize(const KvRequest& req) const
 {
     const auto& r = static_cast<const KvLookupRequest&>(req);
     return kKvLookupRequestHeaderSize + static_cast<std::size_t>(r.batch_size) * kKvLookupEntrySize;
@@ -527,11 +525,11 @@ KvProtocol* ProtocolManager::GetProtocol(KvOpcode opcode) const
 
 // ---- Client side ----
 
-std::size_t ProtocolManager::GetPackedSize(KvOpcode opcode, const KvRequest& req) const
+std::size_t ProtocolManager::GetPackedRequestSize(KvOpcode opcode, const KvRequest& req) const
 {
     KvProtocol* proto = GetProtocol(opcode);
     if (!proto) { return 0; }
-    return proto->PackedSize(req);
+    return proto->GetPackedRequestSize(req);
 }
 
 std::size_t ProtocolManager::GetPackedResponseSize(KvOpcode opcode, std::size_t result_count) const
