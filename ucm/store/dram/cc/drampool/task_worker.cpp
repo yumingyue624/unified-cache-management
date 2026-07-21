@@ -78,13 +78,22 @@ Status TaskWorker::ProcessOneRequest(RequestTaskPtr task)
     const auto& peerOneSidedId = task->peer_one_sided_id;
     const auto& request = task->request;
     switch (request->opcode) {
-        case KvOpcode::Dump:
-            return ProcessDump(*dynamic_cast<const KvDumpRequest*>(request.get()), peerOneSidedId);
-        case KvOpcode::Load:
-            return ProcessLoad(*dynamic_cast<const KvLoadRequest*>(request.get()), peerOneSidedId);
-        case KvOpcode::Lookup:
-            return ProcessLookup(*dynamic_cast<const KvLookupRequest*>(request.get()),
-                                 peerOneSidedId);
+        case KvOpcode::Dump: {
+            const auto* dump = dynamic_cast<const KvDumpRequest*>(request.get());
+            return dump == nullptr ? Status::InvalidParam("DUMP request type does not match opcode")
+                                   : ProcessDump(*dump, peerOneSidedId);
+        }
+        case KvOpcode::Load: {
+            const auto* load = dynamic_cast<const KvLoadRequest*>(request.get());
+            return load == nullptr ? Status::InvalidParam("LOAD request type does not match opcode")
+                                   : ProcessLoad(*load, peerOneSidedId);
+        }
+        case KvOpcode::Lookup: {
+            const auto* lookup = dynamic_cast<const KvLookupRequest*>(request.get());
+            return lookup == nullptr
+                       ? Status::InvalidParam("LOOKUP request type does not match opcode")
+                       : ProcessLookup(*lookup, peerOneSidedId);
+        }
         case KvOpcode::None: break;
     }
     return Status::InvalidParam("TaskWorker got invalid opcode");

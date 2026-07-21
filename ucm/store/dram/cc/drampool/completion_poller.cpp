@@ -6,6 +6,7 @@
 #include "completion_poller.h"
 #include <chrono>
 #include <limits>
+#include <thread>
 #include <utility>
 #include "core/transport_manager.h"
 #include "drampool_config.h"
@@ -14,6 +15,8 @@
 
 namespace UC::DramPool {
 namespace {
+
+constexpr auto kPollerIdleWait = std::chrono::microseconds(100);
 
 std::uint64_t SteadyNowMs()
 {
@@ -41,6 +44,7 @@ void CompletionPoller::Run(const std::atomic_bool& stop)
         PollPendingCompletions();
 
         if (stop.load(std::memory_order_acquire) && filled == 0 && pending_.empty()) { break; }
+        if (filled == 0) { std::this_thread::sleep_for(kPollerIdleWait); }
     }
 }
 

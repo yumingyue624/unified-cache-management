@@ -44,6 +44,18 @@ target_link_libraries(drampool
 
 install(TARGETS drampool RUNTIME DESTINATION bin COMPONENT ucm)
 
+add_executable(drampool_e2e EXCLUDE_FROM_ALL
+    ${CMAKE_SOURCE_DIR}/ucm/store/test/case/dram/drampool/drampool_e2e.cpp
+)
+target_link_libraries(drampool_e2e PRIVATE drampool_core)
+add_custom_target(run_drampool_e2e
+    COMMAND bash
+            ${CMAKE_SOURCE_DIR}/ucm/store/test/case/dram/drampool/run_drampool_e2e.sh
+            $<TARGET_FILE:drampool_e2e>
+    DEPENDS drampool_e2e
+    USES_TERMINAL
+)
+
 if(BUILD_UNIT_TESTS)
     include(GoogleTest)
     option(BUILD_DRAMPOOL_RUNTIME_INTEGRATION_TESTS
@@ -75,6 +87,11 @@ if(BUILD_UNIT_TESTS)
             drampool_core
             gtest_main
             gtest
+    )
+    target_include_directories(drampool_kv_protocol.test
+        PRIVATE
+            ${CMAKE_SOURCE_DIR}/ucm/store
+            ${CMAKE_SOURCE_DIR}/ucm/store/test/case
     )
     if(MSVC)
         target_link_options(drampool_kv_protocol.test PRIVATE /PROFILE)
