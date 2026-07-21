@@ -169,37 +169,32 @@ void PackDumpHeader(std::uint8_t* out, KvOpcode opcode, std::uint64_t resp_addr,
     std::memcpy(out + kDumpBatchSizeOffset, &batch_size, sizeof(batch_size));
 }
 
-Status UnpackRequestPrefix(const void* data, std::size_t size, std::size_t headerSize,
-                           KvOpcode expectedOpcode, const char* protocol, KvOpcode& opcode,
-                           std::uint64_t& respAddr)
+template <typename RequestT>
+Status UnpackCommonRequestHeader(const void* data, std::size_t size, std::size_t headerSize,
+                                 std::size_t batchSizeOffset, std::size_t entrySize,
+                                 KvOpcode expectedOpcode, RequestT& request)
 {
+    const std::string protocol = ProtocolName(expectedOpcode);
     if (!data || size < headerSize) {
-        return Status::InvalidParam(std::string{protocol} +
-                                    ": invalid data or size smaller than header");
+        return Status::InvalidParam(protocol + ": invalid data or size smaller than header");
     }
     const auto* bytes = static_cast<const std::uint8_t*>(data);
-    opcode = PeekOpcode(data);
-    if (opcode != expectedOpcode) {
-        return Status::InvalidParam(std::string{protocol} + ": opcode mismatch");
+    request.opcode = PeekOpcode(data);
+    if (request.opcode != expectedOpcode) {
+        return Status::InvalidParam(protocol + ": opcode mismatch");
     }
-    std::memcpy(&respAddr, bytes + kRespAddrOffset, sizeof(respAddr));
-    if (respAddr == 0) {
-        return Status::InvalidParam(std::string{protocol} + ": resp_addr is zero");
+    std::memcpy(&request.resp_addr, bytes + kRespAddrOffset, sizeof(request.resp_addr));
+    if (request.resp_addr == 0) {
+        return Status::InvalidParam(protocol + ": resp_addr is zero");
     }
-    return Status::OK();
-}
-
-Status UnpackBatchSize(const std::uint8_t* data, std::size_t size, std::size_t batchSizeOffset,
-                       std::size_t headerSize, std::size_t entrySize, const char* protocol,
-                       std::uint16_t& batchSize)
-{
-    std::memcpy(&batchSize, data + batchSizeOffset, sizeof(batchSize));
-    if (batchSize == 0) {
-        return Status::InvalidParam(std::string{protocol} + ": batch_size is zero");
+    std::memcpy(&request.batch_size, bytes + batchSizeOffset, sizeof(request.batch_size));
+    if (request.batch_size == 0) {
+        return Status::InvalidParam(protocol + ": batch_size is zero");
     }
-    const std::size_t expectedSize = headerSize + static_cast<std::size_t>(batchSize) * entrySize;
+    const std::size_t expectedSize =
+        headerSize + static_cast<std::size_t>(request.batch_size) * entrySize;
     if (size != expectedSize) {
-        return Status::InvalidParam(std::string{protocol} + ": size(" + std::to_string(size) +
+        return Status::InvalidParam(protocol + ": size(" + std::to_string(size) +
                                     ") != expected(" + std::to_string(expectedSize) + ")");
     }
     return Status::OK();
@@ -270,24 +265,16 @@ Status KvDumpProtocol::ValidateRequest(const KvDumpRequest& req) const
 Status KvDumpProtocol::UnpackRequest(const void* data, std::size_t size,
                                      std::unique_ptr<KvRequest>& out) const
 {
-    KvOpcode opcode = KvOpcode::None;
-    std::uint64_t respAddr = 0;
-    if (auto status = UnpackRequestPrefix(data, size, kKvDumpRequestHeaderSize, KvOpcode::Dump,
-                                          "Dump", opcode, respAddr);
+    auto req = std::make_unique<KvDumpRequest>();
+    if (auto status =
+            UnpackCommonRequestHeader(data, size, kKvDumpRequestHeaderSize, kDumpBatchSizeOffset,
+                                      kKvDumpEntrySize, KvOpcode::Dump, *req);
         status.Failure()) {
         return status;
     }
 
-    auto req = std::make_unique<KvDumpRequest>();
-    req->opcode = opcode;
-    req->resp_addr = respAddr;
     const auto* bytes = static_cast<const std::uint8_t*>(data);
     std::memcpy(&req->ttl, bytes + kDumpTtlOffset, sizeof(req->ttl));
-    if (auto status = UnpackBatchSize(bytes, size, kDumpBatchSizeOffset, kKvDumpRequestHeaderSize,
-                                      kKvDumpEntrySize, "Dump", req->batch_size);
-        status.Failure()) {
-        return status;
-    }
 
     req->entries.resize(req->batch_size);
     for (std::size_t i = 0; i < req->batch_size; ++i) {
@@ -374,25 +361,15 @@ Status KvLoadProtocol::ValidateRequest(const KvLoadRequest& req) const
 Status KvLoadProtocol::UnpackRequest(const void* data, std::size_t size,
                                      std::unique_ptr<KvRequest>& out) const
 {
-    KvOpcode opcode = KvOpcode::None;
-    std::uint64_t respAddr = 0;
-    if (auto status = UnpackRequestPrefix(data, size, kKvLoadRequestHeaderSize, KvOpcode::Load,
-                                          "Load", opcode, respAddr);
-        status.Failure()) {
-        return status;
-    }
-
     auto req = std::make_unique<KvLoadRequest>();
-    req->opcode = opcode;
-    req->resp_addr = respAddr;
-    const auto* bytes = static_cast<const std::uint8_t*>(data);
-    if (auto status =
-            UnpackBatchSize(bytes, size, kLoadLookupBatchSizeOffset, kKvLoadRequestHeaderSize,
-                            kKvLoadEntrySize, "Load", req->batch_size);
+    if (auto status = UnpackCommonRequestHeader(
+            data, size, kKvLoadRequestHeaderSize, kLoadLookupBatchSizeOffset, kKvLoadEntrySize,
+            KvOpcode::Load, *req);
         status.Failure()) {
         return status;
     }
 
+    const auto* bytes = static_cast<const std::uint8_t*>(data);
     req->entries.resize(req->batch_size);
     for (std::size_t i = 0; i < req->batch_size; ++i) {
         const std::uint8_t* base = bytes + kKvLoadRequestHeaderSize + i * kKvLoadEntrySize;
@@ -479,25 +456,15 @@ Status KvLookupProtocol::ValidateRequest(const KvLookupRequest& req) const
 Status KvLookupProtocol::UnpackRequest(const void* data, std::size_t size,
                                        std::unique_ptr<KvRequest>& out) const
 {
-    KvOpcode opcode = KvOpcode::None;
-    std::uint64_t respAddr = 0;
-    if (auto status = UnpackRequestPrefix(data, size, kKvLookupRequestHeaderSize, KvOpcode::Lookup,
-                                          "Lookup", opcode, respAddr);
-        status.Failure()) {
-        return status;
-    }
-
     auto req = std::make_unique<KvLookupRequest>();
-    req->opcode = opcode;
-    req->resp_addr = respAddr;
-    const auto* bytes = static_cast<const std::uint8_t*>(data);
-    if (auto status =
-            UnpackBatchSize(bytes, size, kLoadLookupBatchSizeOffset, kKvLookupRequestHeaderSize,
-                            kKvLookupEntrySize, "Lookup", req->batch_size);
+    if (auto status = UnpackCommonRequestHeader(
+            data, size, kKvLookupRequestHeaderSize, kLoadLookupBatchSizeOffset,
+            kKvLookupEntrySize, KvOpcode::Lookup, *req);
         status.Failure()) {
         return status;
     }
 
+    const auto* bytes = static_cast<const std::uint8_t*>(data);
     req->entries.resize(req->batch_size);
     for (std::size_t i = 0; i < req->batch_size; ++i) {
         const std::uint8_t* base = bytes + kKvLookupRequestHeaderSize + i * kKvLookupEntrySize;
