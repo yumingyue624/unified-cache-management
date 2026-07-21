@@ -1,0 +1,114 @@
+find_package(Threads REQUIRED)
+
+set(DRAMPOOL_SOURCE_DIR
+    ${CMAKE_SOURCE_DIR}/ucm/store/dram/cc/drampool)
+
+add_library(drampool_core STATIC
+    ${DRAMPOOL_SOURCE_DIR}/completion_poller.cpp
+    ${DRAMPOOL_SOURCE_DIR}/drampool_launch_config.cpp
+    ${DRAMPOOL_SOURCE_DIR}/drampool_daemon.cpp
+    ${DRAMPOOL_SOURCE_DIR}/drampool_yaml_config.cpp
+    ${DRAMPOOL_SOURCE_DIR}/drampool_server.cpp
+    ${CMAKE_SOURCE_DIR}/ucm/store/dram/cc/kv_protocol.cpp
+    ${DRAMPOOL_SOURCE_DIR}/task_worker.cpp
+)
+
+target_include_directories(drampool_core
+    PUBLIC
+        ${DRAMPOOL_SOURCE_DIR}
+        ${CMAKE_SOURCE_DIR}/ucm/store/dram/cc
+        ${CMAKE_SOURCE_DIR}/ucm/store/detail
+)
+
+target_link_libraries(drampool_core
+    PUBLIC
+        infra_status
+        infra_logger
+        infra_template
+        infra_thread
+        buffer_pool
+        p2p_transport
+        trans
+        dramstore
+        Threads::Threads
+)
+
+add_executable(drampool
+    ${DRAMPOOL_SOURCE_DIR}/main.cpp
+)
+
+target_link_libraries(drampool
+    PRIVATE
+        drampool_core
+)
+
+install(TARGETS drampool RUNTIME DESTINATION bin COMPONENT ucm)
+
+add_executable(drampool_e2e EXCLUDE_FROM_ALL
+    ${CMAKE_SOURCE_DIR}/ucm/store/test/case/dram/drampool/drampool_e2e.cpp
+)
+target_link_libraries(drampool_e2e PRIVATE drampool_core)
+add_custom_target(run_drampool_e2e
+    COMMAND bash
+            ${CMAKE_SOURCE_DIR}/ucm/store/test/case/dram/drampool/run_drampool_e2e.sh
+            $<TARGET_FILE:drampool_e2e>
+    DEPENDS drampool_e2e
+    USES_TERMINAL
+)
+
+if(BUILD_UNIT_TESTS)
+    include(GoogleTest)
+    option(BUILD_DRAMPOOL_RUNTIME_INTEGRATION_TESTS
+           "Run DramPool startup tests that require a real Hixl runtime" OFF)
+    add_executable(drampool_startup.test
+        ${CMAKE_SOURCE_DIR}/ucm/store/test/case/dram/drampool/drampool_startup_test.cpp
+        ${CMAKE_SOURCE_DIR}/ucm/store/test/case/dram/drampool/drampool_yaml_config_test.cpp
+    )
+    target_link_libraries(drampool_startup.test
+        PRIVATE
+            drampool_core
+            gtest_main
+            gtest
+    )
+    if(BUILD_DRAMPOOL_RUNTIME_INTEGRATION_TESTS)
+        target_compile_definitions(drampool_startup.test
+            PRIVATE UCM_DRAMPOOL_RUNTIME_INTEGRATION_TESTS=1)
+    endif()
+    if(MSVC)
+        target_link_options(drampool_startup.test PRIVATE /PROFILE)
+    endif()
+    gtest_discover_tests(drampool_startup.test)
+
+    add_executable(drampool_kv_protocol.test
+        ${CMAKE_SOURCE_DIR}/ucm/store/test/case/dram/kv_protocol_test.cpp
+    )
+    target_link_libraries(drampool_kv_protocol.test
+        PRIVATE
+            drampool_core
+            gtest_main
+            gtest
+    )
+    target_include_directories(drampool_kv_protocol.test
+        PRIVATE
+            ${CMAKE_SOURCE_DIR}/ucm/store
+            ${CMAKE_SOURCE_DIR}/ucm/store/test/case
+    )
+    if(MSVC)
+        target_link_options(drampool_kv_protocol.test PRIVATE /PROFILE)
+    endif()
+    gtest_discover_tests(drampool_kv_protocol.test)
+
+    add_executable(completion_poller.integration.test EXCLUDE_FROM_ALL
+        ${CMAKE_SOURCE_DIR}/ucm/store/test/case/dram/drampool/completion_poller_test.cpp
+    )
+    target_link_libraries(completion_poller.integration.test
+        PRIVATE
+            drampool_core
+            gtest_main
+            gtest
+    )
+    if(MSVC)
+        target_link_options(completion_poller.integration.test PRIVATE /PROFILE)
+    endif()
+    gtest_discover_tests(completion_poller.integration.test PROPERTIES LABELS integration)
+endif()
