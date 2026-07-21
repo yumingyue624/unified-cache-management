@@ -100,8 +100,9 @@ public:
 
 class KvRequest {
 public:
-    virtual ~KvRequest() = default;
     KvOpcode opcode{KvOpcode::None};
+
+    virtual ~KvRequest() = default;
 };
 
 class KvResponse {
@@ -111,23 +112,27 @@ public:
 
 class KvDumpRequest : public KvRequest {
 public:
-    std::size_t GetPackedRequestSize() const;
-    Status PackRequest(void* target) const;
-    Status UnpackRequest(const void* data, std::size_t size);
-
-    static std::size_t GetPackedResponseSize(std::size_t result_count);
-    static Status IsResponseReady(const void* data, bool& ready);
-    static Status PackResponse(void* data, const KvResponse& response);
-    static Status UnpackResponse(const void* data, std::uint16_t result_count, KvResponse& out);
-
     std::uint64_t resp_addr{0};
     std::uint32_t ttl{0};
     std::uint16_t batch_size{0};
     std::vector<KvDumpEntry> entries;
+
+    std::size_t GetPackedRequestSize() const;
+    Status PackRequest(void* target) const;
+    Status UnpackRequest(const void* data, std::size_t size);
+
+    static std::size_t GetPackedResponseSize(std::size_t result_count);
+    static Status IsResponseReady(const void* data, bool& ready);
+    static Status PackResponse(void* data, const KvResponse& response);
+    static Status UnpackResponse(const void* data, std::uint16_t result_count, KvResponse& out);
 };
 
 class KvLoadRequest : public KvRequest {
 public:
+    std::uint64_t resp_addr{0};
+    std::uint16_t batch_size{0};
+    std::vector<KvLoadEntry> entries;
+
     std::size_t GetPackedRequestSize() const;
     Status PackRequest(void* target) const;
     Status UnpackRequest(const void* data, std::size_t size);
@@ -136,14 +141,14 @@ public:
     static Status IsResponseReady(const void* data, bool& ready);
     static Status PackResponse(void* data, const KvResponse& response);
     static Status UnpackResponse(const void* data, std::uint16_t result_count, KvResponse& out);
-
-    std::uint64_t resp_addr{0};
-    std::uint16_t batch_size{0};
-    std::vector<KvLoadEntry> entries;
 };
 
 class KvLookupRequest : public KvRequest {
 public:
+    std::uint64_t resp_addr{0};
+    std::uint16_t batch_size{0};
+    std::vector<KvLookupEntry> entries;
+
     std::size_t GetPackedRequestSize() const;
     Status PackRequest(void* target) const;
     Status UnpackRequest(const void* data, std::size_t size);
@@ -152,10 +157,6 @@ public:
     static Status IsResponseReady(const void* data, bool& ready);
     static Status PackResponse(void* data, const KvResponse& response);
     static Status UnpackResponse(const void* data, std::uint16_t result_count, KvResponse& out);
-
-    std::uint64_t resp_addr{0};
-    std::uint16_t batch_size{0};
-    std::vector<KvLookupEntry> entries;
 };
 
 // Thin adapter used by ProtocolManager for type-safe dispatch.
