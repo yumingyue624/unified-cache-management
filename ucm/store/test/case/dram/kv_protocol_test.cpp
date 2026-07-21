@@ -743,5 +743,81 @@ TEST_F(KvProtocolTest, LookupPackedResponseOverwritesNonZeroBufferAndRoundTrips)
     EXPECT_EQ(unpacked.results, resp.results);
 }
 
+TEST_F(KvProtocolTest, FourBitResponseCoversEveryPackedByteValue)
+{
+    for (std::uint16_t low = 0; low <= 0x0FU; ++low) {
+        for (std::uint16_t high = 0; high <= 0x0FU; ++high) {
+            KvResponse response;
+            response.results = {static_cast<std::uint8_t>(low), static_cast<std::uint8_t>(high)};
+            std::vector<std::uint8_t> flag(
+                mgr_.GetPackedResponseSize(KvOpcode::Dump, response.results.size()), 0xFFU);
+
+            ASSERT_TRUE(mgr_.PackResponse(flag.data(), KvOpcode::Dump, response).Success());
+            ASSERT_EQ(flag.size(), 2U);
+            EXPECT_EQ(flag[1], static_cast<std::uint8_t>(low | (high << 4U)));
+
+            KvResponse unpacked;
+            ASSERT_TRUE(mgr_.UnpackResponse(flag.data(), KvOpcode::Dump, 2U, unpacked).Success());
+            EXPECT_EQ(unpacked.results, response.results);
+        }
+    }
+}
+
+TEST_F(KvProtocolTest, OneBitResponseCoversEveryPackedByteValue)
+{
+    for (std::uint16_t byteValue = 0; byteValue <= 0xFFU; ++byteValue) {
+        KvResponse response;
+        for (std::size_t bit = 0; bit < 8U; ++bit) {
+            response.results.push_back(static_cast<std::uint8_t>((byteValue >> bit) & 0x01U));
+        }
+        std::vector<std::uint8_t> flag(
+            mgr_.GetPackedResponseSize(KvOpcode::Lookup, response.results.size()), 0xFFU);
+
+        ASSERT_TRUE(mgr_.PackResponse(flag.data(), KvOpcode::Lookup, response).Success());
+        ASSERT_EQ(flag.size(), 2U);
+        EXPECT_EQ(flag[1], static_cast<std::uint8_t>(byteValue));
+
+        KvResponse unpacked;
+        ASSERT_TRUE(mgr_.UnpackResponse(flag.data(), KvOpcode::Lookup, 8U, unpacked).Success());
+        EXPECT_EQ(unpacked.results, response.results);
+    }
+}
+
+TEST_F(KvProtocolTest, ResponsePackingClearsUnusedBitsAndPreservesCanary)
+{
+    constexpr std::array<std::size_t, 12> kBoundaryCounts = {1,  2,  3,  7,   8,   9,
+                                                             15, 16, 17, 255, 256, 257};
+    for (const std::size_t count : kBoundaryCounts) {
+        for (const KvOpcode opcode : {KvOpcode::Dump, KvOpcode::Load, KvOpcode::Lookup}) {
+            KvResponse response;
+            response.results.resize(count);
+            for (std::size_t index = 0; index < count; ++index) {
+                response.results[index] = static_cast<std::uint8_t>(
+                    opcode == KvOpcode::Lookup ? (index + count) & 0x01U
+                                               : (index * 7U + count) & 0x0FU);
+            }
+
+            const std::size_t packedSize = mgr_.GetPackedResponseSize(opcode, count);
+            std::vector<std::uint8_t> flag(packedSize + 8U, 0xA5U);
+            ASSERT_TRUE(mgr_.PackResponse(flag.data(), opcode, response).Success());
+            for (std::size_t index = packedSize; index < flag.size(); ++index) {
+                EXPECT_EQ(flag[index], 0xA5U) << "count=" << count << ", index=" << index;
+            }
+
+            if (opcode == KvOpcode::Lookup && count % 8U != 0U) {
+                EXPECT_EQ(static_cast<unsigned>(flag[packedSize - 1U]) >> (count % 8U), 0U);
+            } else if (opcode != KvOpcode::Lookup && count % 2U != 0U) {
+                EXPECT_EQ(flag[packedSize - 1U] & 0xF0U, 0U);
+            }
+
+            KvResponse unpacked;
+            ASSERT_TRUE(mgr_.UnpackResponse(flag.data(), opcode, static_cast<std::uint16_t>(count),
+                                            unpacked)
+                            .Success());
+            EXPECT_EQ(unpacked.results, response.results);
+        }
+    }
+}
+
 }  // namespace
 }  // namespace UC::DramPool
