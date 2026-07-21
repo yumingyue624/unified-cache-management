@@ -29,6 +29,10 @@
 namespace UC::DramPool {
 namespace {
 
+constexpr std::size_t kBitsPerByte = 8U;
+constexpr std::size_t kLookupResultBitWidth = 1U;
+constexpr std::size_t kDumpLoadResultBitWidth = 4U;
+
 bool IsAllZeroKey(const BlockId& key);
 
 template <typename Entry>
@@ -64,67 +68,46 @@ Status UnpackDumpLoadEntry(const std::uint8_t* input, Entry& entry, const char* 
     return Status::OK();
 }
 
-Status Pack4BitResults(void* data, const std::vector<std::uint8_t>& results, const char* protocol)
+std::size_t GetPackedResultSize(std::size_t resultCount, std::size_t resultBitWidth)
 {
+    const std::size_t resultsPerByte = kBitsPerByte / resultBitWidth;
+    return resultCount / resultsPerByte + (resultCount % resultsPerByte != 0U ? 1U : 0U);
+}
+
+Status PackResults(void* data, const std::vector<std::uint8_t>& results, std::size_t resultBitWidth,
+                   const char* protocol)
+{
+    const auto maxResult = static_cast<std::uint8_t>((1U << resultBitWidth) - 1U);
     for (std::size_t index = 0; index < results.size(); ++index) {
-        if (results[index] > 0x0FU) {
+        if (results[index] > maxResult) {
             return Status::InvalidParam(std::string{protocol} + ": result[" +
-                                        std::to_string(index) + "] exceeds 4 bits");
+                                        std::to_string(index) + "] exceeds " +
+                                        std::to_string(resultBitWidth) + " bits");
         }
     }
 
     auto* packed = static_cast<std::uint8_t*>(data);
-    for (std::size_t byteIndex = 0; byteIndex < Packed4BitResultSize(results.size()); ++byteIndex) {
-        const std::size_t first = byteIndex * 2U;
-        std::uint8_t value = results[first];
-        if (first + 1U < results.size()) {
-            value = static_cast<std::uint8_t>(value | (results[first + 1U] << 4U));
-        }
-        packed[byteIndex] = value;
+    std::fill_n(packed, GetPackedResultSize(results.size(), resultBitWidth), std::uint8_t{0});
+    const std::size_t resultsPerByte = kBitsPerByte / resultBitWidth;
+    for (std::size_t index = 0; index < results.size(); ++index) {
+        const std::size_t bitOffset = (index % resultsPerByte) * resultBitWidth;
+        packed[index / resultsPerByte] = static_cast<std::uint8_t>(packed[index / resultsPerByte] |
+                                                                   (results[index] << bitOffset));
     }
     return Status::OK();
 }
 
-void Unpack4BitResults(const void* data, std::size_t resultCount,
-                       std::vector<std::uint8_t>& results)
+void UnpackResults(const void* data, std::size_t resultCount, std::size_t resultBitWidth,
+                   std::vector<std::uint8_t>& results)
 {
     const auto* packed = static_cast<const std::uint8_t*>(data);
+    const std::size_t resultsPerByte = kBitsPerByte / resultBitWidth;
+    const auto resultMask = static_cast<std::uint8_t>((1U << resultBitWidth) - 1U);
     results.resize(resultCount);
     for (std::size_t index = 0; index < resultCount; ++index) {
+        const std::size_t bitOffset = (index % resultsPerByte) * resultBitWidth;
         results[index] =
-            static_cast<std::uint8_t>((packed[index / 2U] >> ((index % 2U) * 4U)) & 0x0FU);
-    }
-}
-
-Status Pack1BitResults(void* data, const std::vector<std::uint8_t>& results, const char* protocol)
-{
-    for (std::size_t index = 0; index < results.size(); ++index) {
-        if (results[index] > 1U) {
-            return Status::InvalidParam(std::string{protocol} + ": result[" +
-                                        std::to_string(index) + "] exceeds 1 bit");
-        }
-    }
-
-    auto* packed = static_cast<std::uint8_t*>(data);
-    for (std::size_t byteIndex = 0; byteIndex < Packed1BitResultSize(results.size()); ++byteIndex) {
-        std::uint8_t value = 0;
-        const std::size_t first = byteIndex * 8U;
-        const std::size_t end = std::min(first + 8U, results.size());
-        for (std::size_t index = first; index < end; ++index) {
-            value = static_cast<std::uint8_t>(value | (results[index] << (index - first)));
-        }
-        packed[byteIndex] = value;
-    }
-    return Status::OK();
-}
-
-void Unpack1BitResults(const void* data, std::size_t resultCount,
-                       std::vector<std::uint8_t>& results)
-{
-    const auto* packed = static_cast<const std::uint8_t*>(data);
-    results.resize(resultCount);
-    for (std::size_t index = 0; index < resultCount; ++index) {
-        results[index] = static_cast<std::uint8_t>((packed[index / 8U] >> (index % 8U)) & 0x01U);
+            static_cast<std::uint8_t>((packed[index / resultsPerByte] >> bitOffset) & resultMask);
     }
 }
 
@@ -197,7 +180,7 @@ std::size_t KvDumpProtocol::GetPackedRequestSize(const KvRequest& req) const
 
 std::size_t KvDumpProtocol::GetPackedResponseSize(std::size_t result_count) const
 {
-    return kResponseResultsOffset + Packed4BitResultSize(result_count);
+    return kResponseResultsOffset + GetPackedResultSize(result_count, kDumpLoadResultBitWidth);
 }
 
 Status KvDumpProtocol::PackRequest(const KvRequest& req, void* target)
@@ -222,7 +205,8 @@ Status KvDumpProtocol::UnpackResponse(const void* data, std::uint16_t result_cou
 {
     if (!data) { return Status::InvalidParam("Dump: UnpackResponse data is null"); }
     const auto* bytes = static_cast<const std::uint8_t*>(data);
-    Unpack4BitResults(bytes + kResponseResultsOffset, result_count, out.results);
+    UnpackResults(bytes + kResponseResultsOffset, result_count, kDumpLoadResultBitWidth,
+                  out.results);
     return Status::OK();
 }
 
@@ -291,7 +275,8 @@ Status KvDumpProtocol::PackResponse(void* data, const KvResponse& resp) const
 {
     if (!data) { return Status::InvalidParam("Dump: PackResponse data is null"); }
     auto* bytes = static_cast<std::uint8_t*>(data);
-    const auto status = Pack4BitResults(bytes + kResponseResultsOffset, resp.results, "Dump");
+    const auto status =
+        PackResults(bytes + kResponseResultsOffset, resp.results, kDumpLoadResultBitWidth, "Dump");
     if (status.Failure()) { return status; }
     bytes[kResponseStatusOffset] = static_cast<std::uint8_t>(ResponseStatus::Ready);
     return Status::OK();
@@ -311,7 +296,7 @@ std::size_t KvLoadProtocol::GetPackedRequestSize(const KvRequest& req) const
 
 std::size_t KvLoadProtocol::GetPackedResponseSize(std::size_t result_count) const
 {
-    return kResponseResultsOffset + Packed4BitResultSize(result_count);
+    return kResponseResultsOffset + GetPackedResultSize(result_count, kDumpLoadResultBitWidth);
 }
 
 Status KvLoadProtocol::PackRequest(const KvRequest& req, void* target)
@@ -336,7 +321,8 @@ Status KvLoadProtocol::UnpackResponse(const void* data, std::uint16_t result_cou
 {
     if (!data) { return Status::InvalidParam("Load: UnpackResponse data is null"); }
     const auto* bytes = static_cast<const std::uint8_t*>(data);
-    Unpack4BitResults(bytes + kResponseResultsOffset, result_count, out.results);
+    UnpackResults(bytes + kResponseResultsOffset, result_count, kDumpLoadResultBitWidth,
+                  out.results);
     return Status::OK();
 }
 
@@ -403,7 +389,8 @@ Status KvLoadProtocol::PackResponse(void* data, const KvResponse& resp) const
 {
     if (!data) { return Status::InvalidParam("Load: PackResponse data is null"); }
     auto* bytes = static_cast<std::uint8_t*>(data);
-    const auto status = Pack4BitResults(bytes + kResponseResultsOffset, resp.results, "Load");
+    const auto status =
+        PackResults(bytes + kResponseResultsOffset, resp.results, kDumpLoadResultBitWidth, "Load");
     if (status.Failure()) { return status; }
     bytes[kResponseStatusOffset] = static_cast<std::uint8_t>(ResponseStatus::Ready);
     return Status::OK();
@@ -423,7 +410,7 @@ std::size_t KvLookupProtocol::GetPackedRequestSize(const KvRequest& req) const
 
 std::size_t KvLookupProtocol::GetPackedResponseSize(std::size_t result_count) const
 {
-    return kResponseResultsOffset + Packed1BitResultSize(result_count);
+    return kResponseResultsOffset + GetPackedResultSize(result_count, kLookupResultBitWidth);
 }
 
 Status KvLookupProtocol::PackRequest(const KvRequest& req, void* target)
@@ -448,7 +435,7 @@ Status KvLookupProtocol::UnpackResponse(const void* data, std::uint16_t result_c
 {
     if (!data) { return Status::InvalidParam("Lookup: UnpackResponse data is null"); }
     const auto* bytes = static_cast<const std::uint8_t*>(data);
-    Unpack1BitResults(bytes + kResponseResultsOffset, result_count, out.results);
+    UnpackResults(bytes + kResponseResultsOffset, result_count, kLookupResultBitWidth, out.results);
     return Status::OK();
 }
 
@@ -512,7 +499,8 @@ Status KvLookupProtocol::PackResponse(void* data, const KvResponse& resp) const
     if (!data) { return Status::InvalidParam("Lookup: PackResponse data is null"); }
     if (resp.results.empty()) { return Status::InvalidParam("Lookup: results must not be empty"); }
     auto* bytes = static_cast<std::uint8_t*>(data);
-    const auto status = Pack1BitResults(bytes + kResponseResultsOffset, resp.results, "Lookup");
+    const auto status =
+        PackResults(bytes + kResponseResultsOffset, resp.results, kLookupResultBitWidth, "Lookup");
     if (status.Failure()) { return status; }
     bytes[kResponseStatusOffset] = static_cast<std::uint8_t>(ResponseStatus::Ready);
     return Status::OK();
