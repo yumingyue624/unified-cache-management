@@ -359,7 +359,7 @@ TEST_F(CompletionPollerTest, OperationTimeoutHandlesBoundaryAndClockRollback)
     EXPECT_TRUE(poller_->OperationTimedOut(record, 1'100));
 }
 
-TEST_F(CompletionPollerTest, DisconnectFailureIsReportedWithoutSettlingTransfer)
+TEST_F(CompletionPollerTest, DisconnectFailureKeepsTransferPendingForRetry)
 {
     CompletionRecord record;
     record.peer_one_sided_id = kUnavailablePeer;
@@ -369,9 +369,22 @@ TEST_F(CompletionPollerTest, DisconnectFailureIsReportedWithoutSettlingTransfer)
 
     poller_->DisconnectPeer(record, 7, "data");
 
-    EXPECT_TRUE(record.disconnect_attempted);
+    EXPECT_FALSE(record.disconnect_attempted);
     EXPECT_EQ(record.transfer_items.size(), 1U);
     EXPECT_EQ(record.stage, CompletionStage::PollDataTransfer);
+}
+
+TEST_F(CompletionPollerTest, DisconnectFailureDoesNotBlockShutdown)
+{
+    CompletionRecord record;
+    record.peer_one_sided_id = kUnavailablePeer;
+    poller_->SetDisconnectAllTransfers();
+
+    poller_->DisconnectPeer(record, 7, "data");
+
+    EXPECT_TRUE(poller_->shutdownDrainBlocked_);
+    const std::atomic_bool stop{true};
+    poller_->Run(stop);
 }
 
 TEST_F(CompletionPollerTest, SubmitResponseRejectsMissingPeerAndUnknownOpcode)

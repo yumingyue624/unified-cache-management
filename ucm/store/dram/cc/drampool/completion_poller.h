@@ -35,6 +35,7 @@ private:
     DramPoolRuntime& runtime_;
     std::deque<CompletionRecord> pending_;
     std::atomic_bool disconnectAllTransfers_{false};
+    bool shutdownDrainBlocked_{false};
 };
 
 }  // namespace UC::DramPool

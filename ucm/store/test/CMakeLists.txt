@@ -16,6 +16,9 @@ if(BUILD_UNIT_TESTS)
         posixstore cachestore fakestore pcstore
         gtest_main gtest gmock
     )
+    if(RUNTIME_ENVIRONMENT STREQUAL "ascend")
+        target_link_libraries(ucmstore.test PRIVATE dramstore)
+    endif()
     if(TARGET drampool_core)
         target_link_libraries(ucmstore.test PRIVATE drampool_core)
     endif()

@@ -22,6 +22,14 @@ void CompletionPoller::Run(const std::atomic_bool& stop)
         const auto newPendingCount = FillPendingWindow();
         PollPendingCompletions();
 
+        if (stop.load(std::memory_order_acquire) && shutdownDrainBlocked_) {
+            // Keep unfinished records and their buffers alive. DramPoolServer shuts down
+            // transport before destroying the poller and memory pools.
+            UC_ERROR_UNLIMITED(
+                "CompletionPoller stopped waiting because an in-flight peer could not be "
+                "disconnected");
+            break;
+        }
         if (stop.load(std::memory_order_acquire) && newPendingCount == 0 && pending_.empty()) {
             break;
         }
@@ -287,7 +295,6 @@ bool CompletionPoller::OperationTimedOut(const CompletionRecord& record, std::ui
 void CompletionPoller::DisconnectPeer(CompletionRecord& record, TransportHandle handle,
                                       const char* transferType)
 {
-    record.disconnect_attempted = true;
     const auto status =
         runtime_.transport.Disconnect(transport::TransportProtocol::Hixl, record.peer_one_sided_id);
     if (status.Failure()) {
@@ -295,7 +302,12 @@ void CompletionPoller::DisconnectPeer(CompletionRecord& record, TransportHandle 
             "CompletionPoller disconnect peer failed, transfer_type={}, peer={}, handle={}, "
             "error={}",
             transferType, record.peer_one_sided_id, handle, status);
+        if (disconnectAllTransfers_.load(std::memory_order_acquire)) {
+            shutdownDrainBlocked_ = true;
+        }
+        return;
     }
+    record.disconnect_attempted = true;
 }
 
 }  // namespace UC::DramPool
