@@ -1,8 +1,4 @@
-set(UCM_DRAM_STORE_CC_SOURCE_FILES
-    cc/dram_store.cc
-    cc/drampool/metadata.cc
-)
-add_library(dramstore SHARED ${UCM_DRAM_STORE_CC_SOURCE_FILES})
+add_library(dramstore SHARED cc/dram_store.cc)
 target_include_directories(dramstore PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/cc)
 target_include_directories(dramstore PUBLIC
     ${CMAKE_SOURCE_DIR}/ucm/transport/p2p/include/one_sided)
@@ -18,6 +14,7 @@ if(BUILD_UCM_DRAMPOOL)
         ${DRAMPOOL_SOURCE_DIR}/drampool_launch_config.cc
         ${DRAMPOOL_SOURCE_DIR}/drampool_server.cc
         ${DRAMPOOL_SOURCE_DIR}/drampool_yaml_config.cc
+        ${DRAMPOOL_SOURCE_DIR}/metadata.cc
         ${DRAMPOOL_SOURCE_DIR}/task_worker.cc
         ${CMAKE_CURRENT_SOURCE_DIR}/cc/kv_protocol.cc
     )
@@ -25,7 +22,6 @@ if(BUILD_UCM_DRAMPOOL)
         PUBLIC
             ${DRAMPOOL_SOURCE_DIR}
             ${CMAKE_CURRENT_SOURCE_DIR}/cc
-            ${CMAKE_SOURCE_DIR}/ucm/store/detail
     )
     target_link_libraries(drampool_core
         PUBLIC
