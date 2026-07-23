@@ -18,7 +18,7 @@ public:
     explicit CompletionPoller(DramPoolRuntime& runtime) : runtime_(runtime) {}
 
     void Run(const std::atomic_bool& stop);
-    void RequestDrainAllAsFailed() noexcept;
+    void DisconnectAllTransfers() noexcept;
 
 private:
     std::size_t FillPendingWindow();
@@ -30,10 +30,11 @@ private:
     bool ProcessResponseTransfer(CompletionRecord& record);
     void SettleDataTransfer(CompletionRecord& record, transport::TransferStatus terminalStatus);
     bool OperationTimedOut(const CompletionRecord& record, std::uint64_t nowMs) const;
+    void DisconnectPeer(CompletionRecord& record, TransportHandle handle, const char* transferType);
 
     DramPoolRuntime& runtime_;
     std::deque<CompletionRecord> pending_;
-    std::atomic_bool failAllRequested_{false};
+    std::atomic_bool disconnectAllRequested_{false};
 };
 
 }  // namespace UC::DramPool

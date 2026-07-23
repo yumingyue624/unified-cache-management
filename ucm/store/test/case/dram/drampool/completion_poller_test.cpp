@@ -207,15 +207,15 @@ TEST_F(CompletionPollerTest, RunWithStopSetDrainsAllQueuedFailures)
     EXPECT_TRUE(poller_->pending_.empty());
     CompletionRecord remaining;
     EXPECT_FALSE(completionQueue_.TryPop(remaining));
-    EXPECT_TRUE(poller_->failAllRequested_.load(std::memory_order_acquire));
+    EXPECT_TRUE(poller_->disconnectAllRequested_.load(std::memory_order_acquire));
 }
 
-TEST_F(CompletionPollerTest, RequestDrainAllAsFailedIsIdempotent)
+TEST_F(CompletionPollerTest, DisconnectAllTransfersIsIdempotent)
 {
-    EXPECT_FALSE(poller_->failAllRequested_.load(std::memory_order_acquire));
-    poller_->RequestDrainAllAsFailed();
-    poller_->RequestDrainAllAsFailed();
-    EXPECT_TRUE(poller_->failAllRequested_.load(std::memory_order_acquire));
+    EXPECT_FALSE(poller_->disconnectAllRequested_.load(std::memory_order_acquire));
+    poller_->DisconnectAllTransfers();
+    poller_->DisconnectAllTransfers();
+    EXPECT_TRUE(poller_->disconnectAllRequested_.load(std::memory_order_acquire));
 }
 
 TEST_F(CompletionPollerTest, DataStatusApiFailureAbortsDumpAndAdvancesToResponse)
@@ -357,6 +357,21 @@ TEST_F(CompletionPollerTest, OperationTimeoutHandlesBoundaryAndClockRollback)
     EXPECT_FALSE(poller_->OperationTimedOut(record, 999));
     EXPECT_FALSE(poller_->OperationTimedOut(record, 1'099));
     EXPECT_TRUE(poller_->OperationTimedOut(record, 1'100));
+}
+
+TEST_F(CompletionPollerTest, DisconnectFailureIsReportedWithoutSettlingTransfer)
+{
+    CompletionRecord record;
+    record.peer_one_sided_id = kUnavailablePeer;
+    record.transfer_items = {
+        TransferItem{0, KeyFromHex("c1")}
+    };
+
+    poller_->DisconnectPeer(record, 7, "data");
+
+    EXPECT_TRUE(record.disconnect_attempted);
+    EXPECT_EQ(record.transfer_items.size(), 1U);
+    EXPECT_EQ(record.stage, CompletionStage::PollDataTransfer);
 }
 
 TEST_F(CompletionPollerTest, SubmitResponseRejectsMissingPeerAndUnknownOpcode)
