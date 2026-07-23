@@ -272,9 +272,7 @@ Status DramPoolServer::RegisterBufferPools()
     for (const auto& memory : regions) {
         transport::MemoryHandle handle = transport::kInvalidMemoryHandle;
         const auto status = transportManager_->RegisterMemory(memory, handle);
-        if (status != transport::Status::Ok) {
-            return ToUcStatus(status, "TransportManager::RegisterMemory");
-        }
+        if (status.Failure()) { return status; }
     }
 
     transport::MemoryRegion flagBufferRegion;
@@ -283,9 +281,7 @@ Status DramPoolServer::RegisterBufferPools()
     flagBufferRegion.type = transport::MemoryType::Host;
     transport::MemoryHandle handle = transport::kInvalidMemoryHandle;
     const auto flagStatus = transportManager_->RegisterMemory(flagBufferRegion, handle);
-    if (flagStatus != transport::Status::Ok) {
-        return ToUcStatus(flagStatus, "TransportManager::RegisterMemory flag buffer");
-    }
+    if (flagStatus.Failure()) { return flagStatus; }
     return Status::OK();
 }
 

@@ -97,7 +97,7 @@ bool CompletionPoller::PollDataTransfer(CompletionRecord& record)
 {
     transport::TransferStatus transportStatus = transport::TransferStatus::Failed;
     const auto queryStatus = runtime_.transport.GetStatus(record.data_handle, transportStatus);
-    if (queryStatus != transport::Status::Ok) {
+    if (queryStatus.Failure()) {
         // GetStatus removes failed handles, so an API failure is also terminal.
         UC_ERROR("CompletionPoller data GetStatus failed, handle={}", record.data_handle);
         SettleDataTransfer(record, transport::TransferStatus::Failed);
@@ -175,7 +175,7 @@ Status CompletionPoller::SubmitResponse(CompletionRecord& record)
 
     TransportHandle handle = transport::kInvalidTransferHandle;
     const auto submitStatus = runtime_.transport.ExecuteAsync(operation, handle);
-    if (submitStatus != transport::Status::Ok || handle == transport::kInvalidTransferHandle) {
+    if (submitStatus.Failure() || handle == transport::kInvalidTransferHandle) {
         const auto freeStatus = runtime_.flagBufferPool.Free(record.resp_buffer.slot_index);
         if (freeStatus.Failure()) {
             UC_ERROR(
@@ -184,9 +184,7 @@ Status CompletionPoller::SubmitResponse(CompletionRecord& record)
                 record.resp_buffer.slot_index, freeStatus);
         }
         record.resp_buffer = {};
-        if (submitStatus != transport::Status::Ok) {
-            return ToUcStatus(submitStatus, "ExecuteAsync response");
-        }
+        if (submitStatus.Failure()) { return submitStatus; }
         return Status::Error("ExecuteAsync response returned an invalid handle");
     }
 
@@ -203,7 +201,7 @@ bool CompletionPoller::PollResponseTransfer(CompletionRecord& record)
 {
     transport::TransferStatus transportStatus = transport::TransferStatus::Failed;
     const auto queryStatus = runtime_.transport.GetStatus(record.response_handle, transportStatus);
-    if (queryStatus != transport::Status::Ok) {
+    if (queryStatus.Failure()) {
         // GetStatus removes failed handles, so the response source buffer is no longer in use.
         UC_ERROR("CompletionPoller response GetStatus failed, handle={}", record.response_handle);
     } else if (transportStatus == transport::TransferStatus::Waiting) {
@@ -292,12 +290,11 @@ void CompletionPoller::DisconnectPeer(CompletionRecord& record, TransportHandle 
     record.disconnect_attempted = true;
     const auto status =
         runtime_.transport.Disconnect(transport::TransportProtocol::Hixl, record.peer_one_sided_id);
-    if (status != transport::Status::Ok) {
+    if (status.Failure()) {
         UC_ERROR(
             "CompletionPoller disconnect peer failed, transfer_type={}, peer={}, handle={}, "
             "error={}",
-            transferType, record.peer_one_sided_id, handle,
-            ToUcStatus(status, "TransportManager::Disconnect"));
+            transferType, record.peer_one_sided_id, handle, status);
     }
 }
 
