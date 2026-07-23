@@ -7,13 +7,8 @@ if(BUILD_UNIT_TESTS)
     endif()
     if(NOT RUNTIME_ENVIRONMENT STREQUAL "ascend")
         list(FILTER UCMSTORE_TEST_SOURCE_FILES EXCLUDE REGEX ".*[/\\\\]dram[/\\\\].*")
-    elseif(BUILD_UCM_DRAMPOOL)
-        list(APPEND UCMSTORE_TEST_SOURCE_FILES
-            "${CMAKE_CURRENT_SOURCE_DIR}/case/dram/drampool/completion_poller_test.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/case/dram/drampool/drampool_startup_test.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/case/dram/drampool/drampool_yaml_config_test.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/case/dram/drampool/task_worker_test.cpp"
-        )
+    elseif(NOT TARGET drampool_core)
+        list(FILTER UCMSTORE_TEST_SOURCE_FILES EXCLUDE REGEX ".*[/\\\\]dram[/\\\\]drampool[/\\\\].*")
     endif()
     add_executable(ucmstore.test ${UCMSTORE_TEST_SOURCE_FILES})
     target_include_directories(ucmstore.test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/case)
@@ -21,11 +16,8 @@ if(BUILD_UNIT_TESTS)
         posixstore cachestore fakestore pcstore
         gtest_main gtest gmock
     )
-    if(RUNTIME_ENVIRONMENT STREQUAL "ascend")
-        target_link_libraries(ucmstore.test PRIVATE dramstore)
-        if(BUILD_UCM_DRAMPOOL)
-            target_link_libraries(ucmstore.test PRIVATE drampool_core)
-        endif()
+    if(TARGET drampool_core)
+        target_link_libraries(ucmstore.test PRIVATE drampool_core)
     endif()
     if(BUILD_UCM_ASU)
         target_link_libraries(ucmstore.test PRIVATE
