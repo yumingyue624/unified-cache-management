@@ -414,7 +414,7 @@ void DramPoolServer::StopTaskWorker()
 
 void DramPoolServer::DisconnectInflightTransfers()
 {
-    if (completionPoller_) { completionPoller_->DisconnectAllTransfers(); }
+    if (completionPoller_) { completionPoller_->SetDisconnectAllTransfers(); }
 }
 
 void DramPoolServer::StopCompletionPoller()

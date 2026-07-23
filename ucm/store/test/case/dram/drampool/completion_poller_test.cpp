@@ -207,15 +207,15 @@ TEST_F(CompletionPollerTest, RunWithStopSetDrainsAllQueuedFailures)
     EXPECT_TRUE(poller_->pending_.empty());
     CompletionRecord remaining;
     EXPECT_FALSE(completionQueue_.TryPop(remaining));
-    EXPECT_TRUE(poller_->disconnectAllRequested_.load(std::memory_order_acquire));
+    EXPECT_TRUE(poller_->disconnectAllTransfers_.load(std::memory_order_acquire));
 }
 
-TEST_F(CompletionPollerTest, DisconnectAllTransfersIsIdempotent)
+TEST_F(CompletionPollerTest, SetDisconnectAllTransfersIsIdempotent)
 {
-    EXPECT_FALSE(poller_->disconnectAllRequested_.load(std::memory_order_acquire));
-    poller_->DisconnectAllTransfers();
-    poller_->DisconnectAllTransfers();
-    EXPECT_TRUE(poller_->disconnectAllRequested_.load(std::memory_order_acquire));
+    EXPECT_FALSE(poller_->disconnectAllTransfers_.load(std::memory_order_acquire));
+    poller_->SetDisconnectAllTransfers();
+    poller_->SetDisconnectAllTransfers();
+    EXPECT_TRUE(poller_->disconnectAllTransfers_.load(std::memory_order_acquire));
 }
 
 TEST_F(CompletionPollerTest, DataStatusApiFailureAbortsDumpAndAdvancesToResponse)
@@ -231,7 +231,7 @@ TEST_F(CompletionPollerTest, DataStatusApiFailureAbortsDumpAndAdvancesToResponse
         TransferItem{0, key}
     };
 
-    EXPECT_TRUE(poller_->ProcessDataTransfer(record));
+    EXPECT_TRUE(poller_->PollDataTransfer(record));
 
     EXPECT_EQ(record.stage, CompletionStage::SubmitResponse);
     EXPECT_EQ(record.data_handle, transport::kInvalidTransferHandle);
@@ -463,7 +463,7 @@ TEST_F(CompletionPollerTest, ResponseStatusApiFailureReleasesOwnedBuffer)
     record.response_handle = transport::kInvalidTransferHandle;
     ASSERT_TRUE(flagBufferPool_.Allocate(record.resp_buffer).Success());
 
-    EXPECT_TRUE(poller_->ProcessResponseTransfer(record));
+    EXPECT_TRUE(poller_->PollResponseTransfer(record));
 
     EXPECT_EQ(record.resp_buffer.local_addr, nullptr);
     BufferPool::Slot reused;
@@ -476,7 +476,7 @@ TEST_F(CompletionPollerTest, ResponseBufferReleaseFailureIsStillTerminal)
     CompletionRecord record;
     record.response_handle = transport::kInvalidTransferHandle;
 
-    EXPECT_TRUE(poller_->ProcessResponseTransfer(record));
+    EXPECT_TRUE(poller_->PollResponseTransfer(record));
     EXPECT_EQ(record.resp_buffer.local_addr, nullptr);
 }
 

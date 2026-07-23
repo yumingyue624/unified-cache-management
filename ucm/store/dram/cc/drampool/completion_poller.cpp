@@ -17,7 +17,7 @@ namespace UC::DramPool {
 void CompletionPoller::Run(const std::atomic_bool& stop)
 {
     while (true) {
-        if (stop.load(std::memory_order_acquire)) { DisconnectAllTransfers(); }
+        if (stop.load(std::memory_order_acquire)) { SetDisconnectAllTransfers(); }
 
         const auto newPendingCount = FillPendingWindow();
         PollPendingCompletions();
@@ -31,9 +31,9 @@ void CompletionPoller::Run(const std::atomic_bool& stop)
     }
 }
 
-void CompletionPoller::DisconnectAllTransfers() noexcept
+void CompletionPoller::SetDisconnectAllTransfers() noexcept
 {
-    disconnectAllRequested_.store(true, std::memory_order_release);
+    disconnectAllTransfers_.store(true, std::memory_order_release);
 }
 
 std::size_t CompletionPoller::FillPendingWindow()
@@ -58,7 +58,7 @@ void CompletionPoller::PollPendingCompletions()
     for (std::size_t scanned = 0; scanned < scanCount; ++scanned) {
         switch (iter->stage) {
             case CompletionStage::PollDataTransfer:
-                if (!ProcessDataTransfer(*iter)) {
+                if (!PollDataTransfer(*iter)) {
                     // The transfer is still in-flight, poll it next round.
                     ++iter;
                     break;
@@ -78,7 +78,7 @@ void CompletionPoller::PollPendingCompletions()
                 break;
             }
             case CompletionStage::PollResponseTransfer:
-                if (ProcessResponseTransfer(*iter)) {
+                if (PollResponseTransfer(*iter)) {
                     iter = pending_.erase(iter);
                 } else {
                     ++iter;
@@ -93,7 +93,7 @@ void CompletionPoller::PollPendingCompletions()
     }
 }
 
-bool CompletionPoller::ProcessDataTransfer(CompletionRecord& record)
+bool CompletionPoller::PollDataTransfer(CompletionRecord& record)
 {
     transport::TransferStatus transportStatus = transport::TransferStatus::Failed;
     const auto queryStatus = runtime_.transport.GetStatus(record.data_handle, transportStatus);
@@ -108,7 +108,7 @@ bool CompletionPoller::ProcessDataTransfer(CompletionRecord& record)
 
     if (transportStatus == transport::TransferStatus::Waiting) {
         if (!record.disconnect_attempted &&
-            (disconnectAllRequested_.load(std::memory_order_acquire) ||
+            (disconnectAllTransfers_.load(std::memory_order_acquire) ||
              OperationTimedOut(record, SteadyNowMs()))) {
             DisconnectPeer(record, record.data_handle, "data");
         }
@@ -199,7 +199,7 @@ Status CompletionPoller::SubmitResponse(CompletionRecord& record)
     return Status::OK();
 }
 
-bool CompletionPoller::ProcessResponseTransfer(CompletionRecord& record)
+bool CompletionPoller::PollResponseTransfer(CompletionRecord& record)
 {
     transport::TransferStatus transportStatus = transport::TransferStatus::Failed;
     const auto queryStatus = runtime_.transport.GetStatus(record.response_handle, transportStatus);
@@ -208,7 +208,7 @@ bool CompletionPoller::ProcessResponseTransfer(CompletionRecord& record)
         UC_ERROR("CompletionPoller response GetStatus failed, handle={}", record.response_handle);
     } else if (transportStatus == transport::TransferStatus::Waiting) {
         if (!record.disconnect_attempted &&
-            (disconnectAllRequested_.load(std::memory_order_acquire) ||
+            (disconnectAllTransfers_.load(std::memory_order_acquire) ||
              OperationTimedOut(record, SteadyNowMs()))) {
             DisconnectPeer(record, record.response_handle, "response");
         }
