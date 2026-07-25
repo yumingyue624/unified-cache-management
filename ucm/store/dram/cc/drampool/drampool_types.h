@@ -83,13 +83,13 @@ struct CompletionRecord {
 
     // State needed to construct the request's sole response.
     KvOpcode opcode{KvOpcode::None};
-    std::uint64_t response_addr{0};
+    std::uint64_t remote_resp_addr{0};
     transport::ManagerID peer_one_sided_id;
     std::vector<std::uint8_t> results;
 
     // Ownership held from response submission until its handle reaches terminal.
     TransportHandle response_handle{transport::kInvalidTransferHandle};
-    UC::BufferPool::Slot resp_buffer;
+    UC::BufferPool::Slot local_resp_slot;
 };
 
 using CompletionQueue = UC::SpscRingQueue<CompletionRecord>;

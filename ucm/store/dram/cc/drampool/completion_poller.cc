@@ -17,9 +17,9 @@ namespace {
 
 void ReleaseResponseBuffer(BufferPool& flagBufferPool, CompletionRecord& record)
 {
-    const auto releasedSlot = record.resp_buffer.slot_index;
+    const auto releasedSlot = record.local_resp_slot.slot_index;
     const auto releaseStatus = flagBufferPool.Free(releasedSlot);
-    record.resp_buffer = {};
+    record.local_resp_slot = {};
     if (releaseStatus.Failure()) {
         UC_ERROR("CompletionPoller release response flag buffer failed, slot={}, error={}",
                  releasedSlot, releaseStatus);
@@ -143,29 +143,22 @@ bool CompletionPoller::PollDataTransfer(CompletionRecord& record)
 
 Status CompletionPoller::SubmitResponse(CompletionRecord& record)
 {
-    if (record.peer_one_sided_id.empty()) {
-        return Status::InvalidParam("response peer_one_sided_id is empty");
-    }
-
     const auto packedSize =
         runtime_.protocol.GetPackedResponseSize(record.opcode, record.results.size());
     if (packedSize == 0 || packedSize > std::numeric_limits<std::uint32_t>::max()) {
         return Status::InvalidParam("invalid packed response size");
     }
     const auto len = static_cast<std::uint32_t>(packedSize);
-    if (record.resp_buffer.local_addr != nullptr) {
-        return Status::InvalidParam("response flag buffer slot is already allocated");
-    }
-    auto allocateStatus = runtime_.flagBufferPool.Allocate(record.resp_buffer);
+    auto allocateStatus = runtime_.flagBufferPool.Allocate(record.local_resp_slot);
     if (allocateStatus.Failure()) { return allocateStatus; }
-    if (packedSize > record.resp_buffer.length) {
+    if (packedSize > record.local_resp_slot.length) {
         ReleaseResponseBuffer(runtime_.flagBufferPool, record);
         return Status::InvalidParam(
             "packed response size exceeds configured flag buffer slot size");
     }
 
     const auto protocolStatus = runtime_.protocol.PackResponse(
-        record.resp_buffer.local_addr, record.opcode, KvResponse{record.results});
+        record.local_resp_slot.local_addr, record.opcode, KvResponse{record.results});
     if (protocolStatus.Failure()) {
         ReleaseResponseBuffer(runtime_.flagBufferPool, record);
         return protocolStatus;
@@ -176,7 +169,7 @@ Status CompletionPoller::SubmitResponse(CompletionRecord& record)
     operation.direct = transport::OperationDirect::RemoteDeviceHost;
     operation.target_manager = record.peer_one_sided_id;
     operation.ops.emplace_back(
-        transport::Segment{record.resp_buffer.local_addr, record.response_addr, len});
+        transport::Segment{record.local_resp_slot.local_addr, record.remote_resp_addr, len});
 
     TransportHandle handle = transport::kInvalidTransferHandle;
     const auto submitStatus = runtime_.transport.ExecuteAsync(operation, handle);
@@ -259,11 +252,6 @@ void CompletionPoller::SettleDataTransfer(CompletionRecord& record,
             }
         }
 
-        if (item.index_in_request >= record.results.size()) {
-            UC_ERROR("CompletionPoller result index out of range, handle={}, index={}",
-                     record.data_handle, item.index_in_request);
-            continue;
-        }
         record.results[item.index_in_request] = static_cast<std::uint8_t>(result);
     }
     record.transfer_items.clear();
