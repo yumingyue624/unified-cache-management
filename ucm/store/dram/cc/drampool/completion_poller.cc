@@ -37,14 +37,6 @@ void CompletionPoller::Run(const std::atomic_bool& stop)
         PollPendingCompletions();
 
         if (stopRequested) {
-            if (shutdownDrainBlocked_) {
-                // Keep unfinished records and their buffers alive. DramPoolServer shuts down
-                // transport before destroying the poller and memory pools.
-                UC_ERROR_UNLIMITED(
-                    "CompletionPoller stopped waiting because an in-flight peer could not be "
-                    "disconnected");
-                break;
-            }
             if (newPendingCount == 0 && pending_.empty()) { break; }
         }
         if (newPendingCount == 0 && pending_.empty()) {
@@ -88,7 +80,8 @@ void CompletionPoller::PollPendingCompletions()
                     // Returns true if the record is done and should be erased (permanent failure).
                     iter = pending_.erase(iter);
                 } else {
-                    // Returns false if the record should remain pending (success or temporary failure).
+                    // Returns false if the record should remain pending (success or temporary
+                    // failure).
                     ++iter;
                 }
                 break;
@@ -122,13 +115,13 @@ bool CompletionPoller::PollDataTransfer(CompletionRecord& record)
     }
 
     if (transportStatus == transport::TransferStatus::Waiting) {
-        if (!record.disconnect_attempted &&
-            (disconnectAllTransfers_ || OperationTimedOut(record, SteadyNowMs()))) {
-            UC_WARN("CompletionPoller disconnecting peer for data transfer, peer={}, handle={}",
-                    record.peer_one_sided_id, record.data_handle);
-            DisconnectPeer(record, record.data_handle);
-        }
-        return false;
+        if (!disconnectAllTransfers_ && !OperationTimedOut(record, SteadyNowMs())) { return false; }
+
+        DisconnectPeer(record.peer_one_sided_id, record.data_handle);
+        SettleDataTransfer(record, transport::TransferStatus::Failed);
+        record.data_handle = transport::kInvalidTransferHandle;
+        record.stage = CompletionStage::SubmitResponse;
+        return true;
     }
 
     // A terminal GetStatus releases the data handle before business state is settled.
@@ -177,7 +170,6 @@ bool CompletionPoller::SubmitResponse(CompletionRecord& record)
 
     record.response_handle = handle;
     record.submit_ms = SteadyNowMs();
-    record.disconnect_attempted = false;
     record.results.clear();
     record.stage = CompletionStage::PollResponseTransfer;
     return false;
@@ -191,13 +183,12 @@ bool CompletionPoller::PollResponseTransfer(CompletionRecord& record)
         // GetStatus removes failed handles, so the response source buffer is no longer in use.
         UC_ERROR("CompletionPoller response GetStatus failed, handle={}", record.response_handle);
     } else if (transportStatus == transport::TransferStatus::Waiting) {
-        if (!record.disconnect_attempted &&
-            (disconnectAllTransfers_ || OperationTimedOut(record, SteadyNowMs()))) {
-            UC_WARN("CompletionPoller disconnecting peer for response transfer, peer={}, handle={}",
-                    record.peer_one_sided_id, record.response_handle);
-            DisconnectPeer(record, record.response_handle);
-        }
-        return false;
+        if (!disconnectAllTransfers_ && !OperationTimedOut(record, SteadyNowMs())) { return false; }
+
+        DisconnectPeer(record.peer_one_sided_id, record.response_handle);
+        record.response_handle = transport::kInvalidTransferHandle;
+        ReleaseResponseBuffer(runtime_.flagBufferPool, record);
+        return true;
     } else if (transportStatus != transport::TransferStatus::Completed) {
         UC_ERROR("CompletionPoller response transfer failed, handle={}", record.response_handle);
     }
@@ -258,17 +249,15 @@ bool CompletionPoller::OperationTimedOut(const CompletionRecord& record, std::ui
     return nowMs - record.submit_ms >= g_config.opTimeoutMs;
 }
 
-void CompletionPoller::DisconnectPeer(CompletionRecord& record, TransportHandle handle)
+void CompletionPoller::DisconnectPeer(const transport::ManagerID& peer, TransportHandle handle)
 {
-    const auto status =
-        runtime_.transport.Disconnect(transport::TransportProtocol::Hixl, record.peer_one_sided_id);
+    UC_ERROR("CompletionPoller disconnecting peer to fail in-flight transfer, peer={}, handle={}",
+             peer, handle);
+    const auto status = runtime_.transport.Disconnect(transport::TransportProtocol::Hixl, peer);
     if (status.Failure()) {
-        UC_ERROR("CompletionPoller disconnect peer failed, peer={}, handle={}, error={}",
-                 record.peer_one_sided_id, handle, status);
-        if (disconnectAllTransfers_) { shutdownDrainBlocked_ = true; }
-        return;
+        UC_ERROR("CompletionPoller disconnect peer failed, peer={}, handle={}, error={}", peer,
+                 handle, status);
     }
-    record.disconnect_attempted = true;
 }
 
 }  // namespace UC::DramPool

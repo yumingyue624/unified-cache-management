@@ -79,7 +79,6 @@ struct CompletionRecord {
     TransportHandle data_handle{transport::kInvalidTransferHandle};
     std::vector<TransferItem> transfer_items;
     std::uint64_t submit_ms{0};
-    bool disconnect_attempted{false};
 
     // State needed to construct the request's sole response.
     KvOpcode opcode{KvOpcode::None};
