@@ -15,17 +15,14 @@
 namespace UC::DramPool {
 namespace {
 
-void ReleaseResponseBuffer(BufferPool& flagBufferPool, CompletionRecord& record,
-                           const char* context)
+void ReleaseResponseBuffer(BufferPool& flagBufferPool, CompletionRecord& record)
 {
     const auto releasedSlot = record.resp_buffer.slot_index;
     const auto releaseStatus = flagBufferPool.Free(releasedSlot);
     record.resp_buffer = {};
     if (releaseStatus.Failure()) {
-        UC_ERROR(
-            "CompletionPoller release response flag buffer after failure failed, context={}, "
-            "slot={}, error={}",
-            context, releasedSlot, releaseStatus);
+        UC_ERROR("CompletionPoller release response flag buffer failed, slot={}, error={}",
+                 releasedSlot, releaseStatus);
     }
 }
 
@@ -130,7 +127,9 @@ bool CompletionPoller::PollDataTransfer(CompletionRecord& record)
     if (transportStatus == transport::TransferStatus::Waiting) {
         if (!record.disconnect_attempted &&
             (disconnectAllTransfers_ || OperationTimedOut(record, SteadyNowMs()))) {
-            DisconnectPeer(record, record.data_handle, "data");
+            UC_WARN("CompletionPoller disconnecting peer for data transfer, peer={}, handle={}",
+                    record.peer_one_sided_id, record.data_handle);
+            DisconnectPeer(record, record.data_handle);
         }
         return false;
     }
@@ -160,7 +159,7 @@ Status CompletionPoller::SubmitResponse(CompletionRecord& record)
     auto allocateStatus = runtime_.flagBufferPool.Allocate(record.resp_buffer);
     if (allocateStatus.Failure()) { return allocateStatus; }
     if (packedSize > record.resp_buffer.length) {
-        ReleaseResponseBuffer(runtime_.flagBufferPool, record, "undersized response");
+        ReleaseResponseBuffer(runtime_.flagBufferPool, record);
         return Status::InvalidParam(
             "packed response size exceeds configured flag buffer slot size");
     }
@@ -168,7 +167,7 @@ Status CompletionPoller::SubmitResponse(CompletionRecord& record)
     const auto protocolStatus = runtime_.protocol.PackResponse(
         record.resp_buffer.local_addr, record.opcode, KvResponse{record.results});
     if (protocolStatus.Failure()) {
-        ReleaseResponseBuffer(runtime_.flagBufferPool, record, "response packing");
+        ReleaseResponseBuffer(runtime_.flagBufferPool, record);
         return protocolStatus;
     }
 
@@ -182,7 +181,7 @@ Status CompletionPoller::SubmitResponse(CompletionRecord& record)
     TransportHandle handle = transport::kInvalidTransferHandle;
     const auto submitStatus = runtime_.transport.ExecuteAsync(operation, handle);
     if (submitStatus.Failure() || handle == transport::kInvalidTransferHandle) {
-        ReleaseResponseBuffer(runtime_.flagBufferPool, record, "response submission");
+        ReleaseResponseBuffer(runtime_.flagBufferPool, record);
         if (submitStatus.Failure()) { return submitStatus; }
         return Status::Error("ExecuteAsync response returned an invalid handle");
     }
@@ -206,22 +205,16 @@ bool CompletionPoller::PollResponseTransfer(CompletionRecord& record)
     } else if (transportStatus == transport::TransferStatus::Waiting) {
         if (!record.disconnect_attempted &&
             (disconnectAllTransfers_ || OperationTimedOut(record, SteadyNowMs()))) {
-            DisconnectPeer(record, record.response_handle, "response");
+            UC_WARN("CompletionPoller disconnecting peer for response transfer, peer={}, handle={}",
+                    record.peer_one_sided_id, record.response_handle);
+            DisconnectPeer(record, record.response_handle);
         }
         return false;
     } else if (transportStatus != transport::TransferStatus::Completed) {
         UC_ERROR("CompletionPoller response transfer failed, handle={}", record.response_handle);
     }
 
-    const auto releasedSlot = record.resp_buffer.slot_index;
-    const auto releaseStatus = runtime_.flagBufferPool.Free(releasedSlot);
-    record.resp_buffer = {};
-    if (releaseStatus.Failure()) {
-        UC_ERROR(
-            "CompletionPoller release response flag buffer failed, handle={}, slot={}, "
-            "error={}",
-            record.response_handle, releasedSlot, releaseStatus);
-    }
+    ReleaseResponseBuffer(runtime_.flagBufferPool, record);
     return true;
 }
 
@@ -282,16 +275,13 @@ bool CompletionPoller::OperationTimedOut(const CompletionRecord& record, std::ui
     return nowMs - record.submit_ms >= g_config.opTimeoutMs;
 }
 
-void CompletionPoller::DisconnectPeer(CompletionRecord& record, TransportHandle handle,
-                                      const char* transferType)
+void CompletionPoller::DisconnectPeer(CompletionRecord& record, TransportHandle handle)
 {
     const auto status =
         runtime_.transport.Disconnect(transport::TransportProtocol::Hixl, record.peer_one_sided_id);
     if (status.Failure()) {
-        UC_ERROR(
-            "CompletionPoller disconnect peer failed, transfer_type={}, peer={}, handle={}, "
-            "error={}",
-            transferType, record.peer_one_sided_id, handle, status);
+        UC_ERROR("CompletionPoller disconnect peer failed, peer={}, handle={}, error={}",
+                 record.peer_one_sided_id, handle, status);
         if (disconnectAllTransfers_) { shutdownDrainBlocked_ = true; }
         return;
     }

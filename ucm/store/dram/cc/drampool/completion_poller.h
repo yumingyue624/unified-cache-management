@@ -29,7 +29,7 @@ private:
     bool PollResponseTransfer(CompletionRecord& record);
     void SettleDataTransfer(CompletionRecord& record, transport::TransferStatus terminalStatus);
     bool OperationTimedOut(const CompletionRecord& record, std::uint64_t nowMs) const;
-    void DisconnectPeer(CompletionRecord& record, TransportHandle handle, const char* transferType);
+    void DisconnectPeer(CompletionRecord& record, TransportHandle handle);
 
     DramPoolRuntime& runtime_;
     std::deque<CompletionRecord> pending_;
