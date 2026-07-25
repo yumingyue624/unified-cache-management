@@ -25,7 +25,7 @@ private:
     // Returns true after the data transfer has been settled and the record is ready
     // to advance to response submission. Waiting transfers remain pending.
     bool PollDataTransfer(CompletionRecord& record);
-    Status SubmitResponse(CompletionRecord& record);
+    bool SubmitResponse(CompletionRecord& record);
     bool PollResponseTransfer(CompletionRecord& record);
     void SettleDataTransfer(CompletionRecord& record, transport::TransferStatus terminalStatus);
     bool OperationTimedOut(const CompletionRecord& record, std::uint64_t nowMs) const;

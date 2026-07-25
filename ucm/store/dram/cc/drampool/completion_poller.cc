@@ -4,7 +4,6 @@
  * Copyright (c) 2026 Huawei Technologies Co., Ltd. All rights reserved.
  */
 #include "completion_poller.h"
-#include <limits>
 #include <thread>
 #include <utility>
 #include "core/transport_manager.h"
@@ -84,17 +83,15 @@ void CompletionPoller::PollPendingCompletions()
                 // Data settlement moves the record to SubmitResponse. Submit its response
                 // in this scan instead of deferring it to the next poll round.
                 [[fallthrough]];
-            case CompletionStage::SubmitResponse: {
-                const auto status = SubmitResponse(*iter);
-                if (status.Failure()) {
-                    UC_ERROR("CompletionPoller SubmitResponse failed, opcode={}, error={}",
-                             static_cast<int>(iter->opcode), status);
+            case CompletionStage::SubmitResponse:
+                if (SubmitResponse(*iter)) {
+                    // Returns true if the record is done and should be erased (permanent failure).
                     iter = pending_.erase(iter);
                 } else {
+                    // Returns false if the record should remain pending (success or temporary failure).
                     ++iter;
                 }
                 break;
-            }
             case CompletionStage::PollResponseTransfer:
                 if (PollResponseTransfer(*iter)) {
                     iter = pending_.erase(iter);
@@ -141,27 +138,25 @@ bool CompletionPoller::PollDataTransfer(CompletionRecord& record)
     return true;
 }
 
-Status CompletionPoller::SubmitResponse(CompletionRecord& record)
+bool CompletionPoller::SubmitResponse(CompletionRecord& record)
 {
     const auto packedSize =
         runtime_.protocol.GetPackedResponseSize(record.opcode, record.results.size());
-    if (packedSize == 0 || packedSize > std::numeric_limits<std::uint32_t>::max()) {
-        return Status::InvalidParam("invalid packed response size");
-    }
     const auto len = static_cast<std::uint32_t>(packedSize);
     auto allocateStatus = runtime_.flagBufferPool.Allocate(record.local_resp_slot);
-    if (allocateStatus.Failure()) { return allocateStatus; }
-    if (packedSize > record.local_resp_slot.length) {
-        ReleaseResponseBuffer(runtime_.flagBufferPool, record);
-        return Status::InvalidParam(
-            "packed response size exceeds configured flag buffer slot size");
+    if (allocateStatus.Failure()) {
+        UC_WARN("CompletionPoller flag buffer pool full, opcode={}, error={}, retrying next round",
+                static_cast<int>(record.opcode), allocateStatus);
+        return false;
     }
 
     const auto protocolStatus = runtime_.protocol.PackResponse(
         record.local_resp_slot.local_addr, record.opcode, KvResponse{record.results});
     if (protocolStatus.Failure()) {
         ReleaseResponseBuffer(runtime_.flagBufferPool, record);
-        return protocolStatus;
+        UC_ERROR("CompletionPoller SubmitResponse pack failed, opcode={}, error={}",
+                 static_cast<int>(record.opcode), protocolStatus);
+        return true;
     }
 
     transport::Operation operation;
@@ -175,17 +170,17 @@ Status CompletionPoller::SubmitResponse(CompletionRecord& record)
     const auto submitStatus = runtime_.transport.ExecuteAsync(operation, handle);
     if (submitStatus.Failure() || handle == transport::kInvalidTransferHandle) {
         ReleaseResponseBuffer(runtime_.flagBufferPool, record);
-        if (submitStatus.Failure()) { return submitStatus; }
-        return Status::Error("ExecuteAsync response returned an invalid handle");
+        UC_ERROR("CompletionPoller SubmitResponse ExecuteAsync failed, opcode={}, error={}",
+                 static_cast<int>(record.opcode), submitStatus);
+        return true;
     }
 
-    // ExecuteAsync now owns access to the bytes; retain the buffer until handle terminal.
     record.response_handle = handle;
     record.submit_ms = SteadyNowMs();
     record.disconnect_attempted = false;
     record.results.clear();
     record.stage = CompletionStage::PollResponseTransfer;
-    return Status::OK();
+    return false;
 }
 
 bool CompletionPoller::PollResponseTransfer(CompletionRecord& record)
