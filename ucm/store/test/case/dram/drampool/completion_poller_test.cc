@@ -207,15 +207,7 @@ TEST_F(CompletionPollerTest, RunWithStopSetDrainsAllQueuedFailures)
     EXPECT_TRUE(poller_->pending_.empty());
     CompletionRecord remaining;
     EXPECT_FALSE(completionQueue_.TryPop(remaining));
-    EXPECT_TRUE(poller_->disconnectAllTransfers_.load(std::memory_order_acquire));
-}
-
-TEST_F(CompletionPollerTest, SetDisconnectAllTransfersIsIdempotent)
-{
-    EXPECT_FALSE(poller_->disconnectAllTransfers_.load(std::memory_order_acquire));
-    poller_->SetDisconnectAllTransfers();
-    poller_->SetDisconnectAllTransfers();
-    EXPECT_TRUE(poller_->disconnectAllTransfers_.load(std::memory_order_acquire));
+    EXPECT_TRUE(poller_->disconnectAllTransfers_);
 }
 
 TEST_F(CompletionPollerTest, DataStatusApiFailureAbortsDumpAndAdvancesToResponse)
@@ -378,7 +370,7 @@ TEST_F(CompletionPollerTest, DisconnectFailureDoesNotBlockShutdown)
 {
     CompletionRecord record;
     record.peer_one_sided_id = kUnavailablePeer;
-    poller_->SetDisconnectAllTransfers();
+    poller_->disconnectAllTransfers_ = true;
 
     poller_->DisconnectPeer(record, 7, "data");
 

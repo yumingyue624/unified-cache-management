@@ -86,7 +86,6 @@ private:
     void StopTcpMessageChannel();
     void StopRequestReceiver();
     void StopTaskWorker();
-    void DisconnectInflightTransfers();
     void StopCompletionPoller();
     void StopGCThread();
     void StopTransportService();

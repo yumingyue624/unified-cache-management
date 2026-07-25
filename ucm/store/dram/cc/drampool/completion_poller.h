@@ -18,7 +18,6 @@ public:
     explicit CompletionPoller(DramPoolRuntime& runtime) : runtime_(runtime) {}
 
     void Run(const std::atomic_bool& stop);
-    void SetDisconnectAllTransfers() noexcept;
 
 private:
     std::size_t FillPendingWindow();
@@ -34,7 +33,7 @@ private:
 
     DramPoolRuntime& runtime_;
     std::deque<CompletionRecord> pending_;
-    std::atomic_bool disconnectAllTransfers_{false};
+    bool disconnectAllTransfers_{false};
     bool shutdownDrainBlocked_{false};
 };
 

@@ -35,7 +35,7 @@ void CompletionPoller::Run(const std::atomic_bool& stop)
 {
     while (true) {
         const bool stopRequested = stop.load(std::memory_order_acquire);
-        if (stopRequested) { SetDisconnectAllTransfers(); }
+        if (stopRequested) { disconnectAllTransfers_ = true; }
 
         const auto newPendingCount = FillPendingWindow();
         PollPendingCompletions();
@@ -55,11 +55,6 @@ void CompletionPoller::Run(const std::atomic_bool& stop)
             std::this_thread::sleep_for(kThreadIdleSleepDuration);
         }
     }
-}
-
-void CompletionPoller::SetDisconnectAllTransfers() noexcept
-{
-    disconnectAllTransfers_.store(true, std::memory_order_release);
 }
 
 std::size_t CompletionPoller::FillPendingWindow()
@@ -134,8 +129,7 @@ bool CompletionPoller::PollDataTransfer(CompletionRecord& record)
 
     if (transportStatus == transport::TransferStatus::Waiting) {
         if (!record.disconnect_attempted &&
-            (disconnectAllTransfers_.load(std::memory_order_acquire) ||
-             OperationTimedOut(record, SteadyNowMs()))) {
+            (disconnectAllTransfers_ || OperationTimedOut(record, SteadyNowMs()))) {
             DisconnectPeer(record, record.data_handle, "data");
         }
         return false;
@@ -211,8 +205,7 @@ bool CompletionPoller::PollResponseTransfer(CompletionRecord& record)
         UC_ERROR("CompletionPoller response GetStatus failed, handle={}", record.response_handle);
     } else if (transportStatus == transport::TransferStatus::Waiting) {
         if (!record.disconnect_attempted &&
-            (disconnectAllTransfers_.load(std::memory_order_acquire) ||
-             OperationTimedOut(record, SteadyNowMs()))) {
+            (disconnectAllTransfers_ || OperationTimedOut(record, SteadyNowMs()))) {
             DisconnectPeer(record, record.response_handle, "response");
         }
         return false;
@@ -299,9 +292,7 @@ void CompletionPoller::DisconnectPeer(CompletionRecord& record, TransportHandle 
             "CompletionPoller disconnect peer failed, transfer_type={}, peer={}, handle={}, "
             "error={}",
             transferType, record.peer_one_sided_id, handle, status);
-        if (disconnectAllTransfers_.load(std::memory_order_acquire)) {
-            shutdownDrainBlocked_ = true;
-        }
+        if (disconnectAllTransfers_) { shutdownDrainBlocked_ = true; }
         return;
     }
     record.disconnect_attempted = true;
