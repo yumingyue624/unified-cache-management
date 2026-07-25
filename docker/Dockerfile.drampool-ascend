@@ -1,0 +1,59 @@
+# DramPool requires an Ascend image containing the CANN and HIXL development
+# headers and libraries. Override these arguments when using an internal image.
+ARG IMAGE_SOURCE="quay.io/ascend/vllm-ascend"
+ARG IMAGE_NAME_VERSION="v0.22.1rc1-a3-openeuler"
+
+FROM ${IMAGE_SOURCE}:${IMAGE_NAME_VERSION}
+
+ARG PIP_INDEX_URL="https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple"
+ARG ASCEND_ROOT="/usr/local/Ascend/cann-9.0.0"
+ARG HIXL_ROOT="/usr/local/Ascend/cann-9.0.0"
+ARG BUILD_JOBS="8"
+
+# Persist the CANN location for the runtime container.
+ENV ASCEND_HOME_PATH="${ASCEND_ROOT}"
+
+WORKDIR /workspace/unified-cache-management
+
+COPY . .
+
+RUN pip config set global.index-url "${PIP_INDEX_URL}" \
+    && pip install --no-cache-dir cmake
+
+# Remove any host-side CMake cache copied into the image, then configure and
+# build in the same shell where the Ascend environment has been sourced.
+RUN bash -o pipefail -c '\
+      set -e \
+      && rm -rf build \
+      && test -f "${ASCEND_ROOT}/set_env.sh" \
+      && source "${ASCEND_ROOT}/set_env.sh" \
+      && echo "ASCEND_ROOT=${ASCEND_ROOT}" \
+      && echo "HIXL_ROOT=${HIXL_ROOT}" \
+      && echo "LD_LIBRARY_PATH=${LD_LIBRARY_PATH}" \
+      && ldd "${ASCEND_ROOT}/lib64/libascend_dump.so" \
+           | grep -E "libascend_hal|not found" \
+      && cmake -S . -B build \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DRUNTIME_ENVIRONMENT=ascend \
+        -DBUILD_UCM_STORE=ON \
+        -DBUILD_UCM_DRAMPOOL=ON \
+        -DBUILD_UCM_ASU=OFF \
+        -DBUILD_UCM_SPARSE=OFF \
+        -DBUILD_UNIT_TESTS=OFF \
+        -DASCEND_ROOT="${ASCEND_ROOT}" \
+        -DHIXL_ROOT="${HIXL_ROOT}" \
+        2>&1 | tee /tmp/drampool-cmake-configure.log \
+      && grep -q "P2P HIXL transport backend is enabled" \
+           /tmp/drampool-cmake-configure.log \
+      && cmake --build build \
+        --target drampool \
+        --parallel "${BUILD_JOBS}" \
+    '
+
+RUN test -x build/ucm/store/dram/drampool \
+    && mkdir -p /etc/ucm /var/log/ucm \
+    && cp examples/drampool.yaml /etc/ucm/drampool.yaml
+
+# source set_env.sh only affects the shell where it is executed.
+# Source it again when the container starts so runtime variables are available.
+ENTRYPOINT ["/bin/bash", "-c", "source \"${ASCEND_HOME_PATH}/set_env.sh\" && exec /workspace/unified-cache-management/build/ucm/store/dram/drampool \"$@\"", "--"]
