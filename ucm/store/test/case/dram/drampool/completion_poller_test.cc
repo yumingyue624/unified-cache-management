@@ -158,7 +158,7 @@ TEST_F(CompletionPollerTest, FillPendingWindowHonorsConfiguredDepthAndQueueOrder
         completionQueue_.Push(std::move(record));
     }
 
-    EXPECT_EQ(poller_->FillPendingWindow(), 2U);
+    poller_->FillPendingWindow();
     ASSERT_EQ(poller_->pending_.size(), 2U);
     EXPECT_EQ(poller_->pending_[0].response_addr, 1U);
     EXPECT_EQ(poller_->pending_[1].response_addr, 2U);
@@ -173,7 +173,7 @@ TEST_F(CompletionPollerTest, FillPendingWindowDoesNothingWhenDepthIsZero)
     g_config.pollerPendingDepth = 0;
     completionQueue_.Push(MakeResponseRecord());
 
-    EXPECT_EQ(poller_->FillPendingWindow(), 0U);
+    poller_->FillPendingWindow();
     EXPECT_TRUE(poller_->pending_.empty());
     CompletionRecord remaining;
     EXPECT_TRUE(completionQueue_.TryPop(remaining));

@@ -48,31 +48,28 @@ void ReleaseResponseBuffer(BufferPool& flagBufferPool, CompletionRecord& record)
 void CompletionPoller::Run(const std::atomic_bool& stop)
 {
     while (true) {
+        FillPendingWindow();
+
         const bool stopRequested = stop.load(std::memory_order_acquire);
         if (stopRequested) { disconnectAllTransfers_ = true; }
 
-        const auto newPendingCount = FillPendingWindow();
-        PollPendingCompletions();
-
-        if (stopRequested) {
-            if (newPendingCount == 0 && pending_.empty()) { break; }
-        }
-        if (newPendingCount == 0 && pending_.empty()) {
+        if (pending_.empty()) {
+            if (stopRequested) { break; }
             std::this_thread::sleep_for(kThreadIdleSleepDuration);
+            continue;
         }
+
+        PollPendingCompletions();
     }
 }
 
-std::size_t CompletionPoller::FillPendingWindow()
+void CompletionPoller::FillPendingWindow()
 {
-    std::size_t newPendingCount = 0;
     while (pending_.size() < g_config.pollerPendingDepth) {
         CompletionRecord record;
         if (!runtime_.completionQueue.TryPop(record)) { break; }
         pending_.emplace_back(std::move(record));
-        ++newPendingCount;
     }
-    return newPendingCount;
 }
 
 void CompletionPoller::PollPendingCompletions()
