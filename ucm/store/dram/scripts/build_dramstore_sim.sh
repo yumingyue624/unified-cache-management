@@ -95,6 +95,12 @@ fi
 if [[ -d "${ASCEND_ROOT}/aarch64-linux/lib64" ]]; then
     ASCEND_LIB="${ASCEND_ROOT}/aarch64-linux/lib64"
 fi
+HIXL_LIB="${HIXL_LIB_DIR:-${ASCEND_LIB}}"
+
+if [[ ! -f "${HIXL_LIB}/libcann_hixl.so" ]]; then
+    echo "Cannot find libcann_hixl.so under HIXL_LIB_DIR=${HIXL_LIB}" >&2
+    exit 1
+fi
 
 mkdir -p "${BUILD_DIR}"
 OUTPUT="${BUILD_DIR}/dramstore_sim"
@@ -104,6 +110,7 @@ trap 'rm -f "${TEMP_OUTPUT}"' EXIT
 
 echo "Using P2P library: ${P2P_LIBRARY}"
 echo "Using P2P headers: ${P2P_INCLUDE_ROOT}/include"
+echo "Using HIXL library: ${HIXL_LIB}/libcann_hixl.so"
 "${CXX}" -std=c++17 -Wall -Wextra -Wpedantic ${CXXFLAGS:-} \
     -I"${P2P_INCLUDE_ROOT}/include" \
     -I"${UCM_ROOT}/ucm/shared/infra" \
@@ -116,9 +123,11 @@ echo "Using P2P headers: ${P2P_INCLUDE_ROOT}/include"
     "${DRAM_ROOT}/cc/drampool/drampool_launch_config.cc" \
     "${DRAM_ROOT}/cc/drampool/drampool_yaml_config.cc" \
     -L"${UCM_P2P_ROOT}" -lucm_p2p_transport \
-    -L"${ASCEND_ROOT}" -L"${ASCEND_LIB}" -lascendcl -lcann_hixl -lmetadef \
+    -L"${HIXL_LIB}" -lcann_hixl \
+    -L"${ASCEND_ROOT}" -L"${ASCEND_LIB}" -lascendcl -lmetadef \
     -lfmt -lspdlog -lz -lrt -pthread \
-    -Wl,-rpath,"${UCM_P2P_ROOT}" -Wl,-rpath,"${ASCEND_LIB}" \
+    -Wl,-rpath,"${UCM_P2P_ROOT}" -Wl,-rpath,"${HIXL_LIB}" \
+    -Wl,-rpath,"${ASCEND_LIB}" \
     ${LDFLAGS:-} -o "${TEMP_OUTPUT}"
 
 mv -f "${TEMP_OUTPUT}" "${OUTPUT}"
