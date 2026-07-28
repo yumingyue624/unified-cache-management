@@ -39,6 +39,9 @@ constexpr std::uint8_t kSuccessResult = 0;
 constexpr auto kPollInterval = std::chrono::microseconds(50);
 constexpr auto kCompletionReapGrace = std::chrono::seconds(3);
 constexpr auto kRoundInterval = std::chrono::milliseconds(300);
+constexpr const char* kHixlGlobalResourceConfig = "GlobalResourceConfig";
+constexpr const char* kHixlGlobalResourceConfigValue =
+    R"({"comm_resource_config.listen_port":"27777"})";
 
 std::mutex g_print_mutex;
 
@@ -339,6 +342,7 @@ private:
         transport::HixlInitAttrs::Instance instance;
         instance.port = -1;
         instance.device_id = config_.device_id;
+        instance.options[kHixlGlobalResourceConfig] = kHixlGlobalResourceConfigValue;
         attrs.instances.push_back(std::move(instance));
         attrs.connect_timeout_ms = static_cast<std::int32_t>(config_.timeout_ms);
         attrs.transfer_timeout_ms = static_cast<std::int32_t>(config_.timeout_ms);

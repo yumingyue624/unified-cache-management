@@ -39,6 +39,10 @@
 namespace UC::DramPool {
 namespace {
 
+constexpr const char* kHixlGlobalResourceConfig = "GlobalResourceConfig";
+constexpr const char* kHixlGlobalResourceConfigValue =
+    R"({"comm_resource_config.listen_port":"26666"})";
+
 template <typename Callback>
 class ScopeExit final {
 public:
@@ -262,6 +266,7 @@ Status DramPoolServer::StartTransportService()
         transport::HixlInitAttrs::Instance instance;
         instance.port = -1;
         instance.device_id = deviceId;
+        instance.options[kHixlGlobalResourceConfig] = kHixlGlobalResourceConfigValue;
         attrs.instances.push_back(std::move(instance));
     }
     attrs.connect_timeout_ms = static_cast<std::int32_t>(g_config.opTimeoutMs);
