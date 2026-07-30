@@ -86,6 +86,33 @@ if [[ ! -f "${P2P_INCLUDE_ROOT}/include/core/transport.h" ]]; then
     P2P_INCLUDE_ROOT="${UCM_ROOT}/ucm/transport/p2p"
 fi
 
+DEPENDENCY_INCLUDE_FLAGS=()
+SPDLOG_LIBRARY_ARGS=(-lspdlog)
+FMT_LIBRARY_ARGS=(-lfmt)
+ZLIB_LIBRARY_ARGS=(-lz)
+CMAKE_BUILD_ROOT="$(cd "${UCM_P2P_ROOT}/../../.." 2>/dev/null && pwd || true)"
+if [[ -d "${CMAKE_BUILD_ROOT}/_deps" ]]; then
+    if [[ -f "${CMAKE_BUILD_ROOT}/_deps/spdlog-src/include/spdlog/spdlog.h" ]]; then
+        DEPENDENCY_INCLUDE_FLAGS+=(
+            -I"${CMAKE_BUILD_ROOT}/_deps/spdlog-src/include"
+        )
+    fi
+    if [[ -f "${CMAKE_BUILD_ROOT}/_deps/fmt-src/include/fmt/format.h" ]]; then
+        DEPENDENCY_INCLUDE_FLAGS+=(
+            -I"${CMAKE_BUILD_ROOT}/_deps/fmt-src/include"
+        )
+    fi
+    if [[ -f "${CMAKE_BUILD_ROOT}/_deps/spdlog-build/libspdlogd.a" ]]; then
+        SPDLOG_LIBRARY_ARGS=("${CMAKE_BUILD_ROOT}/_deps/spdlog-build/libspdlogd.a")
+    fi
+    if [[ -f "${CMAKE_BUILD_ROOT}/_deps/fmt-build/libfmtd.a" ]]; then
+        FMT_LIBRARY_ARGS=("${CMAKE_BUILD_ROOT}/_deps/fmt-build/libfmtd.a")
+    fi
+    if [[ -f "${CMAKE_BUILD_ROOT}/_deps/zlib-build/libz.a" ]]; then
+        ZLIB_LIBRARY_ARGS=("${CMAKE_BUILD_ROOT}/_deps/zlib-build/libz.a")
+    fi
+fi
+
 ASCEND_ROOT="${ASCEND_ROOT:-${ASCEND_HOME_PATH:-/usr/local/Ascend/ascend-toolkit/latest}}"
 ASCEND_INCLUDE="${ASCEND_INCLUDE_DIR:-${ASCEND_ROOT}/include}"
 ASCEND_LIB="${ASCEND_LIB_DIR:-${ASCEND_ROOT}/lib64}"
@@ -118,6 +145,7 @@ echo "Using HIXL library: ${HIXL_LIB}/libcann_hixl.so"
     -I"${UCM_ROOT}/ucm/store/detail" \
     -I"${DRAM_ROOT}/cc" \
     -I"${ASCEND_INCLUDE}" \
+    "${DEPENDENCY_INCLUDE_FLAGS[@]}" \
     "${DRAM_ROOT}/tests/dramstore_sim.cpp" \
     "${DRAM_ROOT}/cc/kv_protocol.cc" \
     "${DRAM_ROOT}/cc/drampool/drampool_launch_config.cc" \
@@ -125,7 +153,8 @@ echo "Using HIXL library: ${HIXL_LIB}/libcann_hixl.so"
     -L"${UCM_P2P_ROOT}" -lucm_p2p_transport \
     -L"${HIXL_LIB}" -lcann_hixl \
     -L"${ASCEND_ROOT}" -L"${ASCEND_LIB}" -lascendcl -lmetadef \
-    -lfmt -lspdlog -lz -lrt -pthread \
+    "${SPDLOG_LIBRARY_ARGS[@]}" "${FMT_LIBRARY_ARGS[@]}" "${ZLIB_LIBRARY_ARGS[@]}" \
+    -lrt -pthread \
     -Wl,-rpath,"${UCM_P2P_ROOT}" -Wl,-rpath,"${HIXL_LIB}" \
     -Wl,-rpath,"${ASCEND_LIB}" \
     ${LDFLAGS:-} -o "${TEMP_OUTPUT}"

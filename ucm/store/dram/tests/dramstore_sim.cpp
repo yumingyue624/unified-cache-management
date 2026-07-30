@@ -65,6 +65,10 @@ struct Options {
     std::size_t get_count = 1;
     std::size_t lookup_exist_count = 1;
     std::size_t lookup_miss_count = 1;
+    bool eviction_aware = false;
+    std::size_t round_interval_ms =
+        static_cast<std::size_t>(kRoundInterval.count());
+    bool reexchange_before_round = false;
 };
 
 std::vector<std::string> Split(const std::string& value)
@@ -138,6 +142,26 @@ bool ParseOptions(int argc, char** argv, Options& options)
             if (!ParseSize(value, options.lookup_exist_count)) { return false; }
         } else if (name == "--lookup-miss") {
             if (!ParseSize(value, options.lookup_miss_count)) { return false; }
+        } else if (name == "--eviction-aware") {
+            if (value == "0") {
+                options.eviction_aware = false;
+            } else if (value == "1") {
+                options.eviction_aware = true;
+            } else {
+                std::cerr << "invalid --eviction-aware value: " << value << std::endl;
+                return false;
+            }
+        } else if (name == "--round-interval-ms") {
+            if (!ParseSize(value, options.round_interval_ms)) { return false; }
+        } else if (name == "--reexchange-before-round") {
+            if (value == "0") {
+                options.reexchange_before_round = false;
+            } else if (value == "1") {
+                options.reexchange_before_round = true;
+            } else {
+                std::cerr << "invalid --reexchange-before-round value: " << value << std::endl;
+                return false;
+            }
         } else {
             std::cerr << "unknown option: " << name << std::endl;
             return false;
@@ -157,7 +181,10 @@ void PrintUsage(const char* program)
               << " [--store-index N]"
               << " [--key-seed N]"
               << " [--block-size N] [--block-num N] [--rounds N] [--put N] [--get N]"
-              << " [--lookup-exist N] [--lookup-miss N]" << std::endl;
+              << " [--lookup-exist N] [--lookup-miss N] [--eviction-aware 0|1]"
+              << " [--round-interval-ms N]"
+              << " [--reexchange-before-round 0|1]"
+              << std::endl;
 }
 
 std::uint64_t Mix(std::uint64_t value)
@@ -172,9 +199,13 @@ BlockId MakeKey(std::uint64_t key_seed, std::size_t store_index, std::uint64_t s
                 bool missing)
 {
     BlockId key{};
-    auto first = Mix(key_seed ^ (static_cast<std::uint64_t>(store_index) << 48U) ^ sequence ^
-                     (missing ? 0xd1b54a32d192ed03ULL : 0));
-    auto second = Mix(first);
+    // Keep the per-process seed in its own 64-bit namespace. Folding seed and sequence
+    // together with XOR makes adjacent seeds collide predictably with adjacent sequences
+    // when a DramPool is reused across simulator processes.
+    const auto first = Mix(key_seed);
+    const auto second =
+        Mix(sequence ^ (static_cast<std::uint64_t>(store_index) * 0x9e3779b97f4a7c15ULL) ^
+            (missing ? 0xd1b54a32d192ed03ULL : 0));
     std::memcpy(key.data(), &first, sizeof(first));
     std::memcpy(key.data() + sizeof(first), &second, sizeof(second));
     return key;
@@ -205,6 +236,17 @@ enum class RequestKind {
     LookupMiss,
 };
 
+const char* RequestKindName(RequestKind kind)
+{
+    switch (kind) {
+        case RequestKind::Put: return "put";
+        case RequestKind::Get: return "get";
+        case RequestKind::LookupExist: return "lookup_exist";
+        case RequestKind::LookupMiss: return "lookup_miss";
+    }
+    return "unknown";
+}
+
 struct RequestPlan {
     RequestKind kind;
     std::vector<BlockId> keys;
@@ -225,6 +267,9 @@ struct StoreConfig {
     std::size_t get_count = 0;
     std::size_t lookup_exist_count = 0;
     std::size_t lookup_miss_count = 0;
+    bool eviction_aware = false;
+    std::size_t round_interval_ms = 0;
+    bool reexchange_before_round = false;
     std::uint32_t timeout_ms = 0;
     std::uint32_t ttl_ms = 0;
 };
@@ -283,6 +328,21 @@ private:
                 if (error_.empty()) { error_ = "warmup failed"; }
             } else {
                 for (std::size_t round = 0; round < config_.rounds && error_.empty(); ++round) {
+                    if (round != 0 && config_.reexchange_before_round) {
+                        const auto status = manager_->ExchangeMetadata(config_.pool_manager_id);
+                        if (status.Failure()) {
+                            error_ = "metadata reexchange with " + config_.pool_manager_id +
+                                     " failed: " + status.ToString();
+                            break;
+                        }
+                        existing_keys_.clear();
+                        if (warmup_count != 0 && !WarmUp(warmup_count)) {
+                            if (error_.empty()) { error_ = "recovery warmup failed"; }
+                            break;
+                        }
+                        Print("store[" + std::to_string(config_.index) +
+                              "] metadata reexchange and recovery warmup passed");
+                    }
                     if (RunRound(round)) {
                         Print("store[" + std::to_string(config_.index) + "] round " +
                               std::to_string(round + 1) + " passed");
@@ -292,10 +352,11 @@ private:
                               " failed; continuing with the next round");
                     }
                     if (error_.empty() && round + 1 < config_.rounds) {
-                        std::this_thread::sleep_for(kRoundInterval);
+                        std::this_thread::sleep_for(
+                            std::chrono::milliseconds(config_.round_interval_ms));
                     }
                 }
-                if (error_.empty() && !RunBarrier()) {
+                if (!config_.eviction_aware && error_.empty() && !RunBarrier()) {
                     Print("store[" + std::to_string(config_.index) + "] completion barrier failed");
                 }
             }
@@ -390,6 +451,7 @@ private:
                      config_.pool_manager_id + " failed: " + status.ToString();
             return false;
         }
+        peer_connected_ = true;
         for (std::size_t i = 0; i < slot_count_; ++i) {
             auto slot = std::make_unique<RequestSlot>();
             slot->data = data_buffer_ + i * data_slot_size_;
@@ -422,8 +484,23 @@ private:
                 request.keys.push_back(
                     MakeKey(config_.key_seed, config_.index, next_key_++, false));
             }
-            requests.push_back(std::move(request));
+            if (!config_.eviction_aware) {
+                requests.push_back(std::move(request));
+                continue;
+            }
+            if (!ExecuteRequests({request})) { return false; }
+            RequestPlan lease{RequestKind::LookupExist, request.keys};
+            if (!ExecuteRequests({lease})) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                const bool retry_succeeded = ExecuteRequests({lease});
+                Print("store[" + std::to_string(config_.index) +
+                      "] warmup lease diagnostic retry=" +
+                      (retry_succeeded ? std::string("hit") : std::string("miss")));
+                if (!retry_succeeded) { return false; }
+            }
+            existing_keys_.insert(existing_keys_.end(), request.keys.begin(), request.keys.end());
         }
+        if (config_.eviction_aware) { return true; }
         if (!ExecuteRequests(requests)) { return false; }
         for (const auto& request : requests) {
             existing_keys_.insert(existing_keys_.end(), request.keys.begin(), request.keys.end());
@@ -483,12 +560,16 @@ private:
     bool RunBarrier()
     {
         if (existing_keys_.empty()) { return true; }
-        RequestPlan barrier{RequestKind::LookupExist, {}};
-        barrier.keys.reserve(config_.block_num);
-        for (std::size_t i = 0; i < config_.block_num; ++i) {
-            barrier.keys.push_back(existing_keys_[i % existing_keys_.size()]);
+        for (std::size_t offset = 0; offset < existing_keys_.size();
+             offset += config_.block_num) {
+            RequestPlan barrier{RequestKind::LookupExist, {}};
+            barrier.keys.reserve(config_.block_num);
+            for (std::size_t block = 0; block < config_.block_num; ++block) {
+                barrier.keys.push_back(existing_keys_[(offset + block) % existing_keys_.size()]);
+            }
+            if (!ExecuteRequests({barrier})) { return false; }
         }
-        return ExecuteRequests({barrier});
+        return true;
     }
 
     bool ExecuteRequests(const std::vector<RequestPlan>& requests)
@@ -664,6 +745,7 @@ private:
                     continue;
                 }
                 bool valid = true;
+                std::string validation_error;
                 for (std::size_t block = 0; block < config_.block_num && valid; ++block) {
                     if (slot.kind == RequestKind::LookupExist) {
                         valid = response.results[block] == 1;
@@ -674,10 +756,21 @@ private:
                         if (valid && slot.kind == RequestKind::Get) {
                             valid = CheckData(slot.host_data.data() + block * config_.block_size,
                                               config_.block_size, slot.keys[block]);
+                            if (!valid) { validation_error = "data mismatch"; }
                         }
                     }
+                    if (!valid && validation_error.empty()) {
+                        validation_error =
+                            "result=" + std::to_string(response.results[block]);
+                    }
+                    if (!valid) {
+                        validation_error = "response validation failed kind=" +
+                                           std::string(RequestKindName(slot.kind)) +
+                                           " block=" + std::to_string(block) + " " +
+                                           validation_error;
+                    }
                 }
-                Complete(slot, valid, valid ? "" : "response validation failed");
+                Complete(slot, valid, std::move(validation_error));
             }
             std::this_thread::sleep_for(kPollInterval);
         }
@@ -704,6 +797,14 @@ private:
         }
         poller_stop_.store(true, std::memory_order_release);
         if (poller_.joinable()) { poller_.join(); }
+        if (peer_connected_) {
+            const auto status = manager_->Disconnect(transport::TransportProtocol::Hixl,
+                                                     config_.pool_manager_id);
+            if (status.Failure() && error_.empty()) {
+                error_ = "TransportManager::Disconnect failed: " + status.ToString();
+            }
+            peer_connected_ = false;
+        }
         if (control_started_) {
             const auto status = control_.Shutdown();
             if (status.Failure() && error_.empty()) {
@@ -772,6 +873,7 @@ private:
     std::uint64_t next_missing_key_ = 1;
     std::size_t task_failure_count_ = 0;
     bool manager_started_ = false;
+    bool peer_connected_ = false;
     bool control_started_ = false;
 };
 
@@ -852,6 +954,9 @@ int main(int argc, char** argv)
         config.get_count = options.get_count;
         config.lookup_exist_count = options.lookup_exist_count;
         config.lookup_miss_count = options.lookup_miss_count;
+        config.eviction_aware = options.eviction_aware;
+        config.round_interval_ms = options.round_interval_ms;
+        config.reexchange_before_round = options.reexchange_before_round;
         config.timeout_ms = runtime_config.opTimeoutMs;
         config.ttl_ms = static_cast<std::uint32_t>(runtime_config.defaultDumpTtlMs);
         stores.push_back(std::make_unique<SimulatedStore>(std::move(config)));
