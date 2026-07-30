@@ -183,11 +183,8 @@ Status HixlTransport::Shutdown()
     }
 
     for (const auto& memory : memories_) {
-        for (const auto& handle : memory.second->native_handles) {
-            if (handle.first >= instances_.size() || handle.second == nullptr) { continue; }
-            const auto status = instances_[handle.first]->UnregisterMemory(handle.second);
-            if (status != Status::OK() && result == Status::OK()) { result = status; }
-        }
+        const auto status = UnregisterNativeHandles(*memory.second, true);
+        if (status != Status::OK() && result == Status::OK()) { result = status; }
     }
 
     for (auto& instance : instances_) { instance->Finalize(); }
@@ -218,13 +215,8 @@ Status HixlTransport::RegisterMemory(const MemoryRegion& memory, MemoryHandle& h
         hixl::MemHandle native_handle = nullptr;
         const auto status = instances_[i]->RegisterMemory(memory, native_handle);
         if (status != Status::OK() || native_handle == nullptr) {
-            for (const auto& item : record->native_handles) {
-                if (instances_[item.first]->UnregisterMemory(item.second) != Status::OK()) {
-                    UC_ERROR(
-                        "[Transport][HIXL] rollback memory registration failed: instance={} "
-                        "handle={}",
-                        item.first, item.second);
-                }
+            if (UnregisterNativeHandles(*record, true) != Status::OK()) {
+                UC_ERROR("[Transport][HIXL] rollback memory registration failed");
             }
             return status == Status::OK() ? Status::Error() : status;
         }
@@ -246,15 +238,49 @@ Status HixlTransport::UnregisterMemory(MemoryHandle handle)
     const auto record_it = memories_.find(handle);
     if (record_it == memories_.end()) { return Status::Error(); }
     auto& record = *record_it->second;
-    while (!record.native_handles.empty()) {
-        const auto item = *record.native_handles.begin();
-        if (item.first >= instances_.size() || item.second == nullptr) { return Status::Error(); }
-        const auto status = instances_[item.first]->UnregisterMemory(item.second);
-        if (status != Status::OK()) { return status; }
-        record.native_handles.erase(item.first);
-    }
+    const auto status = UnregisterNativeHandles(record, false);
+    if (status != Status::OK()) { return status; }
     memories_.erase(record_it);
     return Status::OK();
+}
+
+Status HixlTransport::UnregisterNativeHandles(LocalMemoryRecord& record,
+                                              bool continue_on_failure)
+{
+    // HIXL may return the same process-global Host-memory handle from multiple
+    // device instances. Deregister each unique native handle exactly once, using
+    // the first instance that registered it.
+    std::unordered_map<hixl::MemHandle, size_t> owners;
+    for (const auto& item : record.native_handles) {
+        const auto owner = owners.find(item.second);
+        if (owner == owners.end() || item.first < owner->second) {
+            owners[item.second] = item.first;
+        }
+    }
+
+    Status result = Status::OK();
+    for (const auto& item : owners) {
+        Status status = Status::OK();
+        if (item.first == nullptr || item.second >= instances_.size()) {
+            status = Status::Error();
+        } else {
+            status = instances_[item.second]->UnregisterMemory(item.first);
+        }
+        if (status != Status::OK()) {
+            if (result == Status::OK()) { result = status; }
+            if (!continue_on_failure) { return result; }
+            continue;
+        }
+        for (auto handle_it = record.native_handles.begin();
+             handle_it != record.native_handles.end();) {
+            if (handle_it->second == item.first) {
+                handle_it = record.native_handles.erase(handle_it);
+            } else {
+                ++handle_it;
+            }
+        }
+    }
+    return result;
 }
 
 Status HixlTransport::ExportMetadata(const ManagerID&, Metadata& out)

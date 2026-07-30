@@ -64,6 +64,7 @@ private:
     Status ValidateTransferLocked(const Operation& batch, size_t instance_index) const;
     Status BuildRouteLocked(const ManagerID& manager_id, Peer& peer);
     Status DisconnectRoute(const Peer& peer, bool ignore_failure);
+    Status UnregisterNativeHandles(LocalMemoryRecord& record, bool continue_on_failure);
 
     int32_t connect_timeout_ms_ = 1000;
     int32_t transfer_timeout_ms_ = 1000;
