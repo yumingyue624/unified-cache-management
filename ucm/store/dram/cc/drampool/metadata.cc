@@ -149,16 +149,16 @@ std::size_t ShardMetadata::GetKeyCnt() const noexcept
     return metadata_.size();
 }
 
-std::vector<EntryPtr> ShardMetadata::EvictPeriodic(double evict_ratio)
+std::vector<EntryPtr> ShardMetadata::EvictPeriodic(double evict_ratio, std::size_t target_size)
 {
     ReadOnlyGuard lock(mtx_);
-    return periodicEvictor_->GetEvictionResults(evict_ratio);
+    return periodicEvictor_->GetEvictionResults(evict_ratio, target_size);
 }
 
-std::vector<EntryPtr> ShardMetadata::EvictDeep(double evict_ratio)
+std::vector<EntryPtr> ShardMetadata::EvictDeep(double evict_ratio, std::size_t target_size)
 {
     ReadOnlyGuard lock(mtx_);
-    return deepEvictor_->GetEvictionResults(evict_ratio);
+    return deepEvictor_->GetEvictionResults(evict_ratio, target_size);
 }
 
 Status MetadataManager::Delete(const BlockId& key)
@@ -179,13 +179,15 @@ Status MetadataManager::StoreBegin(const BlockId& key, EntryPtr entry)
     entry->shard = static_cast<uint32_t>(idx);
     auto st = bufferManager_.Allocate(entry->size, entry->buffer);
     if (st == Status::NoSpace()) {
-        // TODO: Maybe the random shard doesn't have the data of current size
-        EvictOneShard(*shards_[rand() % kShardCnt]);
+        EvictOneShard(*shards_[rand() % kShardCnt], false, entry->size);
         st = bufferManager_.Allocate(entry->size, entry->buffer);
     }
-    if (st == Status::NoSpace()) {
-        EvictOneShard(*shards_[rand() % kShardCnt], true);
-        st = bufferManager_.Allocate(entry->size, entry->buffer);
+    if (st == Status::NoSpace() && defaultEvictRatio_ > 0.0) {
+        const auto first = static_cast<std::size_t>(rand()) % kShardCnt;
+        for (std::size_t offset = 0; offset < kShardCnt && st == Status::NoSpace(); ++offset) {
+            EvictOneShard(*shards_[(first + offset) % kShardCnt], true, entry->size);
+            st = bufferManager_.Allocate(entry->size, entry->buffer);
+        }
     }
     if (!st.Success()) {
         UC_ERROR("StoreBegin: Allocate for size {} failed, status {}.", entry->size, st.ToString());
@@ -203,9 +205,10 @@ Status MetadataManager::StoreBegin(const BlockId& key, EntryPtr entry)
     return st;
 }
 
-void MetadataManager::EvictOneShard(ShardMetadata& s, bool deep)
+void MetadataManager::EvictOneShard(ShardMetadata& s, bool deep, std::size_t target_size)
 {
-    auto victims = deep ? s.EvictDeep(defaultEvictRatio_) : s.EvictPeriodic(defaultEvictRatio_);
+    auto victims = deep ? s.EvictDeep(defaultEvictRatio_, target_size)
+                        : s.EvictPeriodic(defaultEvictRatio_, target_size);
     for (const auto& entry : victims) {
         auto st = bufferManager_.Free(entry->size, entry->buffer.slot);
         if (!st.Success()) {

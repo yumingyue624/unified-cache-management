@@ -243,6 +243,8 @@ INSTANTIATE_TEST_SUITE_P(
                         "must be greater than zero"},
         InvalidYamlCase{"ZeroFlagBufferSlotSize", "slot_size_bytes: 64", "slot_size_bytes: 0",
                         "must be greater than zero"},
+        InvalidYamlCase{"FlagBufferSlotBelowMinimumResponse", "slot_size_bytes: 64",
+                        "slot_size_bytes: 1", "minimum KV response size"},
         InvalidYamlCase{"EnabledGcHasZeroInterval", "interval_ms: 1000", "interval_ms: 0",
                         "when GC is enabled"},
         InvalidYamlCase{"UnsupportedPeriodicEvictionPolicy", "periodic_eviction_policy: TTL",

@@ -353,6 +353,10 @@ Status ValidateRuntimeConfig(DramPoolConfig& config)
         return Status::InvalidParam(
             "flag_buffer.capacity_mb and flag_buffer.slot_size_bytes must be greater than zero");
     }
+    if (config.flagBufferSlotSizeBytes < kMinimumFlagBufferSlotSizeBytes) {
+        return Status::InvalidParam(
+            "flag_buffer.slot_size_bytes is smaller than the minimum KV response size");
+    }
     if (config.flagBufferCapacityMb > std::numeric_limits<std::uint64_t>::max() / kBytesPerMiB) {
         return Status::InvalidParam("flag_buffer.capacity_mb is too large");
     }

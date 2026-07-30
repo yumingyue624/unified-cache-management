@@ -38,6 +38,8 @@ inline constexpr std::uint32_t kDefaultPollerPendingDepth = 64;
 inline constexpr std::uint64_t kBytesPerGiB = 1024ULL * 1024ULL * 1024ULL;
 inline constexpr std::uint64_t kBytesPerMiB = 1024ULL * 1024ULL;
 inline constexpr std::size_t kFlagBufferSlotAlignment = 64;
+// Every supported KV opcode packs at least one response result into two bytes.
+inline constexpr std::uint64_t kMinimumFlagBufferSlotSizeBytes = 2;
 inline constexpr std::uint64_t kMillisecondsPerMinute = 60'000;
 inline constexpr std::uint64_t kDefaultTtlMinutes = 120;
 inline constexpr std::uint64_t kDefaultDumpTtlMs = kDefaultTtlMinutes * kMillisecondsPerMinute;

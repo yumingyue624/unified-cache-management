@@ -75,24 +75,34 @@ public:
         return Status::OK();
     }
 
-    std::vector<EntryPtr> GetEvictionResults(double evictRatio) override
+    std::vector<EntryPtr> GetEvictionResults(double evictRatio,
+                                             std::size_t target_size = 0) override
     {
         std::vector<EntryPtr> victims;
         if (!std::isfinite(evictRatio) || evictRatio <= 0.0 || index_.empty()) { return victims; }
 
         const double boundedRatio = std::min(evictRatio, 1.0);
-        const auto target =
-            static_cast<std::size_t>(static_cast<double>(index_.size()) * boundedRatio);
+        const auto candidate_count =
+            static_cast<std::size_t>(std::count_if(lruList_.begin(), lruList_.end(),
+                                                   [target_size](const EntryPtr& entry) {
+                                                       return target_size == 0 ||
+                                                              entry->size == target_size;
+                                                   }));
+        auto target =
+            static_cast<std::size_t>(static_cast<double>(candidate_count) * boundedRatio);
+        if (target == 0 && candidate_count != 0) { target = 1; }
         const auto now = std::chrono::system_clock::now();
 
         for (auto it = lruList_.rbegin(); it != lruList_.rend() && victims.size() < target; ++it) {
             const auto& entry = *it;
+            if (target_size != 0 && entry->size != target_size) { continue; }
             if (!entry->TryMarkEvicting(now)) { continue; }
             victims.push_back(entry);
         }
 
         if (!victims.empty()) {
-            UC_INFO("LruEvictionPolicy evict {} of {} entries.", victims.size(), index_.size());
+            UC_INFO("LruEvictionPolicy evict {} of {} candidates for size {}.", victims.size(),
+                    candidate_count, target_size);
         }
         return victims;
     }

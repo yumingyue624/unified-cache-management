@@ -134,8 +134,8 @@ public:
      * @param evict_ratio Fraction of eligible entries to evict, in [0, 1].
      * @return Entries selected for eviction.
      */
-    std::vector<EntryPtr> EvictPeriodic(double evict_ratio);
-    std::vector<EntryPtr> EvictDeep(double evict_ratio);
+    std::vector<EntryPtr> EvictPeriodic(double evict_ratio, std::size_t target_size = 0);
+    std::vector<EntryPtr> EvictDeep(double evict_ratio, std::size_t target_size = 0);
 
 private:
     mutable RwLock mtx_;
@@ -192,7 +192,7 @@ private:
     }
     ShardMetadata& ShardOf(const BlockId& key) { return *shards_[ShardIdx(key)]; }
     const ShardMetadata& ShardOf(const BlockId& key) const { return *shards_[ShardIdx(key)]; }
-    void EvictOneShard(ShardMetadata& s, bool deep = false);
+    void EvictOneShard(ShardMetadata& s, bool deep = false, std::size_t target_size = 0);
 
     static constexpr std::size_t kShardCnt = 1024;
     std::array<std::unique_ptr<ShardMetadata>, kShardCnt> shards_;

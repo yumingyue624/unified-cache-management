@@ -51,20 +51,28 @@ struct PosEntryCmp {
  */
 class PosEvictionPolicy : public OrderedEvictionPolicy<PosEntryCmp> {
 public:
-    std::vector<EntryPtr> GetEvictionResults(double evict_ratio) override
+    std::vector<EntryPtr> GetEvictionResults(double evict_ratio,
+                                             std::size_t target_size = 0) override
     {
         std::vector<EntryPtr> victims;
         const auto now = std::chrono::system_clock::now();
+        std::size_t candidate_count = 0;
+        for (const auto& entry : entries_) {
+            if (target_size == 0 || entry->size == target_size) { ++candidate_count; }
+        }
         std::size_t target =
-            static_cast<std::size_t>(static_cast<double>(entries_.size()) * evict_ratio);
-        if (target > entries_.size()) { target = entries_.size(); }
+            static_cast<std::size_t>(static_cast<double>(candidate_count) * evict_ratio);
+        if (target == 0 && candidate_count != 0 && evict_ratio > 0.0) { target = 1; }
+        if (target > candidate_count) { target = candidate_count; }
         for (const auto& entry : entries_) {
             if (victims.size() >= target) { break; }
+            if (target_size != 0 && entry->size != target_size) { continue; }
             if (!entry->TryMarkEvicting(now)) { continue; }
             victims.push_back(entry);
         }
         if (!victims.empty()) {
-            UC_INFO("PosEvictionPolicy evict {} of {} entries.", victims.size(), entries_.size());
+            UC_INFO("PosEvictionPolicy evict {} of {} candidates for size {}.", victims.size(),
+                    candidate_count, target_size);
         }
         return victims;
     }

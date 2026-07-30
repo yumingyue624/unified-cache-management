@@ -92,10 +92,13 @@ public:
      * @param evict_ratio Hint ratio in [0.0, 1.0] indicating the fraction
      *                     of entries to consider for eviction. Concrete
      *                     policies may ignore this hint.
+     * @param target_size When non-zero, only entries from the matching buffer
+     *                    pool may be selected.
      * @return Vector of entries selected as eviction victims.
      *         The ordering is policy-defined.
      */
-    virtual std::vector<EntryPtr> GetEvictionResults(double evict_ratio) = 0;
+    virtual std::vector<EntryPtr> GetEvictionResults(double evict_ratio,
+                                                     std::size_t target_size = 0) = 0;
 };
 
 /**
