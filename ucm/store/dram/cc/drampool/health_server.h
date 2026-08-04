@@ -23,36 +23,30 @@
  * */
 #pragma once
 
-#include <cstddef>
-#include <cstdint>
-#include <memory>
-#include <vector>
-#include "asu_transport/asu_transport.h"
-#include "buffer_manager.h"
-#include "connection_manager.h"
-#include "task_context.h"
-#include "task_manager_base.h"
+#include <atomic>
+#include <thread>
+#include "status/status.h"
 
-namespace UC::ASU {
+namespace UC::DramPool {
 
-struct TransportSubBatchContext {
-    std::uint16_t cid{0};
-    TransportOpType opType{TransportOpType::QUERY};
-    TransportSubBatchState state{TransportSubBatchState::PENDING};
-    Status status{Status::OK()};
-    std::shared_ptr<ConnectionChannel> channel;
-    bool useSeekControl{false};
-    ScatterGatherEntry sendSge;
-    ScatterGatherEntry flagBuffer;
-    std::vector<Status> entryStatus;
-};
-
-class TransportTaskManager : public TaskManagerBase<TransportTask, TransportTaskState> {
+class HealthServer final {
 public:
-    TransportTaskManager() : TaskManagerBase(TransportTaskState::PENDING, "transport") {}
+    HealthServer() = default;
+    ~HealthServer();
 
-    void NotifyCompletion(const TransportTaskPtr& task);
-    static void BuildResult(const TransportTask& task, TaskResult& result);
+    HealthServer(const HealthServer&) = delete;
+    HealthServer& operator=(const HealthServer&) = delete;
+
+    Status Start();
+    void Stop() noexcept;
+
+private:
+    void Run() noexcept;
+    void HandleClient(int clientSocket) noexcept;
+
+    std::atomic_bool stopping_{true};
+    int listenSocket_{-1};
+    std::thread worker_;
 };
 
-}  // namespace UC::ASU
+}  // namespace UC::DramPool
