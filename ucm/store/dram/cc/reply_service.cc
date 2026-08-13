@@ -45,7 +45,11 @@ Status ReplyService::Init()
         !options_.publishEvent) {
         return Status::InvalidParam("invalid ReplyService options");
     }
-    auto status = buffers_.Init("dram_reply_slots", BufferPool::MemoryType::HOST, options_.slotSize,
+    auto memoryType = BufferPool::MemoryType::HOST;
+#ifdef UC_DRAM_ASCEND_BACKEND
+    memoryType = BufferPool::MemoryType::ASCEND_DEVICE_CPU_ACCESSIBLE;
+#endif
+    auto status = buffers_.Init("dram_reply_slots", memoryType, options_.slotSize,
                                 options_.slotCount, true);
     if (status.Failure()) { return status; }
     slotContexts_ = std::make_unique<SlotContext[]>(options_.slotCount);
@@ -110,7 +114,7 @@ ReplyService::~ReplyService() { Shutdown(); }
 
 ReplyMemoryRegion ReplyService::MemoryRegion() const noexcept
 {
-    return ReplyMemoryRegion{buffers_.GetLocalAddr(), buffers_.GetTotalSize()};
+    return ReplyMemoryRegion{buffers_.GetDeviceAddr(), buffers_.GetTotalSize()};
 }
 
 std::size_t ReplyService::Available() const

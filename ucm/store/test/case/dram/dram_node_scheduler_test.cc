@@ -137,6 +137,7 @@ bool WaitUntil(std::mutex& mutex, std::condition_variable& changed, Predicate pr
 TEST(NodeActorTest, PacksLookupWithTargetDramPoolProtocol)
 {
     std::array<std::uint8_t, 64> reply{};
+    std::array<std::uint8_t, 64> deviceReply{};
     Status unpackStatus = Status::Error();
     std::unique_ptr<DramPool::KvRequest> unpacked;
     DramPool::ProtocolManager serverProtocol;
@@ -150,7 +151,7 @@ TEST(NodeActorTest, PacksLookupWithTargetDramPoolProtocol)
             return Status::Retry();
         },
         [&](const RequestToken&, OpType, std::size_t) -> Expected<ReplySlot> {
-            return ReplySlot{reply.data(), reply.data(), reply.size(), 0};
+            return ReplySlot{reply.data(), deviceReply.data(), reply.size(), 0};
         },
         [](const RequestToken&, const ReplySlot&) { return Status::OK(); },
     };
@@ -165,7 +166,7 @@ TEST(NodeActorTest, PacksLookupWithTargetDramPoolProtocol)
     ASSERT_NE(lookup, nullptr);
     ASSERT_EQ(lookup->entries.size(), std::size_t{1});
     EXPECT_EQ(lookup->entries[0].key[0], std::byte{7});
-    EXPECT_EQ(lookup->resp_addr, reinterpret_cast<std::uintptr_t>(reply.data()));
+    EXPECT_EQ(lookup->resp_addr, reinterpret_cast<std::uintptr_t>(deviceReply.data()));
 }
 
 TEST(NodeActorTest, ReplyReleaseFailureDoesNotBlockCompletion)

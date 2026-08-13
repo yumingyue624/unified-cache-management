@@ -95,8 +95,8 @@ TEST_F(ReplyServiceTest, SharesSlotsAcrossRequestsAndValidatesOwnership)
     EXPECT_EQ(third.Value().slot_index, std::uint32_t{2});
     EXPECT_NE(second.Value().local_addr, first.Value().local_addr);
     const auto replyMemory = service->MemoryRegion();
-    const auto replyBegin = reinterpret_cast<std::uintptr_t>(replyMemory.address);
-    const auto secondAddress = reinterpret_cast<std::uintptr_t>(second.Value().local_addr);
+    const auto replyBegin = reinterpret_cast<std::uintptr_t>(replyMemory.deviceAddress);
+    const auto secondAddress = reinterpret_cast<std::uintptr_t>(second.Value().device_addr);
     EXPECT_GE(secondAddress, replyBegin);
     EXPECT_LT(secondAddress, replyBegin + replyMemory.length);
     EXPECT_EQ(second.Value().length, kSlotSize);

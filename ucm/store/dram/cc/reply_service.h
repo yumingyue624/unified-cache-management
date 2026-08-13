@@ -41,7 +41,7 @@
 namespace UC::Dram {
 
 struct ReplyMemoryRegion final {
-    void* address{nullptr};
+    void* deviceAddress{nullptr};
     std::size_t length{0};
 };
 
