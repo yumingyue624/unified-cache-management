@@ -58,7 +58,7 @@ Status NodeActor::EncodeRequest(const ReplySlot& replySlot, OpType op,
                                 std::vector<std::uint8_t>& payload)
 {
     const auto batchSize = static_cast<std::uint16_t>(entries.size());
-    const auto responseAddress = reinterpret_cast<std::uint64_t>(replySlot.local_addr);
+    const auto responseAddress = reinterpret_cast<std::uint64_t>(replySlot.device_addr);
     const auto pack = [this, &payload](const DramPool::KvRequest& request) {
         const auto size = protocol_.GetPackedRequestSize(request.opcode, request);
         payload.resize(size);

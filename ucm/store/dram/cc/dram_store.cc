@@ -100,6 +100,15 @@ private:
     Status Compose()
     {
 #ifdef UC_DRAM_ASCEND_BACKEND
+        const auto initRet = aclInit(nullptr);
+        if (initRet != ACL_SUCCESS && initRet != ACL_ERROR_REPEAT_INITIALIZE) {
+            return Status::Error("aclInit failed: " + std::to_string(initRet));
+        }
+        const auto setRet = aclrtSetDevice(config->transportDeviceId);
+        if (setRet != ACL_SUCCESS) {
+            return Status::Error("aclrtSetDevice failed: " + std::to_string(setRet));
+        }
+
         const auto transferTimeout = std::max(config->taskTimeouts.load, config->taskTimeouts.dump);
         auto createdBackend = CreateTransportManagerBackend(TransportManagerBackendOptions{
             config->localControlHost, config->localControlPort, config->localTransportManagerId,
@@ -121,7 +130,7 @@ private:
         memoryHandles.reserve(1);
         const auto replyMemory = replyService->MemoryRegion();
         auto registeredReply = transportBackend->RegisterMemory(
-            replyMemory.address, replyMemory.length, MemoryRegionType::HOST);
+            replyMemory.deviceAddress, replyMemory.length, MemoryRegionType::DEVICE);
         if (!registeredReply) { return registeredReply.Error(); }
         memoryHandles.push_back(std::move(registeredReply).Value());
 
