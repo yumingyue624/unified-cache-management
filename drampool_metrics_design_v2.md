@@ -131,137 +131,25 @@ struct MetricBuffer {
 2. **采集与写入隔离**：同一线程的两个 InnerBuffer 轮换使用，业务线程写新 buffer 时，Reporter 汇总旧 buffer。
 
 
-## 4. 双 Buffer 详细实现
+## 4. DramPool 进程侧处理
 
 ### 4.1 线程首次注册
 
-每个业务线程首次调用 `UpdateStats()` 时注册自己的 buffer：
+每个业务线程首次调用 `UpdateStats()` 时，将自己的 thread-local buffer 注册到 `DramPoolMetrics`，后续打点直接写入当前 write buffer。已注册 buffer 保留到 `DramPoolServer` 停止。
 
 ```text
 UpdateStats(metric, value)
     │
-    ├─ 当前线程是否已注册？── 是 ───────────────┐
-    │                                         │
-    └─ 否：将 thread-local buffer 加入 buffers │
-                                              ▼
-                                      写入当前 write buffer
+    ├─ 已注册 ──────────────┐
+    │                              │
+    └─ 未注册：加入 buffers 列表 │
+                                   ▼
+                           写入 write buffer
 ```
 
-注册列表由 `DramPoolMetrics` 管理。注册是低频操作，只在一个线程第一次打点时发生；后续打点不再获取注册锁。DramPool 的工作线程数量固定，因此已注册 buffer 可以保留到 Server 停止。
+### 4.2 耗时指标打点
 
-### 4.2 单次写入协议
-
-单次写入通过 `WriteGuard` 完成：
-
-```cpp
-int BeginWrite()
-{
-    while (true) {
-        int idx = writeIdx.load(std::memory_order_acquire);
-        activeWriteIdx.store(idx, std::memory_order_release);
-
-        if (writeIdx.load(std::memory_order_acquire) == idx) {
-            return idx;
-        }
-
-        activeWriteIdx.store(NO_ACTIVE_WRITER, std::memory_order_release);
-    }
-}
-```
-
-这里的二次检查用于处理下面的竞争窗口：业务线程第一次读到 `writeIdx=0` 后，Reporter 可能立即把它切换成 1。业务线程设置 `activeWriteIdx=0` 后再次读取 `writeIdx`；如果已经变化，则撤销本次占用并重新选择新 buffer，避免继续写入 Reporter 即将读取的旧 buffer。
-
-获得写 buffer 后，根据指标类型执行：
-
-```cpp
-switch (metric.type) {
-    case COUNTER:
-        buffer.counterStats[id] += value;
-        break;
-    case GAUGE:
-        buffer.gaugeStats[id] = value;
-        break;
-    case HISTOGRAM:
-        ++buffer.histogramStats[id].bucketCounts[bucketIndex];
-        buffer.histogramStats[id].sum += value;
-        break;
-}
-```
-
-写入完成时，`WriteGuard` 析构并将 `activeWriteIdx` 恢复为 `NO_ACTIVE_WRITER`。
-
-### 4.3 Reporter 切换协议
-
-每 10 秒，`DramPoolMetricsReporter` 对每个已注册 buffer 执行：
-
-```text
-业务线程                               Reporter
-   │                                     │
-   │  持续写 Buffer[0]                    │
-   │                                     │ exchange writeIdx: 0 → 1
-   │                                     │
-   │  下一次打点开始写 Buffer[1]          │ wait activeWriteIdx != 0
-   │                                     │
-   │  持续写 Buffer[1]                    │ 读取并汇总 Buffer[0]
-   │                                     │ clear Buffer[0]
-   ▼                                     ▼
-```
-
-对应步骤为：
-
-1. `SwitchBuffer()` 使用原子 exchange 切换 `writeIdx`，并返回旧索引。
-2. `WaitNoActiveWriter(oldIdx)` 等待切换瞬间已经进入旧 buffer 的单次写入结束。
-3. Reporter 读取旧 buffer，将其合并到本轮汇总结果。
-4. 清空旧 buffer，为下下轮写入复用。
-
-等待只覆盖切换瞬间的一次短写操作，不等待整个业务线程，也不阻塞业务线程继续写新 buffer。
-
-### 4.4 多线程汇总规则
-
-Reporter 遍历所有已注册线程 buffer，并按类型合并：
-
-| 类型 | 单线程 buffer 语义 | 跨线程合并规则 |
-| --- | --- | --- |
-| Counter | 本周期增量 | 所有线程求和 |
-| Gauge | 当前线程本周期最后值 | 资源 Gauge 优先由 Reporter 直接采样 owner 状态 |
-| Histogram | 本周期 bucket count 与 sum | bucket 逐项求和，sum 求和 |
-
-内存使用量、队列深度、entry 数量等资源 Gauge 不依赖“哪个线程最后写入”，由 Reporter 在生成快照时直接读取 `BufferManager`、`MetadataManager` 和队列的当前状态。这样 Gauge 的语义稳定，也避免跨线程最后写入顺序不确定。
-
-### 4.5 周期数据转全量快照
-
-双 buffer 汇总得到的是最近 10 秒的增量。`DramPoolMetricsReporter` 内部维护一个累计快照：
-
-```text
-cumulative_counter += interval_counter
-cumulative_histogram.bucket[i] += interval_histogram.bucket[i]
-cumulative_histogram.sum += interval_histogram.sum
-current_gauge = sample_current_value()
-```
-
-写文件时输出累计 Counter、累计 Histogram 和当前 Gauge。因此每一行都是独立的终点状态，UCM Reporter 无需读取或拼接历史行。
-
-## 5. 指标打点方式
-
-### 5.1 Counter 与 Gauge
-
-建议第一阶段覆盖以下核心指标：
-
-| 类型 | 示例 | 打点位置 |
-| --- | --- | --- |
-| 请求 Counter | `drampool_dump_requests_total`、`drampool_load_requests_total`、`drampool_lookup_requests_total` | `TaskWorker::ProcessOneRequest()` |
-| Item Counter | dump/load item、lookup hit/miss | 各操作的 item 处理循环或最终结果结算点 |
-| 字节 Counter | dump/load bytes | 成功提交或最终完成点，需统一语义 |
-| 失败 Counter | allocation、transport、timeout、response failure | 对应失败分支 |
-| 容量 Gauge | capacity、used、available bytes | Reporter 周期采样 `BufferManager` |
-| 队列 Gauge | request/completion queue depth | Reporter 周期采样队列 |
-| 元数据 Gauge | entry count | Reporter 周期采样 `MetadataManager` |
-
-同一个指标只能选择一个明确结算点。例如 `dump_bytes_total` 如果定义为“成功写入 DramPool 的字节数”，就应在异步传输成功并完成 `StoreEnd()` 后累加，而不是在请求刚进入 TaskWorker 时累加。
-
-### 5.2 ScopedTimer
-
-同步阶段可以直接使用 RAII：
+同步阶段使用 `ScopedTimer` 通过 RAII 记录耗时：
 
 ```cpp
 Status MetadataManager::StoreBegin(...)
@@ -271,90 +159,88 @@ Status MetadataManager::StoreBegin(...)
 }
 ```
 
-`ScopedTimer` 使用单调时钟，不受系统时间调整影响：
+构造时记录单调时钟，析构时将微秒耗时写入 Histogram。
 
-```cpp
-ScopedTimer::~ScopedTimer()
-{
-    const auto elapsed = steady_clock::now() - start_;
-    metrics_.Observe(id_, DurationToMicroseconds(elapsed));
-}
-```
+### 4.3 双 Buffer 周期采集
 
-### 5.3 异步请求耗时
-
-DUMP 和 LOAD 的数据传输跨越 TaskWorker 与 CompletionPoller，不能在 `ProcessDump()` 或 `ProcessLoad()` 内放一个覆盖全过程的栈上 Timer。实现方式是：
-
-1. 请求进入 TaskWorker 时记录 `request_start_us`。
-2. 将开始时间随 `CompletionRecord` 传给 CompletionPoller。
-3. 响应传输到达 terminal 状态时计算端到端耗时。
-4. 只记录一次对应 Histogram。
-
-同步的 metadata、protocol encode 等子阶段仍可以使用 `ScopedTimer`。
-
-## 6. 快照文件实现
-
-### 6.1 文件位置与周期
-
-Metrics 文件使用已有 `g_config.logDir`，采集周期固定为 10 秒。
+每 10 秒，`DramPoolMetricsReporter` 对每个已注册 buffer 执行：
 
 ```text
-${g_config.logDir}/drampool_metrics.log
+业务线程                               Reporter
+   │                                     │
+   │  持续写 Buffer[0]                    │ exchange writeIdx: 0 → 1
+   │  下一次打点开始写 Buffer[1]          │ wait activeWriteIdx != 0
+   │  持续写 Buffer[1]                    │ 汇总并清空 Buffer[0]
+   ▼                                     ▼
 ```
 
-### 6.2 JSON Lines 格式
+1. `SwitchBuffer()` 原子切换 `writeIdx` 并返回旧索引。
+2. `WaitNoActiveWriter(oldIdx)` 等待切换瞬间已进入旧 buffer 的单次写入结束。
+3. Reporter 汇总旧 buffer，然后将其清空供后续周期复用。
+
+业务线程在切换后继续写新 buffer，不需要等待 Reporter 完成汇总。
+
+### 4.4 JSON Lines 格式
+
+Metrics 文件位于 `${g_config.logDir}/drampool_metrics.log`，每行是一个完整的 `resource_snapshot` JSON：
 
 ```json
 {
-  "event": "drampool_metrics_snapshot",
-  "version": "v0",
   "time": "2026-09-03T12:00:00+08:00",
-  "endpoint": "127.0.0.1:12345",
-  "sequence": 42,
-  "counters": {
-    "drampool_dump_requests_total": 1200
-  },
-  "gauges": {
-    "drampool_used_bytes": 68719476736
-  },
-  "histograms": {
-    "drampool_load_duration_us": {
-      "bucket_counts": [12, 36, 81],
-      "sum": 92450
+  "event": "resource_snapshot",
+  "version": "v0",
+  "metrics": {
+    "request_count": {
+      "dump_requests_total": 1200,
+      "load_requests_total": 860
+    },
+    "memory": {
+      "used_bytes": 68719476736,
+      "total_bytes": 137438953472
+    },
+    "load_duration": {
+      "count": 860,
+      "sum_us": 92450,
+      "bucket_counts": [12, 36, 812]
     }
   }
 }
 ```
 
-写入规则：
+该格式使用顶层 `time/event/version/metrics`，指标在 `metrics` 中按资源组组织。Reporter 构造完整 JSON 和换行符后提交给 `MetricsFlush` 线程，由后者以 append 模式单线程写入文件。
 
-- Reporter 先在内存中构造完整 JSON 和结尾换行符。
-- 只有该线程写 metrics 文件，避免多写者交错。
-- 以 append 模式写入，不覆盖已有记录。
-- 进程崩溃可能留下最后一个半行，读取端负责忽略。
-- `sequence` 每成功生成一次快照递增，用于识别重复读取。
+### 4.5 Reporter 维护累计快照
 
-### 6.3 生命周期
+双 buffer 汇总得到的是最近 10 秒的增量。Reporter 将 Counter 和 Histogram 合并到进程级累计值，Gauge 保留当前值：
 
-`DramPoolServer::Init()` 创建 metrics 账本、快照累计器和文件 writer，但不启动线程。`Start()` 在内部消费者准备好后启动 metrics reporter，并且仍然保证 transport service 和 TCP listener 最后启动。
-
-`Stop()` 先停止 metrics reporter，再销毁它引用的 BufferManager、MetadataManager 和队列。所有可变运行对象由 `DramPoolServer` 持有，`DramPoolRuntime` 只保存非 owning 引用。
-
-## 7. Scheduler Reporter 实现
-
-### 7.1 启动入口
-
-Scheduler 初始化 DramStore 时调用：
-
-```python
-start_drampool_resource_reporter(config)
+```text
+cumulative_counter += interval_counter
+cumulative_histogram.bucket[i] += interval_histogram.bucket[i]
+cumulative_histogram.sum += interval_histogram.sum
+current_gauge = sample_current_value()
 ```
 
-Reporter 只在 Scheduler/EngineCore 角色启动；device worker 不启动该线程。
+因此，`drampool_metrics.log` 的每一行都是独立的终点状态，vLLM 侧只需读取最新完整行。文件采用按大小轮转，避免无限增长：
 
-### 7.2 Leader 选举
+```text
+周期生成资源快照
+        ↓
+后台 MetricsFlush 线程追加到 drampool_metrics.log
+        ↓
+文件达到 max_log_size
+        ↓
+旧文件重命名为 drampool_metrics.<时间戳>.log
+        ↓
+重新创建空的 drampool_metrics.log
+        ↓
+超过 max_log_file_num 时删除最旧的轮转文件
+```
 
-同一 host 上多个 Scheduler 连接的是同一个 DramPool，必须保证每个快照只回流一次。
+## 5. vLLM 侧处理
+
+### 5.1 Reporter 启动与 Leader 选择
+
+Scheduler 初始化 DramStore 时启动 `start_drampool_resource_reporter(config)`。同一 host 上的多个 Scheduler 使用 `endpoint + log_path` 的哈希构造 lock 和 state 文件名：
 
 ```python
 identity = sha256(f"{endpoint}|{Path(log_path).resolve()}".encode()).hexdigest()[:24]
@@ -362,49 +248,29 @@ lock_path = shared_dir / f"ucm_drampool_metrics_{identity}.lock"
 state_path = shared_dir / f"ucm_drampool_metrics_{identity}.json"
 ```
 
-Reporter 使用 `flock(LOCK_EX | LOCK_NB)` 抢锁：
+Reporter 启动时只尝试一次 `flock(LOCK_EX | LOCK_NB)`。成功者持有 fd 并负责回流；失败者关闭 fd 并退出线程，运行期间不重新选择 Leader。
 
-- 抢锁成功后一直持有打开的文件 fd。
-- Leader 正常退出时主动 unlock 并关闭 fd。
-- Leader 崩溃时，内核随 fd 关闭自动释放锁。
-- 不需要租约或心跳。
-- Reporter 启动时只尝试抢锁一次；抢锁失败后关闭本次打开的文件 fd，并直接退出 Reporter 线程。
-
-DramPool Reporter 与当前 YuanRong Reporter 保持一致，不提供运行期间的 Reporter 故障接任能力。Scheduler 进程退出时，内核释放文件锁仅用于完成资源回收，不触发其他已退出 Reporter 重新选主。
-
-### 7.3 从尾部读取最新完整行
-
-每轮采集执行：
+### 5.2 读取最新完整快照
 
 ```text
 open(log_path, "rb")
     → seek(EOF)
     → 从尾部向前读取 64 KiB
-    → 如果末尾没有换行，丢弃最后一个半行
-    → 从后向前选择最新完整 JSON
+    → 忽略末尾可能存在的半行
+    → 选择最新完整 JSON
 ```
 
-单条快照通常小于 64 KiB，所以正常情况一次读取即可命中。即使文件包含大量历史快照，读取成本也与整份文件大小无关。
+单条快照通常小于 64 KiB，正常情况一次读取即可命中，读取成本不随日志文件增长。
 
-### 7.4 累计值转换为增量
+### 5.3 累计快照转换为本轮增量
 
-DramPool 写入累计值，UCM 账本接收本轮增量：
+Counter 以及 Histogram 的 count、sum 和 bucket count 按以下规则计算增量，Gauge 直接使用最新值：
 
 ```python
 delta = current - previous if current >= previous else current
 ```
 
-`current < previous` 表示 DramPool 重启或指标 reset，本轮直接上报 `current`。相同规则应用于 Histogram bucket count 和 sum。Gauge 直接使用最新值。
-
-### 7.5 State 文件
-
-Leader 用 state 文件记录最后一次成功回流的累计值：
-
-```text
-ucm_drampool_metrics_<hash>.json
-```
-
-写入过程为：
+`current < previous` 表示 DramPool 重启或指标 reset。Leader 在回流成功后将当前累计值写入 `ucm_drampool_metrics_<hash>.json`：
 
 ```text
 写 .<pid>.tmp
@@ -412,24 +278,18 @@ ucm_drampool_metrics_<hash>.json
     → os.replace(tmp_path, state_path)
 ```
 
-`os.replace()` 对 `state_path` 是原子整体替换，因此读取者看到的只会是旧版本或新版本，不会读到截断 JSON。
+`os.replace()` 保证 state 文件只有新、旧两种完整状态。处理顺序为“先回流、后更新 state”，语义上优先避免指标丢失。
 
-处理顺序选择“先回流、后更新 state”。这样不会因为提前更新 state 而永久丢失指标；如果进程恰好在两步之间崩溃，后续重新启动的 Scheduler Reporter 可能重复回流上一轮数据。该链路不引入事务协调，语义为偏向不丢数据的 at-least-once。
-
-## 8. 回流 UCM 统一出口
-
-Counter 和 Gauge 合并成一个 updates 字典：
+### 5.4 回流 UCM 统一出口
 
 ```python
 updates = counter_deltas | gauges
 ucmmetrics.update_stats(updates)
 ```
 
-调用后，数据进入 Scheduler/EngineCore 进程内的 C++ metrics 单例，并落到 Reporter 线程自己的 thread-local `MetricBuffer`。此后它们与 `posix_`、`cache_` 和 connector hit 指标完全相同，由现有 `MetricsDispatcher` 分发到 `vllm_connector`。
+数据随后进入 Scheduler/EngineCore 进程内的 C++ metrics 单例，由现有 `MetricsDispatcher` 分发到 `vllm_connector`。Histogram 的 bucket 增量通过 metrics binding 的批量 Histogram 接口写入，不逐条重放 observation。
 
-Histogram 快照包含 bucket delta 和 sum delta，而当前 Python `update_stats(dict[str, float])` 只能表达单个 observation。为了保持 Histogram 分布，实施时需要为现有 metrics binding 增加一个批量写入 Histogram bucket 的生产接口；Counter/Gauge 仍使用上述 `update_stats(updates)`。不采用按 bucket 重放大量伪造 observation 的方式。
-
-## 9. 核心异常处理
+## 6. 核心异常处理
 
 Metrics 是旁路能力。文件写入、解析或回流失败时记录告警并等待下一轮，不能阻塞或终止 DUMP、LOAD、LOOKUP 主流程。
 
