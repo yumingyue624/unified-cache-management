@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="5 -5 1710 930" width="1710" height="930" style="max-width:100%;height:auto" role="img">
+<title>DramPool Metrics 跨进程采集与统一回流</title>
+<rect x="5" y="-5" width="1710" height="930" fill="#ffffff" />
+<text x="860.0" y="47.459999999999994" fill="#111827" font-size="28.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="860.0" dy="0">DramPool Metrics 跨进程采集与统一回流</tspan></text>
+<rect x="30" y="80" width="1660" height="820" rx="12" fill="#ffffff" stroke="#64748b" stroke-width="2" stroke-dasharray="10 8" />
+<text x="52" y="109.51" fill="#475569" font-size="18.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="start"><tspan x="52" dy="0">同一台 Host</tspan></text>
+<rect x="70" y="140" width="455" height="680" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="2" stroke-dasharray="10 8" />
+<text x="297.5" y="176.29" fill="#1d4ed8" font-size="22.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="297.5" dy="0">DramPool 独立进程</tspan></text>
+<rect x="115" y="225" width="365" height="100" rx="12" fill="#dbeafe" stroke="#2563eb" stroke-width="2" />
+<text x="297.5" y="267.69" fill="#111827" font-size="17.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="297.5" dy="0">TaskWorker / CompletionPoller / GC</tspan><tspan x="297.5" dy="21.25">Counter · Gauge · Histogram 打点</tspan></text>
+<rect x="115" y="380" width="365" height="110" rx="12" fill="#dcfce7" stroke="#16a34a" stroke-width="2" />
+<text x="297.5" y="417.065" fill="#111827" font-size="17.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="297.5" dy="0">thread-local MetricBuffer</tspan><tspan x="297.5" dy="21.25">Buffer[0] ⇄ Buffer[1]</tspan><tspan x="297.5" dy="21.25">热路径只写内存</tspan></text>
+<rect x="115" y="545" width="365" height="120" rx="12" fill="#fef3c7" stroke="#d97706" stroke-width="2" />
+<text x="297.5" y="587.065" fill="#111827" font-size="17.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="297.5" dy="0">MetricsReporter（固定 10 s）</tspan><tspan x="297.5" dy="21.25">切换、汇总、生成全量快照</tspan><tspan x="297.5" dy="21.25">单线程追加写</tspan></text>
+<polyline points="297,325 297,380" fill="none" stroke="#2563eb" stroke-width="2" /><polygon points="297,380 291.5,367.0 302.5,367.0" fill="#2563eb" stroke="#2563eb" stroke-width="1" />
+<polyline points="297,490 297,545" fill="none" stroke="#16a34a" stroke-width="2" /><polygon points="297,545 291.5,532.0 302.5,532.0" fill="#16a34a" stroke="#16a34a" stroke-width="1" />
+<rect x="575" y="205" width="270" height="505" rx="12" fill="#f8fafc" stroke="#64748b" stroke-width="2" stroke-dasharray="10 8" />
+<text x="710.0" y="239.70499999999998" fill="#475569" font-size="19.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="710.0" dy="0">Host 本地共享文件</tspan></text>
+<rect x="610" y="285" width="200" height="95" rx="12" fill="#fff7ed" stroke="#ea580c" stroke-width="2" />
+<text x="710.0" y="315.62" fill="#111827" font-size="16.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="710.0" dy="0">drampool_metrics.log</tspan><tspan x="710.0" dy="20.0">JSON Lines</tspan><tspan x="710.0" dy="20.0">最新行为全量快照</tspan></text>
+<rect x="610" y="450" width="200" height="80" rx="12" fill="#f3e8ff" stroke="#9333ea" stroke-width="2" />
+<text x="710.0" y="482.12" fill="#111827" font-size="16.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="710.0" dy="0">&lt;hash&gt;.lock</tspan><tspan x="710.0" dy="20.0">flock 绑定 fd</tspan></text>
+<rect x="610" y="600" width="200" height="75" rx="12" fill="#f1f5f9" stroke="#64748b" stroke-width="2" />
+<text x="710.0" y="630.12" fill="#111827" font-size="16.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="710.0" dy="0">&lt;hash&gt;.json</tspan><tspan x="710.0" dy="20.0">原子 replace</tspan></text>
+<polyline points="480,605 610,332" fill="none" stroke="#d97706" stroke-width="2" /><polygon points="610,332 609.3765963084311,346.101821436869 599.445130601368,341.3725520525532" fill="#d97706" stroke="#d97706" stroke-width="1" />
+<rect x="900" y="125" width="735" height="590" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="2" stroke-dasharray="10 8" />
+<text x="1267.5" y="161.29" fill="#15803d" font-size="22.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="1267.5" dy="0">vLLM 进程（Leader Scheduler 所在进程）</tspan></text>
+<rect x="945" y="210" width="255" height="80" rx="12" fill="#dcfce7" stroke="#16a34a" stroke-width="2" />
+<text x="1072.5" y="242.69" fill="#111827" font-size="17.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="1072.5" dy="0">Leader Scheduler</tspan><tspan x="1072.5" dy="21.25">启动 Reporter 线程</tspan></text>
+<rect x="945" y="345" width="255" height="105" rx="12" fill="#dcfce7" stroke="#16a34a" stroke-width="2" />
+<text x="1072.5" y="380.62" fill="#111827" font-size="16.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="1072.5" dy="0">DramPoolResourceReporter</tspan><tspan x="1072.5" dy="20.0">尾读 64 KiB</tspan><tspan x="1072.5" dy="20.0">计算累计值增量</tspan></text>
+<rect x="945" y="515" width="255" height="85" rx="12" fill="#dbeafe" stroke="#2563eb" stroke-width="2" />
+<text x="1072.5" y="550.62" fill="#111827" font-size="16.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="1072.5" dy="0">ucmmetrics.update_stats</tspan><tspan x="1072.5" dy="20.0">本进程 C++ 账本</tspan></text>
+<polyline points="1072,290 1072,345" fill="none" stroke="#16a34a" stroke-width="2" /><polygon points="1072,345 1066.5,332.0 1077.5,332.0" fill="#16a34a" stroke="#16a34a" stroke-width="1" />
+<text x="1085" y="316.535" fill="#15803d" font-size="13.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="start"><tspan x="1085" dy="0">start()</tspan></text>
+<polyline points="1072,450 1072,515" fill="none" stroke="#2563eb" stroke-width="2" /><polygon points="1072,515 1066.5,502.0 1077.5,502.0" fill="#2563eb" stroke="#2563eb" stroke-width="1" />
+<rect x="1260" y="205" width="320" height="440" rx="12" fill="#fefce8" stroke="#ca8a04" stroke-width="2" stroke-dasharray="10 8" />
+<text x="1420.0" y="239.70499999999998" fill="#a16207" font-size="19.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="1420.0" dy="0">vLLM Metrics 统一出口</tspan></text>
+<rect x="1300" y="285" width="240" height="58" rx="12" fill="#e0e7ff" stroke="#4f46e5" stroke-width="2" />
+<text x="1420.0" y="317.12" fill="#111827" font-size="16.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="1420.0" dy="0">MetricsDispatcher</tspan></text>
+<rect x="1300" y="380" width="240" height="58" rx="12" fill="#ede9fe" stroke="#7c3aed" stroke-width="2" />
+<text x="1420.0" y="412.12" fill="#111827" font-size="16.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="1420.0" dy="0">UCMConnectorStats</tspan></text>
+<rect x="1300" y="475" width="240" height="58" rx="12" fill="#fef9c3" stroke="#ca8a04" stroke-width="2" />
+<text x="1420.0" y="506.925" fill="#111827" font-size="15.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="1420.0" dy="0">vllm_connector PromMetrics</tspan></text>
+<rect x="1300" y="570" width="240" height="50" rx="12" fill="#fee2e2" stroke="#dc2626" stroke-width="2" />
+<text x="1420.0" y="597.925" fill="#111827" font-size="15.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="1420.0" dy="0">Prometheus /metrics</tspan></text>
+<polyline points="1420,343 1420,380" fill="none" stroke="#4f46e5" stroke-width="2" /><polygon points="1420,380 1414.5,367.0 1425.5,367.0" fill="#4f46e5" stroke="#4f46e5" stroke-width="1" />
+<polyline points="1420,438 1420,475" fill="none" stroke="#7c3aed" stroke-width="2" /><polygon points="1420,475 1414.5,462.0 1425.5,462.0" fill="#7c3aed" stroke="#7c3aed" stroke-width="1" />
+<polyline points="1420,533 1420,570" fill="none" stroke="#ca8a04" stroke-width="2" /><polygon points="1420,570 1414.5,557.0 1425.5,557.0" fill="#ca8a04" stroke="#ca8a04" stroke-width="1" />
+<polyline points="1200,558 1300,314" fill="none" stroke="#2563eb" stroke-width="2" /><polygon points="1300,314 1300.1592738353431,328.1146955987501 1289.980917310076,323.9432380064274" fill="#2563eb" stroke="#2563eb" stroke-width="1" />
+<polyline points="1200,250 1300,300" fill="none" stroke="#4f46e5" stroke-width="2" stroke-dasharray="10 8" /><polygon points="1300,300 1285.9127717417514,299.1055728090001 1290.832121292251,289.266873708001" fill="#4f46e5" stroke="#4f46e5" stroke-width="1" />
+<text x="1260.0" y="273.84" fill="#4338ca" font-size="12.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="1260.0" dy="0">vLLM 调用</tspan><tspan x="1260.0" dy="15.0">get stats</tspan></text>
+<polyline points="810,332 945,385" fill="none" stroke="#ea580c" stroke-width="2" /><polygon points="945,385 930.8892267151447,385.36888657255787 934.9090560946075,375.12969853053" fill="#ea580c" stroke="#ea580c" stroke-width="1" />
+<polyline points="945,400 810,490" fill="none" stroke="#9333ea" stroke-width="2" /><polygon points="810,490 817.7658027471532,478.2126208302139 823.8675049056308,487.3651740679301" fill="#9333ea" stroke="#9333ea" stroke-width="1" />
+<polyline points="945,430 810,637" fill="none" stroke="#64748b" stroke-width="2" stroke-dasharray="10 8" /><polygon points="810,637 812.4946228644976,623.10658944809 821.7083394297224,629.1155350341061" fill="#64748b" stroke="#64748b" stroke-width="1" />
+<rect x="900" y="755" width="735" height="115" rx="12" fill="#f8fafc" stroke="#94a3b8" stroke-width="2" stroke-dasharray="10 8" />
+<text x="925" y="783.51" fill="#475569" font-size="18.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="start"><tspan x="925" dy="0">其他 vLLM 进程</tspan></text>
+<rect x="1190" y="775" width="400" height="70" rx="12" fill="#f1f5f9" stroke="#94a3b8" stroke-width="2" />
+<text x="1390.0" y="803.55" fill="#475569" font-size="15.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="1390.0" dy="0">其他 Scheduler 启动 Reporter</tspan><tspan x="1390.0" dy="18.75">flock 失败后 Reporter 线程直接退出</tspan></text>
+<polyline points="1190,810 810,510" fill="none" stroke="#9333ea" stroke-width="2" stroke-dasharray="10 8" /><polygon points="810,510 823.6115195391192,513.7385205410935 816.79543236475,522.3722309619611" fill="#9333ea" stroke="#9333ea" stroke-width="1" />
+</svg>

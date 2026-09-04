@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="15 -5 1570 980" width="1570" height="980" style="max-width:100%;height:auto" role="img">
+<title>drampool_metrics_buffer_comparison_v2</title>
+<rect x="15" y="-5" width="1570" height="980" fill="#ffffff" />
+<text x="800.0" y="46.459999999999994" fill="#111827" font-size="28.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="800.0" dy="0">DramPool 进程内采集方案对比</tspan></text>
+<rect x="45" y="90" width="700" height="690" rx="12" fill="#fff7ed" stroke="#ea580c" stroke-width="2" stroke-dasharray="10 8" />
+<text x="395.0" y="131.29" fill="#c2410c" font-size="22.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="395.0" dy="0">YuanRong：固定 MetricSlot</tspan></text>
+<text x="395.0" y="183.315" fill="#7c2d12" font-size="17.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="395.0" dy="0">所有业务线程直接更新同一组进程级 slot</tspan></text>
+<rect x="90" y="245" width="170" height="65" rx="12" fill="#ffedd5" stroke="#ea580c" stroke-width="2" />
+<text x="175.0" y="280.315" fill="#111827" font-size="17.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="175.0" dy="0">业务线程 A</tspan></text>
+<rect x="90" y="355" width="170" height="65" rx="12" fill="#ffedd5" stroke="#ea580c" stroke-width="2" />
+<text x="175.0" y="390.315" fill="#111827" font-size="17.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="175.0" dy="0">业务线程 B</tspan></text>
+<rect x="345" y="210" width="340" height="330" rx="12" fill="#ffffff" stroke="#c2410c" stroke-width="2" />
+<text x="515.0" y="238.315" fill="#9a3412" font-size="17.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="515.0" dy="0">g_slots[1024]：固定 MetricSlot 数组</tspan></text>
+<polyline points="260,277 385,330" fill="none" stroke="#ea580c" stroke-width="2" /><polygon points="385,330 370.88441010999077,329.988952055917 375.1783777102388,319.86166997986027" fill="#ea580c" stroke="#ea580c" stroke-width="1" />
+<polyline points="260,387 385,415" fill="none" stroke="#ea580c" stroke-width="2" /><polygon points="385,415 371.1121540467823,417.5254177436009 373.51657032198807,406.7914165150037" fill="#ea580c" stroke="#ea580c" stroke-width="1" />
+<rect x="345" y="595" width="340" height="105" rx="12" fill="#fef3c7" stroke="#d97706" stroke-width="2" />
+<text x="515.0" y="615.12" fill="#111827" font-size="16.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="515.0" dy="0">Tick / BuildSummary</tspan><tspan x="515.0" dy="20.0">遍历已注册 Slot</tspan><tspan x="515.0" dy="20.0">g_last 计算周期 delta</tspan><tspan x="515.0" dy="20.0">Histogram 持有对应 Slot 的 histMutex</tspan></text>
+<polyline points="675,540 675,595" fill="none" stroke="#c2410c" stroke-width="2" /><polygon points="675,595 669.5,582.0 680.5,582.0" fill="#c2410c" stroke="#c2410c" stroke-width="1" />
+<text x="85" y="634.175" fill="#7c2d12" font-size="15.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="start"><tspan x="85" dy="0">优点：固定 ID、句柄简单</tspan><tspan x="85" dy="18.75">代价：Histogram 共享锁；</tspan><tspan x="85" dy="18.75">需要重新引入整套实现</tspan></text>
+<rect x="825" y="90" width="730" height="690" rx="12" fill="#eff6ff" stroke="#2563eb" stroke-width="2" stroke-dasharray="10 8" />
+<text x="1190.0" y="131.29" fill="#1d4ed8" font-size="22.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="1190.0" dy="0">UCM：thread-local + 双 Buffer</tspan></text>
+<text x="1190.0" y="183.315" fill="#1e3a8a" font-size="17.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="1190.0" dy="0">每个线程写自己的 buffer，汇总线程周期切换旧 buffer</tspan></text>
+<rect x="870" y="230" width="250" height="220" rx="12" fill="#dbeafe" stroke="#2563eb" stroke-width="2" />
+<text x="995.0" y="262.315" fill="#111827" font-size="17.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="995.0" dy="0">线程 A：thread_local</tspan></text>
+<rect x="900" y="300" width="80" height="75" rx="12" fill="#dcfce7" stroke="#16a34a" stroke-width="2" />
+<text x="940.0" y="330.55" fill="#111827" font-size="15.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="940.0" dy="0">Buf 0</tspan><tspan x="940.0" dy="18.75">写入</tspan></text>
+<rect x="1010" y="300" width="80" height="75" rx="12" fill="#f1f5f9" stroke="#64748b" stroke-width="2" />
+<text x="1050.0" y="330.55" fill="#111827" font-size="15.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="1050.0" dy="0">Buf 1</tspan><tspan x="1050.0" dy="18.75">待读</tspan></text>
+<polyline points="980,337 1010,337" fill="none" stroke="#2563eb" stroke-width="2" /><polygon points="1010,337 997.0,342.5 997.0,331.5" fill="#2563eb" stroke="#2563eb" stroke-width="1" />
+<text x="995.0" y="409.925" fill="#1e40af" font-size="15.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="995.0" dy="0">writeIdx 原子切换</tspan></text>
+<rect x="870" y="500" width="250" height="220" rx="12" fill="#dbeafe" stroke="#2563eb" stroke-width="2" />
+<text x="995.0" y="532.315" fill="#111827" font-size="17.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="995.0" dy="0">线程 B：thread_local</tspan></text>
+<rect x="900" y="570" width="80" height="75" rx="12" fill="#dcfce7" stroke="#16a34a" stroke-width="2" />
+<text x="940.0" y="600.55" fill="#111827" font-size="15.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="940.0" dy="0">Buf 0</tspan><tspan x="940.0" dy="18.75">写入</tspan></text>
+<rect x="1010" y="570" width="80" height="75" rx="12" fill="#f1f5f9" stroke="#64748b" stroke-width="2" />
+<text x="1050.0" y="600.55" fill="#111827" font-size="15.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="1050.0" dy="0">Buf 1</tspan><tspan x="1050.0" dy="18.75">待读</tspan></text>
+<polyline points="980,607 1010,607" fill="none" stroke="#2563eb" stroke-width="2" /><polygon points="1010,607 997.0,612.5 997.0,601.5" fill="#2563eb" stroke="#2563eb" stroke-width="1" />
+<text x="995.0" y="679.925" fill="#1e40af" font-size="15.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="995.0" dy="0">writeIdx 原子切换</tspan></text>
+<rect x="1190" y="300" width="300" height="285" rx="12" fill="#f0fdf4" stroke="#16a34a" stroke-width="2" />
+<text x="1340.0" y="360.62" fill="#111827" font-size="16.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="1340.0" dy="0">MetricsReporter</tspan><tspan x="1340.0" dy="20.0"></tspan><tspan x="1340.0" dy="20.0">1. 遍历已注册线程 buffer</tspan><tspan x="1340.0" dy="20.0">2. SwitchBuffer()</tspan><tspan x="1340.0" dy="20.0">3. 等旧 buffer 写者退出</tspan><tspan x="1340.0" dy="20.0">4. 聚合 Counter / Gauge</tspan><tspan x="1340.0" dy="20.0">   / Histogram</tspan><tspan x="1340.0" dy="20.0">5. ClearReadBuffer()</tspan><tspan x="1340.0" dy="20.0">6. 生成 10 s 全量快照</tspan></text>
+<polyline points="1090,337 1190,380" fill="none" stroke="#16a34a" stroke-width="2" /><polygon points="1190,380 1175.8846479328326,379.9173197731178 1180.2299531900862,369.8119587097374" fill="#16a34a" stroke="#16a34a" stroke-width="1" />
+<polyline points="1090,607 1190,510" fill="none" stroke="#16a34a" stroke-width="2" /><polygon points="1190,510 1184.4981267739226,522.9992073221474 1176.8392895498855,515.1034988437586" fill="#16a34a" stroke="#16a34a" stroke-width="1" />
+<rect x="250" y="825" width="1100" height="125" rx="12" fill="#ecfdf5" stroke="#059669" stroke-width="2" />
+<text x="800.0" y="863.29" fill="#047857" font-size="22.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="800.0" dy="0">最终选择：复用 UCM thread-local + 双 buffer</tspan></text>
+<text x="800.0" y="912.315" fill="#065f46" font-size="17.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="800.0" dy="0">UCM 已有生产代码、测试和统一出口；热路径按线程隔离，避免重复建设 YuanRong MetricSlot 体系。</tspan></text>
+<polyline points="520,780 620,825" fill="none" stroke="#94a3b8" stroke-width="2" stroke-dasharray="10 8" /><polygon points="620,825 605.8880147074152,824.6808274731887 610.4020261580321,814.6496909162626" fill="#94a3b8" stroke="#94a3b8" stroke-width="1" />
+<polyline points="1190,780 1040,825" fill="none" stroke="#059669" stroke-width="2" /><polygon points="1040,825 1050.8713283372601,815.9964329189212 1054.03215507849,826.5325220563537" fill="#059669" stroke="#059669" stroke-width="1" />
+<text x="435.0" y="269.34" fill="#9a3412" font-size="12.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="435.0" dy="0">MetricId → 数组下标</tspan></text>
+<rect x="365" y="285" width="140" height="32" rx="12" fill="#ffedd5" stroke="#ea580c" stroke-width="2" />
+<text x="435.0" y="296.7" fill="#111827" font-size="10.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="435.0" dy="0">Slot[0]  Counter</tspan><tspan x="435.0" dy="12.5">dump_requests</tspan></text>
+<rect x="365" y="323" width="140" height="32" rx="12" fill="#e0f2fe" stroke="#0284c7" stroke-width="2" />
+<text x="435.0" y="334.7" fill="#111827" font-size="10.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="435.0" dy="0">Slot[1]  Gauge</tspan><tspan x="435.0" dy="12.5">used_bytes</tspan></text>
+<rect x="365" y="361" width="140" height="32" rx="12" fill="#f3e8ff" stroke="#9333ea" stroke-width="2" />
+<text x="435.0" y="372.7" fill="#111827" font-size="10.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="435.0" dy="0">Slot[2]  Histogram</tspan><tspan x="435.0" dy="12.5">load_latency</tspan></text>
+<rect x="365" y="399" width="140" height="32" rx="12" fill="#ffedd5" stroke="#ea580c" stroke-width="2" />
+<text x="435.0" y="410.7" fill="#111827" font-size="10.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="435.0" dy="0">Slot[3]  Counter</tspan><tspan x="435.0" dy="12.5">lookup_hits</tspan></text>
+<rect x="365" y="437" width="140" height="32" rx="12" fill="#f8fafc" stroke="#94a3b8" stroke-width="2" />
+<text x="435.0" y="455.34" fill="#111827" font-size="12.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="435.0" dy="0">⋮    更多 MetricSlot    ⋮</tspan></text>
+<rect x="365" y="475" width="140" height="32" rx="12" fill="#f1f5f9" stroke="#64748b" stroke-width="2" />
+<text x="435.0" y="486.7" fill="#111827" font-size="10.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="435.0" dy="0">Slot[1023]  Metric</tspan><tspan x="435.0" dy="12.5">metric_1023</tspan></text>
+<rect x="535" y="295" width="125" height="195" rx="12" fill="#fff7ed" stroke="#c2410c" stroke-width="2" />
+<text x="597.5" y="339.645" fill="#7c2d12" font-size="11.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="597.5" dy="0">MetricSlot[i]</tspan><tspan x="597.5" dy="13.75"></tspan><tspan x="597.5" dy="13.75">id / type / name</tspan><tspan x="597.5" dy="13.75"></tspan><tspan x="597.5" dy="13.75">Counter: atomic u64</tspan><tspan x="597.5" dy="13.75">Gauge: atomic i64</tspan><tspan x="597.5" dy="13.75">Histogram:</tspan><tspan x="597.5" dy="13.75">buckets + mutex</tspan><tspan x="597.5" dy="13.75">sum / max</tspan></text>
+<polyline points="505,392 535,355" fill="none" stroke="#9a3412" stroke-width="2" /><polygon points="535,355 531.0847311584814,368.56173550467025 522.5404179225668,361.63391396203684" fill="#9a3412" stroke="#9a3412" stroke-width="1" />
+<text x="512.5" y="534.535" fill="#9a3412" font-size="13.0" font-family="Microsoft YaHei, Noto Sans CJK SC, sans-serif" font-weight="500" text-anchor="middle"><tspan x="512.5" dy="0">一个 MetricSlot 唯一表示一种指标</tspan></text>
+</svg>
