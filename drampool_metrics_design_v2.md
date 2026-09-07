@@ -236,7 +236,7 @@ current_gauge = sample_current_value()
 超过 max_log_file_num 时删除最旧的轮转文件
 ```
 
-## 5. vLLM 侧处理
+## 5. UCM 侧处理
 
 ### 5.1 Reporter 启动与 Leader 选择
 
@@ -301,5 +301,4 @@ Metrics 是旁路能力。文件写入、解析或回流失败时记录告警并
 | state 文件不存在 | 将当前累计值作为 baseline，避免首次启动回灌全部历史值 |
 | state 文件损坏 | 记录 warning，按无 state 处理 |
 | Leader Scheduler 退出 | fd 随进程关闭并释放文件锁；当前推理实例不再回流节点指标 |
-| DramPool Counter reset | `delta=current`，不产生负数 |
 | 文件写入失败 | 记录错误，DramPool 业务继续运行 |
