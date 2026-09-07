@@ -46,16 +46,50 @@ ucmmetrics → MetricsDispatcher → vllm_connector → Prometheus
 | Scheduler 进程内 | `DramPoolResourceReporter` | 抢占 host leader、读取最新快照、计算增量、回流 UCM |
 | UCM 现有链路 | `ucmmetrics` / `MetricsDispatcher` | 汇总并通过 `vllm_connector` 输出 |
 
-
 ## 3. 进程内采集方案选型
 
-候选方案包括 YuanRong 的固定 `MetricSlot` 和 UCM 的 thread-local 双 buffer。
+YuanRong 当前同时存在 handler 资源采集和固定 `MetricSlot` 两条链路。DramPool 进程内采集最终选择 UCM 现有的 thread-local 双 buffer。
 
 ![DramPool 进程内采集方案对比](./drampool_metrics_buffer_comparison_v2.svg)
 
-可编辑源文件：[进程内采集方案对比图](./drampool_metrics_buffer_comparison_v2.excalidraw)。
+可编辑源文件：[进程内采集方案对比图](./drampool_metrics_buffer_comparison_v2.excalidraw)。图中重点对比 MetricSlot 与双 buffer 的业务打点路径。
 
-### 3.1 YuanRong MetricSlot 实现
+### 3.1 YuanRong handler 资源采集
+
+YuanRong 将节点资源状态保留在各子系统的成员变量中，不额外搬运到统一账本。例如 `AddUsageCAS` 直接使用 `usage_` 和 `footprintLimit_` 判断 OOM；采集 handler 只读取这些业务源状态并就地格式化。
+
+```text
+RegisterCollectHandler
+    → handler 返回 "/" 分隔字符串
+    → CollectMetrics 线程每 10 秒调用所有 handler
+    → 结果按指标 ID 存入 handlerResults
+    → resource_json_schema 按 "/" 切分
+    → DESC_TABLE 映射字段名并应用 ODS 白名单
+    → AppendGroupJson 改写为 JSON 字段
+```
+
+例如 shared memory handler 使用位置编码返回：
+
+```text
+"73814/80000/1073741824/0.069/0/0"
+        │  AppendGroupJson + DESC_TABLE
+        ▼
+"shared_memory": {
+  "memory_usage": 73814,
+  "physical_memory_usage": 80000,
+  "total_limit": 1073741824,
+  "worker_share_memory_usage": 0.069
+}
+```
+
+最后两个字段未通过 ODS 白名单，因此不写入 JSON。这种方案能直接复用业务状态，但有以下不足：
+
+- handler 分散在各子系统，指标逻辑缺少统一管理。
+- 字段依赖 `"/"` 分隔的位置编码，handler 与 `DESC_TABLE` 的数量和顺序必须严格一致。
+- 新增或调整字段需要同步修改 handler、schema 和 UCM 解析逻辑，维护成本较高。
+- 各 handler 分别读取子系统状态，不保证所有字段来自同一时刻。
+
+### 3.2 YuanRong MetricSlot 实现
 
 YuanRong 在进程内预分配固定大小的 slot 数组：
 
@@ -105,7 +139,20 @@ YuanRong 的 `ScopedTimer` 同样是一个轻量 RAII 对象：构造时保存 `
 
 这种方案结构紧凑，固定 ID 的访问成本低。不过所有线程会直接更新同一组 slot；尤其 Histogram 更新需要竞争 slot 内的互斥锁。若用于 DramPool，还需要重新引入 slot 注册、全局数组、周期快照和输出等整套逻辑。
 
-### 3.2 UCM thread-local + 双 buffer 实现
+### 3.3 YuanRong 两种方案对比
+
+两种方案面向的数据不同，因此在 YuanRong 中并存：
+
+| 对比项 | Handler 方案 | MetricSlot 方案 |
+| --- | --- | --- |
+| 核心用途 | 周期读取内存、磁盘、线程池等已有资源状态 | 主动累计请求次数、字节数和时延等业务事件 |
+| 优点 | 直接复用业务源状态，无需在热路径额外维护一份副本 | 类型统一，固定 ID 打点开销低，天然支持 Counter、Gauge 和 Histogram |
+| 缺点 | 位置编码脆弱，handler、schema 和消费端容易发生字段不一致 | 需要额外维护统计状态；Histogram 存在 slot 锁竞争 |
+| 输出 | `resource_snapshot`，面向节点资源快照 | `metrics_summary`，面向业务指标汇总 |
+
+核心原因是：**已经存在业务源状态的资源指标适合由 handler 读取；没有现成状态的业务事件适合由 MetricSlot 主动累计。**
+
+### 3.4 UCM thread-local + 双 buffer 实现
 
 UCM 已经提供完整的 `MetricBuffer`、线程注册、读写切换和多线程聚合实现。每个打点线程拥有自己的 `thread_local MetricBuffer`，不同业务线程不会更新同一个 map。
 
@@ -207,7 +254,7 @@ Metrics 文件位于 `${g_config.logDir}/drampool_metrics.log`，每行是一个
 }
 ```
 
-该格式使用顶层 `time/event/version/metrics`，指标在 `metrics` 中按资源组组织。Reporter 构造完整 JSON 和换行符后提交给 `MetricsFlush` 线程，由后者以 append 模式单线程写入文件。
+该格式使用顶层 `time/event/version/metrics`，指标在 `metrics` 中按资源组组织。参考 YuanRong 的写法，`BuildResourceJson` 使用 `ostringstream` 组装快照，`WrapJsonWithPodCluster` 再前插 `time/pod_name/cluster_name`。Reporter 将完整 JSON 和换行符提交给 `MetricsFlush` 线程。
 
 ### 4.5 Reporter 维护累计快照
 
@@ -236,6 +283,8 @@ current_gauge = sample_current_value()
 超过 max_log_file_num 时删除最旧的轮转文件
 ```
 
+该过程与 YuanRong 一致：`MetricsFlush` 线程通过 `WriteFileNoErrorLog`/`pwrite` 以 append 语义异步刷盘，不在采集线程中执行文件 I/O。
+
 ## 5. UCM 侧处理
 
 ### 5.1 Reporter 启动与 Leader 选择
@@ -261,6 +310,8 @@ open(log_path, "rb")
 ```
 
 单条快照通常小于 64 KiB，正常情况一次读取即可命中，读取成本不随日志文件增长。
+
+读取后，Reporter 执行 `json.loads()`，校验 `event == "resource_snapshot"` 和 `version == "v0"`，再按字段名提取数值，例如 `metrics["memory"]["used_bytes"]`。YuanRong handler 中的位置编码到这一层已经被转换为明确的 JSON 字段。
 
 ### 5.3 累计快照转换为本轮增量
 
