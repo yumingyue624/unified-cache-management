@@ -4,9 +4,6 @@ UCM exports metrics through the vLLM connector and reuses vLLM's Prometheus `/me
 
 We recommend using Prometheus to scrape vLLM metrics and Grafana to visualize the collected data.
 
-For DramStore client instrumentation and the local DramPool snapshot reader, see
-[DramStore and local DramPool metrics](dramstore_metrics.md).
-
 Use a scrape and dashboard refresh interval of **at least 5 seconds** for UCM metrics. The Prometheus and Metrics-view examples in this guide both use 5 seconds. A shorter interval usually does not make UCM metrics update faster.
 
 The effective refresh frequency also depends on vLLM. UCM first accumulates metrics internally. New data is synchronized to the Prometheus metrics exposed by vLLM only after vLLM processes a request and calls the connector's `get_kv_connector_stats()` method. **When there are no inference requests, vLLM does not call this method and UCM metrics do not update.**
