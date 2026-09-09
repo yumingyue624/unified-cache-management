@@ -18,6 +18,111 @@ consumers:
 
 # Counter metrics configuration
 counter:
+  # DramStore client and local DramPool resource metrics
+  - name: "dramstore_lookup_tasks_submitted_total"
+    documentation: "DramStore lookup: tasks submitted"
+  - name: "dramstore_lookup_tasks_rejected_total"
+    documentation: "DramStore lookup: tasks rejected"
+  - name: "dramstore_lookup_tasks_succeeded_total"
+    documentation: "DramStore lookup: tasks succeeded"
+  - name: "dramstore_lookup_tasks_failed_total"
+    documentation: "DramStore lookup: tasks failed"
+  - name: "dramstore_lookup_task_timeouts_total"
+    documentation: "DramStore lookup: task timeouts"
+  - name: "dramstore_lookup_requests_completed_total"
+    documentation: "DramStore lookup: requests completed"
+  - name: "dramstore_lookup_requests_failed_total"
+    documentation: "DramStore lookup: requests failed"
+  - name: "dramstore_lookup_request_submit_errors_total"
+    documentation: "DramStore lookup: request submit errors"
+  - name: "dramstore_lookup_unconfirmed_entries_total"
+    documentation: "DramStore lookup: unconfirmed entries"
+  - name: "drampool_lookup_requests_total"
+    documentation: "Cumulative DramPool lookup requests supplied by the server"
+  - name: "dramstore_dump_tasks_submitted_total"
+    documentation: "DramStore dump: tasks submitted"
+  - name: "dramstore_dump_tasks_rejected_total"
+    documentation: "DramStore dump: tasks rejected"
+  - name: "dramstore_dump_tasks_succeeded_total"
+    documentation: "DramStore dump: tasks succeeded"
+  - name: "dramstore_dump_tasks_failed_total"
+    documentation: "DramStore dump: tasks failed"
+  - name: "dramstore_dump_task_timeouts_total"
+    documentation: "DramStore dump: task timeouts"
+  - name: "dramstore_dump_requests_completed_total"
+    documentation: "DramStore dump: requests completed"
+  - name: "dramstore_dump_requests_failed_total"
+    documentation: "DramStore dump: requests failed"
+  - name: "dramstore_dump_request_submit_errors_total"
+    documentation: "DramStore dump: request submit errors"
+  - name: "dramstore_dump_unconfirmed_entries_total"
+    documentation: "DramStore dump: unconfirmed entries"
+  - name: "drampool_dump_requests_total"
+    documentation: "Cumulative DramPool dump requests supplied by the server"
+  - name: "dramstore_load_tasks_submitted_total"
+    documentation: "DramStore load: tasks submitted"
+  - name: "dramstore_load_tasks_rejected_total"
+    documentation: "DramStore load: tasks rejected"
+  - name: "dramstore_load_tasks_succeeded_total"
+    documentation: "DramStore load: tasks succeeded"
+  - name: "dramstore_load_tasks_failed_total"
+    documentation: "DramStore load: tasks failed"
+  - name: "dramstore_load_task_timeouts_total"
+    documentation: "DramStore load: task timeouts"
+  - name: "dramstore_load_requests_completed_total"
+    documentation: "DramStore load: requests completed"
+  - name: "dramstore_load_requests_failed_total"
+    documentation: "DramStore load: requests failed"
+  - name: "dramstore_load_request_submit_errors_total"
+    documentation: "DramStore load: request submit errors"
+  - name: "dramstore_load_unconfirmed_entries_total"
+    documentation: "DramStore load: unconfirmed entries"
+  - name: "drampool_load_requests_total"
+    documentation: "Cumulative DramPool load requests supplied by the server"
+  - name: "dramstore_dump_acknowledged_entries_total"
+    documentation: "dump: IO entries confirmed successful by a valid reply"
+  - name: "dramstore_dump_acknowledged_bytes_total"
+    documentation: "dump: Logical confirmed bytes including duplicate DUMP keys; not physical RDMA bytes"
+  - name: "dramstore_dump_failed_entries_total"
+    documentation: "dump: IO entries explicitly reported as failed"
+  - name: "drampool_dump_bytes_total"
+    documentation: "DramPool completed dump data bytes supplied by the server"
+  - name: "dramstore_load_acknowledged_entries_total"
+    documentation: "load: IO entries confirmed successful by a valid reply"
+  - name: "dramstore_load_acknowledged_bytes_total"
+    documentation: "load: Logical confirmed bytes including duplicate DUMP keys; not physical RDMA bytes"
+  - name: "dramstore_load_failed_entries_total"
+    documentation: "load: IO entries explicitly reported as failed"
+  - name: "drampool_load_bytes_total"
+    documentation: "DramPool completed load data bytes supplied by the server"
+  - name: "dramstore_lookup_hit_entries_total"
+    documentation: "Client-accepted LOOKUP hit entries"
+  - name: "dramstore_lookup_miss_entries_total"
+    documentation: "Client-accepted LOOKUP miss entries"
+  - name: "dramstore_connect_attempts_total"
+    documentation: "DramStore connect attempts"
+  - name: "dramstore_connect_failures_total"
+    documentation: "DramStore connect failures"
+  - name: "dramstore_fence_attempts_total"
+    documentation: "DramStore fence attempts"
+  - name: "dramstore_fence_failures_total"
+    documentation: "DramStore fence failures"
+  - name: "dramstore_deadline_recoveries_total"
+    documentation: "DramStore deadline recoveries"
+  - name: "dramstore_stale_replies_total"
+    documentation: "DramStore stale replies"
+  - name: "dramstore_dump_prerequisite_errors_total"
+    documentation: "DramStore dump prerequisite errors"
+  - name: "drampool_resource_read_errors_total"
+    documentation: "DramPool resource read errors"
+  - name: "drampool_resource_parse_errors_total"
+    documentation: "DramPool resource parse errors"
+  - name: "drampool_resource_import_errors_total"
+    documentation: "DramPool resource import errors"
+  - name: "drampool_resource_state_read_errors_total"
+    documentation: "DramPool resource state read errors"
+  - name: "drampool_resource_state_write_errors_total"
+    documentation: "DramPool resource state write errors"
   # -- Pipeline Cache stage: lookup hit/miss breakdown ----------------------
   # Hit counters let Prometheus compute hit rate without losing precision:
   #   rate(ucm:cache_lookup_hit_blocks_total[5m])
@@ -199,6 +304,21 @@ counter:
 
 # Gauge metrics configuration
 gauge:
+  # DramStore client and local DramPool resource metrics
+  - name: "drampool_capacity_bytes"
+    documentation: "Latest DramPool capacity bytes supplied by the server"
+  - name: "drampool_used_bytes"
+    documentation: "Latest DramPool used bytes supplied by the server"
+  - name: "drampool_available_bytes"
+    documentation: "Latest DramPool available bytes supplied by the server"
+  - name: "drampool_resource_snapshot_timestamp_seconds"
+    documentation: "DramPool resource snapshot timestamp seconds"
+  - name: "drampool_resource_snapshot_age_seconds"
+    documentation: "DramPool resource snapshot age seconds"
+  - name: "drampool_resource_snapshot_fresh"
+    documentation: "DramPool resource snapshot fresh"
+  - name: "drampool_resource_reporter_leader"
+    documentation: "DramPool resource reporter leader"
   - name: "yuanrong_dram_used_bytes"
     documentation: "YuanRong physical shared-memory usage in bytes"
     multiprocess_mode: "livemostrecent"
@@ -244,6 +364,72 @@ gauge:
 
 # Histogram metrics configuration
 histogram:
+  # DramStore client and local DramPool resource metrics
+  - name: "dramstore_lookup_task_duration_us"
+    documentation: "DramStore lookup task duration us"
+    buckets: [100, 500, 1000, 5000, 10000, 50000, 100000, 500000, 1000000, 5000000, 10000000, 30000000]
+    vllm_connector_name: "dramstore_lookup_task_duration_seconds"
+    vllm_connector_value_scale: 1.0e-06
+  - name: "dramstore_lookup_task_queue_duration_us"
+    documentation: "DramStore lookup task queue duration us"
+    buckets: [100, 500, 1000, 5000, 10000, 50000, 100000, 500000, 1000000, 5000000, 10000000, 30000000]
+    vllm_connector_name: "dramstore_lookup_task_queue_duration_seconds"
+    vllm_connector_value_scale: 1.0e-06
+  - name: "dramstore_lookup_request_duration_us"
+    documentation: "DramStore lookup request duration us"
+    buckets: [100, 500, 1000, 5000, 10000, 50000, 100000, 500000, 1000000, 5000000, 10000000, 30000000]
+    vllm_connector_name: "dramstore_lookup_request_duration_seconds"
+    vllm_connector_value_scale: 1.0e-06
+  - name: "drampool_lookup_duration_us"
+    documentation: "DramPool lookup duration in us; schema v1 interval buckets"
+    buckets: [100, 500, 1000, 5000, 10000, 50000, 100000, 500000, 1000000, 5000000, 10000000, 30000000]
+    vllm_connector_name: "drampool_lookup_duration_seconds"
+    vllm_connector_value_scale: 1.0e-06
+  - name: "dramstore_dump_task_duration_us"
+    documentation: "DramStore dump task duration us"
+    buckets: [100, 500, 1000, 5000, 10000, 50000, 100000, 500000, 1000000, 5000000, 10000000, 30000000]
+    vllm_connector_name: "dramstore_dump_task_duration_seconds"
+    vllm_connector_value_scale: 1.0e-06
+  - name: "dramstore_dump_task_queue_duration_us"
+    documentation: "DramStore dump task queue duration us"
+    buckets: [100, 500, 1000, 5000, 10000, 50000, 100000, 500000, 1000000, 5000000, 10000000, 30000000]
+    vllm_connector_name: "dramstore_dump_task_queue_duration_seconds"
+    vllm_connector_value_scale: 1.0e-06
+  - name: "dramstore_dump_request_duration_us"
+    documentation: "DramStore dump request duration us"
+    buckets: [100, 500, 1000, 5000, 10000, 50000, 100000, 500000, 1000000, 5000000, 10000000, 30000000]
+    vllm_connector_name: "dramstore_dump_request_duration_seconds"
+    vllm_connector_value_scale: 1.0e-06
+  - name: "drampool_dump_duration_us"
+    documentation: "DramPool dump duration in us; schema v1 interval buckets"
+    buckets: [100, 500, 1000, 5000, 10000, 50000, 100000, 500000, 1000000, 5000000, 10000000, 30000000]
+    vllm_connector_name: "drampool_dump_duration_seconds"
+    vllm_connector_value_scale: 1.0e-06
+  - name: "dramstore_load_task_duration_us"
+    documentation: "DramStore load task duration us"
+    buckets: [100, 500, 1000, 5000, 10000, 50000, 100000, 500000, 1000000, 5000000, 10000000, 30000000]
+    vllm_connector_name: "dramstore_load_task_duration_seconds"
+    vllm_connector_value_scale: 1.0e-06
+  - name: "dramstore_load_task_queue_duration_us"
+    documentation: "DramStore load task queue duration us"
+    buckets: [100, 500, 1000, 5000, 10000, 50000, 100000, 500000, 1000000, 5000000, 10000000, 30000000]
+    vllm_connector_name: "dramstore_load_task_queue_duration_seconds"
+    vllm_connector_value_scale: 1.0e-06
+  - name: "dramstore_load_request_duration_us"
+    documentation: "DramStore load request duration us"
+    buckets: [100, 500, 1000, 5000, 10000, 50000, 100000, 500000, 1000000, 5000000, 10000000, 30000000]
+    vllm_connector_name: "dramstore_load_request_duration_seconds"
+    vllm_connector_value_scale: 1.0e-06
+  - name: "drampool_load_duration_us"
+    documentation: "DramPool load duration in us; schema v1 interval buckets"
+    buckets: [100, 500, 1000, 5000, 10000, 50000, 100000, 500000, 1000000, 5000000, 10000000, 30000000]
+    vllm_connector_name: "drampool_load_duration_seconds"
+    vllm_connector_value_scale: 1.0e-06
+  - name: "dramstore_dump_prerequisite_duration_us"
+    documentation: "DUMP prerequisite event wait before task admission in us"
+    buckets: [100, 500, 1000, 5000, 10000, 50000, 100000, 500000, 1000000, 5000000, 10000000, 30000000]
+    vllm_connector_name: "dramstore_dump_prerequisite_duration_seconds"
+    vllm_connector_value_scale: 1.0e-06
   # -- End-to-end connector metrics -----------------------------------------
   - name: "save_duration"
     documentation: "Time from UCM connector wait_for_save entry to async dump task completion (ms)"

@@ -302,7 +302,7 @@ def _install_stubs():
     _install_package("ucm", REPO_ROOT / "ucm")
     _install_package("ucm.integration", REPO_ROOT / "ucm" / "integration")
     _install_package("ucm.integration.vllm", REPO_ROOT / "ucm" / "integration" / "vllm")
-    _install_module("torch", Tensor=type("Tensor", (), {}))
+    _install_module("torch", Tensor=type("Tensor", (), {}), dtype=type("dtype", (), {}))
     _install_module(
         "prometheus_client",
         Counter=FakeCounter,
@@ -350,6 +350,7 @@ def _install_stubs():
         KVCacheConfig=type("KVCacheConfig", (), {}),
         KVCacheSpec=type("KVCacheSpec", (), {}),
         MambaSpec=type("MambaSpec", (), {}),
+        MLAAttentionSpec=type("MLAAttentionSpec", (), {}),
         SlidingWindowSpec=type("SlidingWindowSpec", (), {}),
         UniformTypeKVCacheSpecs=type("UniformTypeKVCacheSpecs", (), {}),
     )
@@ -360,6 +361,7 @@ def _install_stubs():
     _install_module(
         "ucm.integration.vllm.device",
         create_device=lambda *args, **kwargs: None,
+        get_current_device_id=lambda: 0,
     )
     _install_module("ucm.logger", init_logger=lambda name: _Logger())
     _install_module("ucm.shared.metrics", ucmmetrics=fake_ucmmetrics)
@@ -2807,4 +2809,40 @@ def test_pipeline_dashboard_contains_only_performance_panels_with_chinese_hints(
     assert all(
         any("\u4e00" <= char <= "\u9fff" for char in panel["description"])
         for panel in all_panels
+    )
+
+
+def test_dram_store_inherits_launch_metrics_policy(monkeypatch):
+    connector = object.__new__(UCMDirectConnector)
+    connector.connector_configs = [
+        {
+            "ucm_connector_name": "UcmPipelineStore",
+            "ucm_connector_config": {
+                "store_pipeline": "Dram",
+                "enable_metrics": True,
+            },
+        }
+    ]
+    connector.launch_config = {
+        "enable_metrics": False,
+        "metrics_config": _metrics_config(),
+    }
+    connector.is_mla = False
+    connector.unique_id = "test"
+    connector._role = KVConnectorRole.SCHEDULER
+    connector._vllm_config = SimpleNamespace(
+        parallel_config=SimpleNamespace(data_parallel_rank=1)
+    )
+    monkeypatch.setattr(
+        ucm_connector_module.UcmConnectorFactoryV1,
+        "create_connector",
+        lambda name, config, module_path: config,
+        raising=False,
+    )
+    config = connector._create_store(None)
+    assert config["enable_metrics"] is False
+    assert config["metrics_config"] == connector.launch_config["metrics_config"]
+    assert config["metrics_config"] is not connector.launch_config["metrics_config"]
+    assert (
+        connector.connector_configs[0]["ucm_connector_config"]["enable_metrics"] is True
     )

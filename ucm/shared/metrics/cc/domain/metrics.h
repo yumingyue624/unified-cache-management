@@ -155,6 +155,9 @@ public:
 
     void UpdateStats(const std::unordered_map<std::string, double>& values);
 
+    // Import interval buckets from an external metrics producer into the caller TLS buffer.
+    void MergeHistogramStats(const HistogramStatsMap& values);
+
     std::tuple<std::unordered_map<std::string, double>, std::unordered_map<std::string, double>,
                HistogramStatsMap>
     GetAllStatsAndClear();

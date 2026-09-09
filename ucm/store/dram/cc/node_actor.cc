@@ -26,6 +26,7 @@
 #include <cassert>
 #include <cstring>
 #include <utility>
+#include "dram_metrics.h"
 #include "logger/logger.h"
 
 namespace UC::Dram {
@@ -128,6 +129,30 @@ Status NodeActor::EncodeRequest(const ReplySlot& replySlot, RequestId requestId,
 void NodeActor::QueueCompletion(Request request, Status status,
                                 std::vector<EntryResult> entryResults)
 {
+    try {
+        auto& metrics = MetricsFor(request.op);
+        RecordMetric(metrics.requests);
+        if (status.Failure()) { RecordMetric(metrics.requestFailures); }
+        RecordDuration(metrics.requestDuration, request.metricsStarted);
+        if (entryResults.size() == request.entries.size()) {
+            for (std::size_t i = 0; i < entryResults.size(); ++i) {
+                if (request.op == OpType::LOOKUP) {
+                    RecordMetric(entryResults[i].found
+                                     ? NAME_TO_METRIC_ID("dramstore_lookup_hit_entries_total")
+                                     : NAME_TO_METRIC_ID("dramstore_lookup_miss_entries_total"));
+                } else if (entryResults[i].code == 0) {
+                    RecordMetric(metrics.acknowledged);
+                    RecordMetric(metrics.bytes,
+                                 static_cast<double>(request.entries[i].buffer.length));
+                } else {
+                    RecordMetric(metrics.failedEntries);
+                }
+            }
+        } else {
+            RecordMetric(metrics.unconfirmed, static_cast<double>(request.entries.size()));
+        }
+    } catch (...) {
+    }
     for (std::size_t index = 0; index < entryResults.size(); ++index) {
         entryResults[index].originalIndex = request.entries[index].originalIndex;
     }
@@ -195,6 +220,7 @@ void NodeActor::FinalizeRequests(TimePoint now)
     }
 
     if (needsFence) {
+        DRAM_EVENT("deadline_recoveries_total");
         std::size_t affectedCount = 0;
         state_ = NodeState::FENCING;
         for (auto& entry : activeRequests_) {
@@ -332,6 +358,7 @@ void NodeActor::StartRequest(Request request)
 
 void NodeActor::Handle(Request request, TimePoint now)
 {
+    request.metricsStarted = MetricClock::now();
     if (request.deadline <= now) {
         UC_WARN(
             "DramStore request expired before node admission, task_id={} request_id={} op={} "
@@ -347,6 +374,7 @@ void NodeActor::Handle(Request request, TimePoint now)
 
 void NodeActor::TryFence(TimePoint now)
 {
+    DRAM_EVENT("fence_attempts_total");
     TransportCommand command{
         FenceEpoch{config_.endpoint.nodeId, kDefaultLaneId, epoch_}
     };
@@ -356,6 +384,7 @@ void NodeActor::TryFence(TimePoint now)
         return;
     }
     // Submission failure leaves the runtime recovery fence pending.
+    DRAM_EVENT("fence_failures_total");
     UC_WARN(
         "DramStore node recovery fence submission failed, node_id={} epoch={} "
         "active_requests={} pending_requests={} status={} retry_after_ms={}",
@@ -374,6 +403,7 @@ void NodeActor::Handle(FenceCompleted event, TimePoint now)
         return;
     }
     if (event.status.Failure()) {
+        DRAM_EVENT("fence_failures_total");
         // A failed fence means the remote peer was unreachable (e.g. the
         // DramPool was killed). An unreachable peer cannot access local
         // registered memory, so the safety property a successful Disconnect
@@ -402,6 +432,7 @@ void NodeActor::Handle(FenceCompleted event, TimePoint now)
 
 void NodeActor::TryConnect(TimePoint now)
 {
+    DRAM_EVENT("connect_attempts_total");
     TransportCommand command{
         Connect{config_.endpoint.nodeId, kDefaultLaneId, epoch_,
                 config_.endpoint.transportManagerId}
@@ -413,6 +444,7 @@ void NodeActor::TryConnect(TimePoint now)
         return;
     }
     // Connect submission failures are operational failures; retry while disconnected.
+    DRAM_EVENT("connect_failures_total");
     UC_WARN(
         "DramStore node connect submission failed, node_id={} epoch={} status={} "
         "retry_after_ms={}",
@@ -430,6 +462,7 @@ void NodeActor::Handle(ReplyObserved event, TimePoint now)
             "current_epoch={} node_state={}",
             config_.endpoint.nodeId, event.token.requestId, event.token.epoch, epoch_,
             NodeStateName(state_));
+        DRAM_EVENT("stale_replies_total");
         return;
     }
     if (found->second.failure == Status::Timeout() || found->second.request.deadline <= now) {
@@ -462,7 +495,10 @@ void NodeActor::Handle(ReplyObserved event, TimePoint now)
                 failedEntries, event.entryResults.size(), firstErrorCode);
             status = Status::Error("DramPool returned an item failure");
         }
-    } else if (status.Success()) {
+    }
+    if (event.status.Success()) {
+        // Keep valid per-entry results even when some items make the request
+        // fail. The TaskManager still receives the same overall failure status.
         entryResults = std::move(event.entryResults);
     }
     if (event.status.Failure()) {
@@ -521,6 +557,7 @@ void NodeActor::Handle(ConnectCompleted event, TimePoint now)
             config_.endpoint.controlPort, pendingRequests_.size());
     } else {
         state_ = NodeState::DISCONNECTED;
+        DRAM_EVENT("connect_failures_total");
         nextActionAt_ = now + config_.reconnectInterval;
         UC_WARN(
             "DramStore node connect failed, node_id={} epoch={} endpoint={}:{} status={} "
