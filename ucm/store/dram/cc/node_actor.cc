@@ -26,8 +26,8 @@
 #include <cassert>
 #include <cstring>
 #include <utility>
-#include "dram_metrics.h"
 #include "logger/logger.h"
+#include "metrics_api.h"
 
 namespace UC::Dram {
 namespace {
@@ -129,29 +129,64 @@ Status NodeActor::EncodeRequest(const ReplySlot& replySlot, RequestId requestId,
 void NodeActor::QueueCompletion(Request request, Status status,
                                 std::vector<EntryResult> entryResults)
 {
-    try {
-        auto& metrics = MetricsFor(request.op);
-        RecordMetric(metrics.requests);
-        if (status.Failure()) { RecordMetric(metrics.requestFailures); }
-        RecordDuration(metrics.requestDuration, request.metricsStarted);
-        if (entryResults.size() == request.entries.size()) {
-            for (std::size_t i = 0; i < entryResults.size(); ++i) {
-                if (request.op == OpType::LOOKUP) {
-                    RecordMetric(entryResults[i].found
-                                     ? NAME_TO_METRIC_ID("dramstore_lookup_hit_entries_total")
-                                     : NAME_TO_METRIC_ID("dramstore_lookup_miss_entries_total"));
-                } else if (entryResults[i].code == 0) {
-                    RecordMetric(metrics.acknowledged);
-                    RecordMetric(metrics.bytes,
-                                 static_cast<double>(request.entries[i].buffer.length));
-                } else {
-                    RecordMetric(metrics.failedEntries);
-                }
+    UC::Metrics::UpdateStats(request.op == OpType::LOOKUP
+                                 ? NAME_TO_METRIC_ID("dramstore_lookup_requests_completed_total")
+                             : request.op == OpType::DUMP
+                                 ? NAME_TO_METRIC_ID("dramstore_dump_requests_completed_total")
+                                 : NAME_TO_METRIC_ID("dramstore_load_requests_completed_total"),
+                             1.0);
+    if (status.Failure()) {
+        UC::Metrics::UpdateStats(request.op == OpType::LOOKUP
+                                     ? NAME_TO_METRIC_ID("dramstore_lookup_requests_failed_total")
+                                 : request.op == OpType::DUMP
+                                     ? NAME_TO_METRIC_ID("dramstore_dump_requests_failed_total")
+                                     : NAME_TO_METRIC_ID("dramstore_load_requests_failed_total"),
+                                 1.0);
+    }
+    if (request.metricsStarted != std::chrono::steady_clock::time_point{}) {
+        UC::Metrics::UpdateStats(
+            request.op == OpType::LOOKUP ? NAME_TO_METRIC_ID("dramstore_lookup_request_duration_us")
+            : request.op == OpType::DUMP ? NAME_TO_METRIC_ID("dramstore_dump_request_duration_us")
+                                         : NAME_TO_METRIC_ID("dramstore_load_request_duration_us"),
+            std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() -
+                                                      request.metricsStarted)
+                .count());
+    }
+    if (entryResults.size() == request.entries.size()) {
+        for (std::size_t i = 0; i < entryResults.size(); ++i) {
+            if (request.op == OpType::LOOKUP) {
+                UC::Metrics::UpdateStats(
+                    entryResults[i].found
+                        ? NAME_TO_METRIC_ID("dramstore_lookup_hit_entries_total")
+                        : NAME_TO_METRIC_ID("dramstore_lookup_miss_entries_total"),
+                    1.0);
+            } else if (entryResults[i].code == 0) {
+                UC::Metrics::UpdateStats(
+                    request.op == OpType::DUMP
+                        ? NAME_TO_METRIC_ID("dramstore_dump_acknowledged_entries_total")
+                        : NAME_TO_METRIC_ID("dramstore_load_acknowledged_entries_total"),
+                    1.0);
+                UC::Metrics::UpdateStats(
+                    request.op == OpType::DUMP
+                        ? NAME_TO_METRIC_ID("dramstore_dump_acknowledged_bytes_total")
+                        : NAME_TO_METRIC_ID("dramstore_load_acknowledged_bytes_total"),
+                    static_cast<double>(request.entries[i].buffer.length));
+            } else {
+                UC::Metrics::UpdateStats(
+                    request.op == OpType::DUMP
+                        ? NAME_TO_METRIC_ID("dramstore_dump_failed_entries_total")
+                        : NAME_TO_METRIC_ID("dramstore_load_failed_entries_total"),
+                    1.0);
             }
-        } else {
-            RecordMetric(metrics.unconfirmed, static_cast<double>(request.entries.size()));
         }
-    } catch (...) {
+    } else {
+        UC::Metrics::UpdateStats(
+            request.op == OpType::LOOKUP
+                ? NAME_TO_METRIC_ID("dramstore_lookup_unconfirmed_entries_total")
+            : request.op == OpType::DUMP
+                ? NAME_TO_METRIC_ID("dramstore_dump_unconfirmed_entries_total")
+                : NAME_TO_METRIC_ID("dramstore_load_unconfirmed_entries_total"),
+            static_cast<double>(request.entries.size()));
     }
     for (std::size_t index = 0; index < entryResults.size(); ++index) {
         entryResults[index].originalIndex = request.entries[index].originalIndex;
@@ -220,7 +255,7 @@ void NodeActor::FinalizeRequests(TimePoint now)
     }
 
     if (needsFence) {
-        DRAM_EVENT("deadline_recoveries_total");
+        UC::Metrics::UpdateStats(NAME_TO_METRIC_ID("dramstore_deadline_recoveries_total"), 1.0);
         std::size_t affectedCount = 0;
         state_ = NodeState::FENCING;
         for (auto& entry : activeRequests_) {
@@ -358,7 +393,7 @@ void NodeActor::StartRequest(Request request)
 
 void NodeActor::Handle(Request request, TimePoint now)
 {
-    request.metricsStarted = MetricClock::now();
+    request.metricsStarted = std::chrono::steady_clock::now();
     if (request.deadline <= now) {
         UC_WARN(
             "DramStore request expired before node admission, task_id={} request_id={} op={} "
@@ -374,7 +409,7 @@ void NodeActor::Handle(Request request, TimePoint now)
 
 void NodeActor::TryFence(TimePoint now)
 {
-    DRAM_EVENT("fence_attempts_total");
+    UC::Metrics::UpdateStats(NAME_TO_METRIC_ID("dramstore_fence_attempts_total"), 1.0);
     TransportCommand command{
         FenceEpoch{config_.endpoint.nodeId, kDefaultLaneId, epoch_}
     };
@@ -384,7 +419,7 @@ void NodeActor::TryFence(TimePoint now)
         return;
     }
     // Submission failure leaves the runtime recovery fence pending.
-    DRAM_EVENT("fence_failures_total");
+    UC::Metrics::UpdateStats(NAME_TO_METRIC_ID("dramstore_fence_failures_total"), 1.0);
     UC_WARN(
         "DramStore node recovery fence submission failed, node_id={} epoch={} "
         "active_requests={} pending_requests={} status={} retry_after_ms={}",
@@ -403,7 +438,7 @@ void NodeActor::Handle(FenceCompleted event, TimePoint now)
         return;
     }
     if (event.status.Failure()) {
-        DRAM_EVENT("fence_failures_total");
+        UC::Metrics::UpdateStats(NAME_TO_METRIC_ID("dramstore_fence_failures_total"), 1.0);
         // A failed fence means the remote peer was unreachable (e.g. the
         // DramPool was killed). An unreachable peer cannot access local
         // registered memory, so the safety property a successful Disconnect
@@ -432,7 +467,7 @@ void NodeActor::Handle(FenceCompleted event, TimePoint now)
 
 void NodeActor::TryConnect(TimePoint now)
 {
-    DRAM_EVENT("connect_attempts_total");
+    UC::Metrics::UpdateStats(NAME_TO_METRIC_ID("dramstore_connect_attempts_total"), 1.0);
     TransportCommand command{
         Connect{config_.endpoint.nodeId, kDefaultLaneId, epoch_,
                 config_.endpoint.transportManagerId}
@@ -444,7 +479,7 @@ void NodeActor::TryConnect(TimePoint now)
         return;
     }
     // Connect submission failures are operational failures; retry while disconnected.
-    DRAM_EVENT("connect_failures_total");
+    UC::Metrics::UpdateStats(NAME_TO_METRIC_ID("dramstore_connect_failures_total"), 1.0);
     UC_WARN(
         "DramStore node connect submission failed, node_id={} epoch={} status={} "
         "retry_after_ms={}",
@@ -462,7 +497,7 @@ void NodeActor::Handle(ReplyObserved event, TimePoint now)
             "current_epoch={} node_state={}",
             config_.endpoint.nodeId, event.token.requestId, event.token.epoch, epoch_,
             NodeStateName(state_));
-        DRAM_EVENT("stale_replies_total");
+        UC::Metrics::UpdateStats(NAME_TO_METRIC_ID("dramstore_stale_replies_total"), 1.0);
         return;
     }
     if (found->second.failure == Status::Timeout() || found->second.request.deadline <= now) {
@@ -557,7 +592,7 @@ void NodeActor::Handle(ConnectCompleted event, TimePoint now)
             config_.endpoint.controlPort, pendingRequests_.size());
     } else {
         state_ = NodeState::DISCONNECTED;
-        DRAM_EVENT("connect_failures_total");
+        UC::Metrics::UpdateStats(NAME_TO_METRIC_ID("dramstore_connect_failures_total"), 1.0);
         nextActionAt_ = now + config_.reconnectInterval;
         UC_WARN(
             "DramStore node connect failed, node_id={} epoch={} endpoint={}:{} status={} "

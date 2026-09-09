@@ -5,7 +5,7 @@
 #include <chrono>
 #include <iostream>
 #include <thread>
-#include "dram_metrics.h"
+#include "metrics_api.h"
 #include "node_actor.h"
 #include "router/router.h"
 #include "task_manager.h"
@@ -59,7 +59,7 @@ void TestNodeResults()
             1ms
     },
         std::move(deps));
-    const auto now = MetricClock::now();
+    const auto now = std::chrono::steady_clock::now();
     actor.Advance(now);
     actor.Handle(
         NodeEvent{
@@ -137,12 +137,12 @@ void TestTaskCounting()
     auto submitted = manager.SubmitLookup(&key, 1);
     assert(submitted);
     const auto id = submitted.Value();
-    const auto deadline = MetricClock::now() + 2s;
+    const auto deadline = std::chrono::steady_clock::now() + 2s;
     while (true) {
         auto checked = manager.Check(id);
         assert(checked);
         if (checked.Value()) { break; }
-        assert(MetricClock::now() < deadline);
+        assert(std::chrono::steady_clock::now() < deadline);
         std::this_thread::yield();
     }
     for (int i = 0; i < 10; ++i) { assert(manager.Check(id).Value()); }

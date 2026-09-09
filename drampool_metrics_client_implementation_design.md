@@ -131,9 +131,9 @@ Queue depth、active requests、used IO entries 等 Gauge 放在第二批：由�
 
 ## 5. DramStore 具体实现落点
 
-### 5.1 轻量打点封装
+### 5.1 直接使用 UCM 埋点接口
 
-拟新增 `ucm/store/dram/cc/dram_metrics.h`，集中固定 CachedMetric 和轻量计时/更新函数，底层直接调用现有 `UC::Metrics` API。该 C++ 打点封装不创建 singleton 或后台线程；文件 Reporter 由 DramStore Python 接入层单独启动，详见第 6 节。指标关闭或未注册时快速返回；观测异常不改变业务结果，RAII 析构不向外抛异常。
+与现有 UCM 模块一致，在业务结算位置直接调用 `UC::Metrics::UpdateStats(NAME_TO_METRIC_ID("指标名"), value)`。耗时使用 `std::chrono::steady_clock` 直接计算微秒值，不增加 DramStore 专用埋点宏、OperationMetrics、RecordMetric 或计时封装，也不增加专用异常吞噬层。按 Lookup/Dump/Load 选择固定指标名，复用既有 CachedMetric 缓存。文件 Reporter 由 DramStore Python 接入层单独启动，详见第 6 节。
 
 热路径使用预定义名字和 CachedMetric，不构造 JSON、不执行文件 I/O、不保存请求历史。开始时间跟随现有 Submission、ActiveTask、Request 生命周期；计时使用 steady_clock。只增加本地运行字段，不序列化进 KV 协议。
 
@@ -370,7 +370,7 @@ DramPool Histogram 桶以双方契约为准，消费端必须逐一匹配；不�
 
 | 文件/目录 | 计划改动 |
 | --- | --- |
-| `ucm/store/dram/cc/dram_metrics.h`（新增） | 固定指标句柄、打点/计时轻量封装 |
+| DramStore 现有业务结算位置 | 直接使用 `UpdateStats` 和 `NAME_TO_METRIC_ID`，不新增专用埋点封装文件 |
 | `ucm/store/dram/cc/dram_store.cc` | prerequisite 指标、必要入口错误统计 |
 | `ucm/store/dram/cc/task_manager.h/.cc` | Task 时间上下文与统一终态打点 |
 | `ucm/store/dram/cc/types.h`、`node_actor.h/.cc` | Request 本地时间上下文、entry 结果、恢复事件 |
@@ -415,7 +415,7 @@ DramPool Histogram 桶以双方契约为准，消费端必须逐一匹配；不�
 ## 11. 相对旧方案的明确修订
 
 - 删除本侧全部 DramPool 进程实现任务，保留对接契约。
-- 明确 DramStore Python 接入层新增一个文件 Reporter 线程，参考 YuanRong 的启动、尾读、flock、差分与 state 流程；C++ 业务打点封装不重复创建文件线程。
+- 明确 DramStore Python 接入层新增一个文件 Reporter 线程，参考 YuanRong 的启动、尾读、flock、差分与 state 流程；C++ 业务直接使用已有 UpdateStats 埋点。
 - 将 YuanRong 的 Counter-only previous/state 扩展到完整 Histogram，补逐桶差分样例、binding 输入形状和最终 le 桶转换边界。
 - Leader 仅在启动时选举一次，失败候选退出，不自动接任。
 - 沿用 YuanRong 数值回退推断 reset，不增加 instance_id、sequence 或失败重试去重机制。
