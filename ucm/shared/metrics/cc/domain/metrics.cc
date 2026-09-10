@@ -101,12 +101,9 @@ void Metrics::UpdateStats(const std::unordered_map<std::string, double>& values)
     for (const auto& pair : values) { UpdateStats(ResolveMetricId(pair.first), pair.second); }
 }
 
-void Metrics::MergeHistogramStats(const HistogramStatsMap& values)
+void Metrics::MergeHistogramStats(const HistogramImportMap& values)
 {
-    if (values.empty()) { return; }
-    if (!isInited_.load(std::memory_order_acquire)) {
-        throw std::logic_error("Metrics are not initialized");
-    }
+    if (!isInited_.load(std::memory_order_acquire) || values.empty()) { return; }
     RegisterCurrentThread();
     std::shared_lock<std::shared_mutex> lock(mutex_);
     MetricBuffer::WriteGuard guard{*threadBuffer_};
@@ -116,10 +113,19 @@ void Metrics::MergeHistogramStats(const HistogramStatsMap& values)
     auto staged = destination;
     for (const auto& [name, histogram] : values) {
         const auto id = ResolveMetricId(name);
-        if (id == INVALID_METRIC_ID || metrics_[id].type != MetricType::HISTOGRAM ||
+        if (id == INVALID_METRIC_ID) { continue; }
+        if (metrics_[id].type != MetricType::HISTOGRAM ||
+            histogram.upperBounds.size() + 1 != metrics_[id].buckets.size() ||
             histogram.bucketCounts.size() != metrics_[id].buckets.size() ||
             !std::isfinite(histogram.sum) || histogram.sum < 0) {
             throw std::invalid_argument("Invalid histogram import: " + name);
+        }
+        for (size_t i = 0; i < histogram.upperBounds.size(); ++i) {
+            const auto bound = histogram.upperBounds[i];
+            if (!std::isfinite(bound) || bound != metrics_[id].buckets[i] ||
+                (i != 0 && bound <= histogram.upperBounds[i - 1])) {
+                throw std::invalid_argument("Histogram boundaries do not match: " + name);
+            }
         }
         uint64_t count = 0;
         for (const auto value : histogram.bucketCounts) {

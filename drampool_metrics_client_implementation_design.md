@@ -71,7 +71,7 @@ DramStore C++ 业务线程
 
 Histogram 的 `bucket_counts` 是各区间的计数，而非 Prometheus 文本格式中的累计 `le` 桶。最后一个桶覆盖超过最大有限边界的样本；JSON 不能使用非标准数值 Infinity，可约定固定 schema 隐含最终无穷桶。count 可由所有区间桶求和，若显式携带 count 必须与之相等。
 
-新 schema 建议使用 `v1`，避免两份旧设计中不同 event/结构都叫 `v0`。指标名称可以在 wire 上按组组织，UCM 使用白名单映射到稳定的指标名，不直接注册文件中出现的任意名字。
+新 schema 建议使用 `v1`，避免两份旧设计中不同 event/结构都叫 `v0`。Reporter 只接收 `drampool_` 源指标，排除本地维护的 `drampool_resource_` 健康指标；不根据文件内容注册指标。是否接收指标由 C++ metrics 已有注册信息决定，未注册指标忽略。
 
 必须明确两个部署条件：所有候选 Scheduler 能读同一个本机快照；它们的选主 lock/state 目录也映射到同一宿主机目录。不同容器各自的 `/dev/shm` 不能形成 host 级互斥。只读取本机 DramPool，不遍历 DramStore 路由表去采集远端节点。
 
@@ -203,7 +203,7 @@ Python metrics 定义注册须在启动业务打点线程与文件 Reporter 前�
 
 首版采集轮询固定 10 秒，不增加无必要的调参项。新鲜度阈值默认三个约定生产周期，并允许启动宽限；它属于监控判断，不触发业务断连。
 
-`UCMConnector._setup_ucm_metrics()` 在创建具体 connector/store 前统一注册 metrics。`_dram_pipeline_builder` 在 Stack 成功后启动 Reporter；Reporter 通过 `get_initialized_metrics_dispatcher()` 读取已有 dispatcher 的生效配置，没有已初始化的 dispatcher 时不启动，不加载配置或创建 dispatcher。不向嵌套 store 配置复制全局 metrics 设置。DramStore 没有脱离 vLLM/UCM 的独立运行场景，不增加兜底初始化。只在 Scheduler 角色启动，采用现有明确角色/device_id 约定，不凭 rank==0 代替 Scheduler 判断。
+`UCMConnector._setup_ucm_metrics()` 在创建具体 connector/store 前统一注册 metrics。`_dram_pipeline_builder` 在 Stack 成功后启动 Reporter，沿用 YuanRong 的职责划分：Reporter 只检查资源采集开关、路径和角色，不读取 metrics 配置或 dispatcher，不判断消费端是否启用。不向嵌套 store 配置复制全局 metrics 设置。DramStore 没有脱离 vLLM/UCM 的独立运行场景，不增加兜底初始化。只在 Scheduler 角色启动，采用现有明确角色/device_id 约定，不凭 rank==0 代替 Scheduler 判断。
 
 同进程对同一 source 只创建一个 Reporter。所有对象在 fork 后创建；线程不跨 fork 继承。关闭通过 stop Event 唤醒，在线程退出后释放锁；不能 join 超时后仍释放锁而让旧线程继续导入。优先绑定 connector/store 显式关闭，atexit 仅作兜底。
 
@@ -309,20 +309,20 @@ Gauge 不参与差分。上例展示 state 的累计数据；当前实现将完�
 
 ## 7. shared metrics 的 Histogram 导入
 
-建议生产 API 名为 `MergeHistogramStats`，Python 为 `merge_histogram_stats`，接收“指标名 → 区间桶增量与 sum 增量”的批次。接口不改变已有 observation API。
+生产 API 为 `MergeHistogramStats`，Python 为 `merge_histogram_stats`，接收“指标名 → 有限桶边界、区间桶增量与 sum 增量”的批次。接口不改变已有 observation API。
 
-Python 输入形状固定为 `dict[str, tuple[list[int], float]]`：tuple 的第一个成员为非累计区间桶增量，第二个成员为该轮 sum 增量。它与当前 `get_all_stats_and_clear` 导出的 Histogram tuple 形状一致；count 不单独写入底层，按桶增量求和得到，以免维护两份不一致的计数。以第 6.4.1 节为例，导入项是 `drampool_load_duration_us → ([2, 3, 1, 0], 1900.0)`。
+Python 输入形状为 `dict[str, tuple[list[float], list[int], float]]`：依次为源数据的有限桶边界、非累计区间桶增量、该轮 sum 增量，最后的无穷桶隐含。以第 6.4.1 节为例，导入项是 `drampool_load_duration_us → ([100, 500, 1000], [2, 3, 1, 0], 1900.0)`。C++ 使用独立的 `HistogramImportMap` 承载输入；已有 TLS 和 `get_all_stats_and_clear` 输出仍使用原来的 `(bucket_counts, sum)` 表示。count 按桶增量求和得到。
 
-C++ 先校验批次内指标已注册且为 Histogram、bucket 数与注册定义一致、值合法；再向调用线程的 TLS write buffer 累加。它与单次 observation 使用同一个 WriteGuard/聚合路径，下游无需区分数据来源。
+C++ 与 `UpdateStats` 一样，在 metrics 未初始化时直接返回，忽略未注册的指标名。对于已注册指标，检查类型为 Histogram、源桶边界逐项匹配注册定义、桶计数长度和数值合法，再向调用线程的 TLS write buffer 累加。即使桶数相同，边界不同也拒绝。它与单次 observation 使用同一个 WriteGuard/聚合路径，下游无需区分数据来源。
 
-binding 要在转换为 uint64 之前拒绝负数、非整数及超范围 bucket 值；C++ 合并还需检查加法溢出。无效批次在校验阶段整体拒绝，不能无声忽略未知指标后仍通知 Reporter 导入成功。空批次是 no-op。C++ 不承担 wire schema 解析，边界与单位对应关系由 Python 已注册的固定定义校验。
+binding 校验输入类型并拒绝负数、非整数及超范围 bucket 值；C++ 合并还需检查加法溢出。已注册指标的类型、桶边界或值不合法时，批次不部分写入。空批次是 no-op。Python 校验 wire schema、单位、边界递增和 count/sum 自洽，不接触注册配置；与注册桶边界的匹配由 C++ 完成。消费端筛选继续由现有 dispatcher 完成。
 
 完整 Histogram 流程如下：
 
 ```text
 文件中的 进程累计 bucket_counts / sum
   → Reporter：与 previous 做差
-  → pybind：merge_histogram_stats（区间桶增量、sum 增量）
+  → pybind：merge_histogram_stats（有限桶边界、区间桶增量、sum 增量）
   → C++：合并到 Reporter 线程的 TLS HistogramStat
   → MetricsDispatcher：drain 后向 consumer 累加区间桶
   → UCMConnectorStats：携带 bucket_counts、sum
@@ -356,7 +356,7 @@ DramStore 指标沿用 engine/worker_rank 标签。导入的 DramPool 指标额�
 
 host Leader 切换可能把节点数据迁移到另一个 vLLM HTTP target。旧 target 的 Gauge 仍可能存在，所以容量/使用量图不能跨 target 求和，应按 endpoint 选择最新且 fresh 的样本；Counter 速率对各序列先 rate 再按 endpoint 汇总，接受交接窗口的误差。不能承诺跨 exporter 迁移保持一条连续 Counter。
 
-只启用 vllm_connector 作为这套节点指标的默认出口，避免同时采集 multiproc 和 connector 后重复相加。Reporter 在没有可用 consumer 时不启动并给出明确诊断，不能读取后静默丢弃。
+消费端选择由上层配置和已有 dispatcher 管理。Reporter 不判断 `vllm_connector` 或 `multiproc` 是否启用，与 YuanRong 一样只负责读取和写入 metrics；未初始化或未注册的指标由 metrics 层忽略。资源采集是否启动由 `drampool_resource_metrics_enable`、路径及角色决定。
 
 ### 8.3 定义、桶和单位
 

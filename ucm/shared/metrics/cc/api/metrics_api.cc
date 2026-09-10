@@ -47,7 +47,7 @@ void UpdateStats(const std::unordered_map<std::string, double>& values)
     Metrics::GetInstance().UpdateStats(values);
 }
 
-void MergeHistogramStats(const HistogramStatsMap& values)
+void MergeHistogramStats(const HistogramImportMap& values)
 { Metrics::GetInstance().MergeHistogramStats(values); }
 
 std::tuple<std::unordered_map<std::string, double>, std::unordered_map<std::string, double>,

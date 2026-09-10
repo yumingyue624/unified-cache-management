@@ -47,6 +47,15 @@ struct HistogramStat {
 };
 using HistogramStatsMap = std::unordered_map<std::string, HistogramStat>;
 
+// External producers supply finite upper bounds; the final +Inf bucket is implicit.
+// Keep import schema separate from the existing TLS/drain representation.
+struct HistogramImport {
+    std::vector<double> upperBounds;
+    std::vector<uint64_t> bucketCounts;
+    double sum{0.0};
+};
+using HistogramImportMap = std::unordered_map<std::string, HistogramImport>;
+
 struct CachedMetric {
     explicit CachedMetric(std::string metricName) : name{std::move(metricName)} {}
 
@@ -155,8 +164,9 @@ public:
 
     void UpdateStats(const std::unordered_map<std::string, double>& values);
 
-    // Import interval buckets from an external metrics producer into the caller TLS buffer.
-    void MergeHistogramStats(const HistogramStatsMap& values);
+    // Like UpdateStats, ignore uninitialized metrics and unregistered names.
+    // Validate registered histogram schemas before publishing the batch to caller TLS.
+    void MergeHistogramStats(const HistogramImportMap& values);
 
     std::tuple<std::unordered_map<std::string, double>, std::unordered_map<std::string, double>,
                HistogramStatsMap>

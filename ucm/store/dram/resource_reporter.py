@@ -35,13 +35,6 @@ from pathlib import Path
 from typing import Any
 
 from ucm.logger import init_logger
-from ucm.metrics_config import (
-    VLLM_CONNECTOR_CONSUMER,
-    MetricDefinition,
-    consumer_enabled,
-    get_metric_definitions,
-)
-from ucm.metrics_dispatcher import get_initialized_metrics_dispatcher
 from ucm.shared.metrics import ucmmetrics
 
 logger = init_logger(__name__)
@@ -94,9 +87,7 @@ class DramPoolResourceSnapshot:
     histograms: dict[str, HistogramSnapshot]
 
 
-def parse_drampool_resource_snapshot(
-    line: str, definitions: dict[str, MetricDefinition]
-) -> DramPoolResourceSnapshot:
+def parse_drampool_resource_snapshot(line: str) -> DramPoolResourceSnapshot:
     record = json.loads(line)
     if (
         record.get("event") != "drampool_metrics_snapshot"
@@ -119,18 +110,16 @@ def parse_drampool_resource_snapshot(
         if not isinstance(values, dict):
             raise ValueError(f"Expected {section} mapping")
         for name, value in values.items():
-            definition = definitions.get(name)
-            if definition is None:
-                continue  # Explicit configured whitelist; never register wire names.
-            if definition.metric_type != metric_type:
-                raise ValueError(f"Wrong metric type for {name}")
+            if not name.startswith("drampool_") or name.startswith(
+                "drampool_resource_"
+            ):
+                continue  # Only source metrics; reporter health is recorded locally.
             if metric_type != "histogram":
                 destination[name] = _number(value)
                 continue
             bounds = tuple(float(_number(v)) for v in value["upper_bounds"])
-            expected = tuple(b for b in definition.buckets if math.isfinite(b))
-            if bounds != expected or any(a >= b for a, b in zip(bounds, bounds[1:])):
-                raise ValueError(f"Histogram boundaries do not match {name}")
+            if any(a >= b for a, b in zip(bounds, bounds[1:])):
+                raise ValueError(f"Histogram boundaries must be increasing: {name}")
             counts = tuple(_count(v) for v in value["bucket_counts"])
             count = _count(value["count"])
             total = float(_number(value["sum"]))
@@ -178,7 +167,7 @@ def snapshot_deltas(
                 counts, total = list(value.bucket_counts), value.sum
             if sum(counts) == 0 and total != 0:
                 raise ValueError(f"Histogram sum changed without samples: {name}")
-        histograms[name] = (counts, total)
+        histograms[name] = (list(value.upper_bounds), counts, total)
     return counters, current.gauges, histograms
 
 
@@ -209,18 +198,10 @@ class DramPoolResourceReporter:
         log_path: str,
         shared_dir: str,
         endpoints: list[str],
-        definitions: list[MetricDefinition],
     ):
         self.log_path = Path(log_path)
         self.shared_dir = Path(shared_dir)
         self.endpoints = frozenset(endpoints)
-        self.definitions = {
-            d.name: d
-            for d in definitions
-            if d.name.startswith("drampool_")
-            and not d.name.startswith("drampool_resource_")
-            and d.vllm_connector_enabled
-        }
         self.source_id = ""
         self._snapshot_timestamp = 0.0
         self._lock_file = None
@@ -268,9 +249,7 @@ class DramPoolResourceReporter:
             try:
                 if len(line) > MAX_RECORD_BYTES:
                     raise ValueError("Snapshot exceeds 1 MiB")
-                return parse_drampool_resource_snapshot(
-                    line.decode("utf-8"), self.definitions
-                )
+                return parse_drampool_resource_snapshot(line.decode("utf-8"))
             except (
                 ValueError,
                 KeyError,
@@ -318,9 +297,7 @@ class DramPoolResourceReporter:
             state = json.loads(data)
             if state["state_version"] != 1:
                 raise ValueError("Unsupported reporter state")
-            previous = parse_drampool_resource_snapshot(
-                json.dumps(state["snapshot"]), self.definitions
-            )
+            previous = parse_drampool_resource_snapshot(json.dumps(state["snapshot"]))
             if previous.source_id != self.source_id:
                 raise ValueError("Reporter state belongs to another source")
             return previous
@@ -434,15 +411,6 @@ def start_drampool_resource_reporter(config: dict) -> DramPoolResourceReporter |
         enabled = enabled.lower() in {"true", "1", "yes", "on"}
     if not enabled or not path or int(config.get("device_id", -1)) >= 0:
         return None
-    dispatcher = get_initialized_metrics_dispatcher()
-    if dispatcher is None:
-        return None
-    active_config = dispatcher.config
-    if not consumer_enabled(active_config, VLLM_CONNECTOR_CONSUMER):
-        logger.warning(
-            "DramPool resource reporter requires the vllm_connector consumer"
-        )
-        return None
     shared_dir = str(config.get("drampool_resource_shared_dir", ""))
     if not shared_dir or not Path(shared_dir).is_dir():
         logger.warning(
@@ -451,10 +419,6 @@ def start_drampool_resource_reporter(config: dict) -> DramPoolResourceReporter |
         return None
     if os.name != "posix":
         logger.warning("DramPool resource election requires POSIX flock")
-        return None
-    definitions = get_metric_definitions(active_config)
-    if not any(d.name.startswith("drampool_") for d in definitions):
-        logger.warning("No DramPool metrics are configured")
         return None
     if not hasattr(ucmmetrics, "merge_histogram_stats"):
         logger.warning(
@@ -473,11 +437,7 @@ def start_drampool_resource_reporter(config: dict) -> DramPoolResourceReporter |
             path,
             shared_dir,
             list(config.get("node_control_endpoints", [])),
-            definitions,
         )
-        if not reporter.definitions:
-            logger.warning("No DramPool source metrics are enabled for vllm_connector")
-            return None
         reporter.start()
         _REPORTER = reporter
         atexit.register(stop_drampool_resource_reporter)

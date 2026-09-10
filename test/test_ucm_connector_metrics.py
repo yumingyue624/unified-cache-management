@@ -2847,12 +2847,24 @@ def test_dram_store_does_not_copy_launch_metrics_policy(monkeypatch):
     )
 
 
-@pytest.mark.parametrize("enabled", [False, True])
-def test_dram_reporter_uses_connector_metrics_runtime(tmp_path, monkeypatch, enabled):
+@pytest.mark.parametrize("consumer", [None, "multiproc", "vllm_connector"])
+def test_dram_reporter_does_not_depend_on_metrics_policy(
+    tmp_path, monkeypatch, consumer
+):
+    import ucm.metrics_config as config_module
+    import ucm.metrics_dispatcher as dispatcher_module
     from ucm.store.dram import resource_reporter as reporter
-    from ucm.metrics_dispatcher import get_initialized_metrics_dispatcher
 
     _reset_fakes()
+    dispatcher = (
+        get_metrics_dispatcher({"consumers": {consumer: True}}) if consumer else None
+    )
+
+    def unexpected_access(*args):
+        pytest.fail("reporter must not load metrics config or acquire a dispatcher")
+
+    monkeypatch.setattr(config_module, "load_launch_metrics_config", unexpected_access)
+    monkeypatch.setattr(dispatcher_module, "get_metrics_dispatcher", unexpected_access)
     monkeypatch.setattr(reporter, "_REPORTER", None)
     monkeypatch.setattr(reporter, "os", SimpleNamespace(name="posix"))
     monkeypatch.setattr(reporter.atexit, "register", lambda *args: None)
@@ -2863,41 +2875,10 @@ def test_dram_reporter_uses_connector_metrics_runtime(tmp_path, monkeypatch, ena
     store_config = {
         "drampool_resource_log_path": str(tmp_path / "metrics.log"),
         "drampool_resource_shared_dir": str(tmp_path),
-        # Nested settings must not override the connector's launch policy.
+        # The reporter only observes its own resource settings.
         "metrics_config_path": "must-not-be-read.yaml",
-        "enable_metrics": not enabled,
+        "enable_metrics": False,
     }
-    assert reporter.start_drampool_resource_reporter(store_config) is None
-    assert get_initialized_metrics_dispatcher() is None
-
-    connector = object.__new__(UCMConnector)
-    connector.launch_config = {
-        "enable_metrics": enabled,
-        "metrics_config": {
-            "consumers": {"vllm_connector": True, "multiproc": False},
-            "gauge": [{"name": "drampool_used_bytes"}],
-        },
-    }
-    connector._setup_ucm_metrics(_vllm_config(), KVConnectorRole.SCHEDULER)
-    dispatcher = get_initialized_metrics_dispatcher()
     started = reporter.start_drampool_resource_reporter(store_config)
-    assert get_initialized_metrics_dispatcher() is dispatcher
-    if enabled:
-        assert started is not None
-        assert set(started.definitions) == {"drampool_used_bytes"}
-    else:
-        assert started is None
-        assert dispatcher is None
-
-
-def test_dram_reporter_respects_active_consumer_policy(monkeypatch):
-    from ucm.store.dram import resource_reporter as reporter
-
-    _reset_fakes()
-    get_metrics_dispatcher({"consumers": {"multiproc": True, "vllm_connector": False}})
-    assert (
-        reporter.start_drampool_resource_reporter(
-            {"drampool_resource_log_path": "unused.log"}
-        )
-        is None
-    )
+    assert started is not None
+    assert dispatcher_module._DISPATCHER is dispatcher

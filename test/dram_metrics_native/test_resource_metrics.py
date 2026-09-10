@@ -64,7 +64,7 @@ DEFINITIONS = [
     MetricDefinition(COUNTER, "counter"),
     MetricDefinition(GAUGE, "gauge"),
 ]
-BY_NAME = {d.name: d for d in DEFINITIONS}
+BOUNDS = [100, 500, 1000]
 
 
 @pytest.fixture(autouse=True)
@@ -99,22 +99,27 @@ def record(tick=41, counts=None, total=12000, counter=36):
 
 
 def parse(value):
-    return reporter.parse_drampool_resource_snapshot(json.dumps(value), BY_NAME)
+    return reporter.parse_drampool_resource_snapshot(json.dumps(value))
 
 
 def test_difference_and_real_binding():
     previous = parse(record())
     current = parse(record(43, counts=[12, 23, 6, 1], total=13900, counter=42))
     counters, gauges, histograms = reporter.snapshot_deltas(current, previous)
-    assert histograms == {NAME: ([2, 3, 1, 0], 1900)}
+    assert histograms == {NAME: (BOUNDS, [2, 3, 1, 0], 1900)}
     native.merge_histogram_stats(histograms)
     native.update_stats(counters | gauges)
     got_counter, got_gauge, got_hist = native.get_all_stats_and_clear()
     assert got_counter[COUNTER] == 6
     assert got_gauge[GAUGE] == 4096
     assert got_hist[NAME] == ([2, 3, 1, 0], 1900)
-    assert reporter.snapshot_deltas(current, current)[2][NAME] == ([0, 0, 0, 0], 0)
+    assert reporter.snapshot_deltas(current, current)[2][NAME] == (
+        BOUNDS,
+        [0, 0, 0, 0],
+        0,
+    )
     assert reporter.snapshot_deltas(previous, current)[2][NAME] == (
+        BOUNDS,
         [10, 20, 5, 1],
         12000,
     )
@@ -122,11 +127,19 @@ def test_difference_and_real_binding():
 
 def test_baseline_restart_and_large_integer_counter():
     previous = parse(record(counter=2**60))
-    assert reporter.snapshot_deltas(previous, None)[2][NAME] == ([0, 0, 0, 0], 0)
+    assert reporter.snapshot_deltas(previous, None)[2][NAME] == (
+        BOUNDS,
+        [0, 0, 0, 0],
+        0,
+    )
     current = parse(record(42, counter=2**60 + 1))
     assert reporter.snapshot_deltas(current, previous)[0][COUNTER] == 1
     reset = parse(record(1, counts=[1, 0, 0, 0], total=50, counter=2))
-    assert reporter.snapshot_deltas(reset, previous)[2][NAME] == ([1, 0, 0, 0], 50)
+    assert reporter.snapshot_deltas(reset, previous)[2][NAME] == (
+        BOUNDS,
+        [1, 0, 0, 0],
+        50,
+    )
     assert reporter.snapshot_deltas(reset, previous)[0][COUNTER] == 2
     # A reset that has already exceeded the old totals cannot be detected.
     assert (
@@ -144,7 +157,7 @@ def test_baseline_restart_and_large_integer_counter():
         ("bucket_counts", [10.5, 20, 5, 1]),
         ("bucket_counts", [2**64, 20, 5, 1]),
         ("count", 37),
-        ("upper_bounds", [100, 600, 1000]),
+        ("upper_bounds", [100, 100, 1000]),
         ("unit", "seconds"),
         ("sum", float("nan")),
         ("sum", -1),
@@ -160,6 +173,7 @@ def test_invalid_histogram(field, value):
 def test_histogram_decrease_resets_entire_distribution():
     current = parse(record(counts=[9, 22, 5, 1], total=13000))
     assert reporter.snapshot_deltas(current, parse(record()))[2][NAME] == (
+        BOUNDS,
         [9, 22, 5, 1],
         13000,
     )
@@ -179,17 +193,77 @@ def test_histogram_decrease_resets_entire_distribution():
 )
 def test_native_binding_rejects_invalid_counts(counts, total):
     with pytest.raises((ValueError, TypeError, RuntimeError, OverflowError)):
-        native.merge_histogram_stats({NAME: (counts, total)})
+        native.merge_histogram_stats({NAME: (BOUNDS, counts, total)})
     assert native.get_all_stats_and_clear()[2] == {}
 
 
 def test_native_invalid_batch_does_not_partially_publish():
-    native.merge_histogram_stats({NAME: ([1, 0, 0, 0], 50)})
+    native.merge_histogram_stats({NAME: (BOUNDS, [1, 0, 0, 0], 50)})
     with pytest.raises(ValueError):
         native.merge_histogram_stats(
-            {NAME: ([2, 0, 0, 0], 100), "unregistered": ([1], 1)}
+            {NAME: (BOUNDS, [2, 0, 0, 0], 100), GAUGE: ([], [1], 1)}
         )
     assert native.get_all_stats_and_clear()[2][NAME] == ([1, 0, 0, 0], 50)
+
+
+def test_native_uninitialized_import_is_ignored():
+    # A fresh process exercises the production lifecycle without reset hooks.
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import sys
+sys.path.insert(0, sys.argv[1])
+import ucmmetrics as metrics
+metrics.merge_histogram_stats({'unregistered': ([100], [1, 0], 50)})
+metrics.set_up()
+metrics.create_stats('unregistered', 'histogram', [100])
+assert metrics.get_all_stats_and_clear() == ({}, {}, {})
+""",
+            str(Path(native.__file__).parent),
+        ],
+        check=True,
+    )
+
+
+def test_native_unregistered_import_does_not_register_or_reject_batch():
+    name = "drampool_unregistered_duration_us"
+    native.merge_histogram_stats({name: ([], [1], 1), NAME: (BOUNDS, [1, 0, 0, 0], 50)})
+    assert native.get_all_stats_and_clear()[2] == {NAME: ([1, 0, 0, 0], 50)}
+    native.create_stats(name, "histogram", [10])
+    assert native.get_all_stats_and_clear()[2] == {}
+    native.merge_histogram_stats({name: ([10], [1, 0], 5)})
+    assert native.get_all_stats_and_clear()[2] == {name: ([1, 0], 5)}
+
+
+@pytest.mark.parametrize(
+    "bounds", [[100, 600, 1000], [100, 500], [100, 500, float("inf")], [100, 100, 1000]]
+)
+def test_native_registered_bucket_schema_is_checked(bounds):
+    native.merge_histogram_stats({NAME: (BOUNDS, [1, 0, 0, 0], 50)})
+    with pytest.raises(ValueError):
+        native.merge_histogram_stats({NAME: (bounds, [2, 0, 0, 0], 100)})
+    assert native.get_all_stats_and_clear()[2][NAME] == ([1, 0, 0, 0], 50)
+
+
+def test_reporter_leaves_registered_schema_validation_to_native():
+    data = record()
+    data["histograms"][NAME]["upper_bounds"] = [100, 600, 1000]
+    snapshot = parse(data)  # Valid wire data; Python needs no registration config.
+    with pytest.raises(ValueError):
+        native.merge_histogram_stats(reporter.snapshot_deltas(snapshot, None)[2])
+    assert native.get_all_stats_and_clear()[2] == {}
+
+
+def test_reporter_preserves_unregistered_source_metrics():
+    data = record()
+    data["histograms"]["drampool_disabled_duration_us"] = data["histograms"][NAME]
+    snapshot = parse(data)
+    delta = reporter.snapshot_deltas(snapshot, None)[2]
+    assert "drampool_disabled_duration_us" in delta
+    native.merge_histogram_stats(delta)
+    assert set(native.get_all_stats_and_clear()[2]) == {NAME}
 
 
 def test_native_observations_and_concurrent_imports():
@@ -198,7 +272,7 @@ def test_native_observations_and_concurrent_imports():
     def write():
         try:
             for _ in range(300):
-                native.merge_histogram_stats({NAME: ([2, 3, 1, 0], 1900)})
+                native.merge_histogram_stats({NAME: (BOUNDS, [2, 3, 1, 0], 1900)})
                 native.update_stats(NAME, 50)
         except Exception as error:
             failures.append(error)
@@ -227,15 +301,15 @@ def test_native_observations_and_concurrent_imports():
 
 
 def test_native_merge_total_overflow_is_atomic():
-    native.merge_histogram_stats({NAME: ([2**64 - 1, 0, 0, 0], 0)})
+    native.merge_histogram_stats({NAME: (BOUNDS, [2**64 - 1, 0, 0, 0], 0)})
     with pytest.raises(OverflowError):
-        native.merge_histogram_stats({NAME: ([0, 1, 0, 0], 100)})
+        native.merge_histogram_stats({NAME: (BOUNDS, [0, 1, 0, 0], 100)})
     assert native.get_all_stats_and_clear()[2][NAME] == ([2**64 - 1, 0, 0, 0], 0)
 
 
 def make_reporter(tmp_path, monkeypatch):
     reader = reporter.DramPoolResourceReporter(
-        str(tmp_path / "metrics.log"), str(tmp_path), ["127.0.0.1:12345"], DEFINITIONS
+        str(tmp_path / "metrics.log"), str(tmp_path), ["127.0.0.1:12345"]
     )
     reader.source_id = "127.0.0.1:12345"
     reader._state_path = tmp_path / "state.json"
@@ -401,7 +475,6 @@ def test_real_flock_excludes_other_processes(tmp_path):
             str(tmp_path / "metrics.log"),
             str(tmp_path),
             ["127.0.0.1:12345"],
-            DEFINITIONS,
         )
         for _ in range(2)
     ]
@@ -433,7 +506,7 @@ with open(sys.argv[1], 'a+') as lock:
 @pytest.mark.parametrize(
     "overrides",
     [
-        {"enable_metrics": False},
+        {"drampool_resource_log_path": ""},
         {"device_id": 0},
         {"drampool_resource_metrics_enable": False},
     ],
@@ -455,7 +528,6 @@ def test_reporter_thread_elects_once_and_loser_exits(tmp_path, monkeypatch):
             str(tmp_path / "metrics.log"),
             str(tmp_path),
             ["127.0.0.1:12345"],
-            DEFINITIONS,
         )
         for _ in range(2)
     ]
