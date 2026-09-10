@@ -221,7 +221,7 @@ class DramPoolResourceReporter:
         self._lock_file.close()
         self._lock_file = None
 
-    def _read_latest_snapshot(self):
+    def _read_latest_complete_line(self):
         with self.log_path.open("rb") as stream:
             stream.seek(0, os.SEEK_END)
             end = stream.tell()
@@ -235,14 +235,10 @@ class DramPoolResourceReporter:
         for line in reversed(lines):
             if not line.strip():
                 continue
-            try:
-                if len(line) > MAX_RECORD_BYTES:
-                    raise ValueError("Snapshot exceeds 1 MiB")
-                return parse_drampool_resource_snapshot(line.decode("utf-8"))
-            except Exception as error:
-                logger.warning(f"Failed to parse DramPool resource snapshot: {error}")
-                ucmmetrics.update_stats({"drampool_resource_read_errors_total": 1.0})
-        raise ValueError("No complete valid DramPool snapshot")
+            if len(line) > MAX_RECORD_BYTES:
+                raise ValueError("Snapshot exceeds 1 MiB")
+            return line.decode("utf-8")
+        raise ValueError("DramPool resource log has no complete record")
 
     def _try_become_leader(self):
         try:
@@ -333,7 +329,7 @@ class DramPoolResourceReporter:
             ucmmetrics.update_stats({"drampool_resource_read_errors_total": 1.0})
 
     def _collect_once(self):
-        snapshot = self._read_latest_snapshot()
+        snapshot = parse_drampool_resource_snapshot(self._read_latest_complete_line())
         previous = self._read_state()
         self._report_snapshot(snapshot, previous)
 

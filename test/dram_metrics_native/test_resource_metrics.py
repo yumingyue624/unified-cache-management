@@ -358,7 +358,7 @@ def test_empty_and_oversized_file(tmp_path, monkeypatch):
     for content in [b"", b"x" * (2 * reporter.MAX_RECORD_BYTES + 1)]:
         reader.log_path.write_bytes(content)
         with pytest.raises(ValueError):
-            reader._read_latest_snapshot()
+            reader._read_latest_complete_line()
 
 
 def test_scalar_failure_leaves_state_for_next_round(tmp_path, monkeypatch):
