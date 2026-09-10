@@ -276,9 +276,8 @@ class DramPoolResourceReporter:
         identity = hashlib.sha256(str(self.log_path.resolve()).encode()).hexdigest()[
             :24
         ]
-        lock_file = (self.shared_dir / f"ucm_drampool_metrics_{identity}.lock").open(
-            "a+"
-        )
+        self._state_path = self.shared_dir / f"ucm_drampool_metrics_{identity}.json"
+        lock_file = self._state_path.with_suffix(".lock").open("a+")
         try:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
@@ -288,7 +287,7 @@ class DramPoolResourceReporter:
             lock_file.close()
             raise
         self._lock_file = lock_file
-        self._state_path = self.shared_dir / f"ucm_drampool_metrics_{identity}.json"
+        logger.info(f"Became DramPool resource metrics reporter for {self.log_path}")
         return True
 
     def _read_state(self):
