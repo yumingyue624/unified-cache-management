@@ -232,10 +232,6 @@ class DramPoolResourceReporter:
         self._lock_file.close()
         self._lock_file = None
 
-    def _error(self, stage: str, error: Exception):
-        logger.warning(f"DramPool resource {stage} failed: {error}")
-        ucmmetrics.update_stats({"drampool_resource_read_errors_total": 1.0})
-
     def _read_latest_snapshot(self):
         with self.log_path.open("rb") as stream:
             stream.seek(0, os.SEEK_END)
@@ -261,7 +257,8 @@ class DramPoolResourceReporter:
                 OverflowError,
                 AttributeError,
             ) as error:
-                self._error("parse", error)
+                logger.warning(f"Failed to parse DramPool resource snapshot: {error}")
+                ucmmetrics.update_stats({"drampool_resource_read_errors_total": 1.0})
         raise ValueError("No complete valid DramPool snapshot")
 
     def _try_become_leader(self):
@@ -317,7 +314,8 @@ class DramPoolResourceReporter:
             AttributeError,
             OverflowError,
         ) as error:
-            self._error("state_read", error)
+            logger.warning(f"Ignoring invalid DramPool reporter state: {error}")
+            ucmmetrics.update_stats({"drampool_resource_read_errors_total": 1.0})
             return None
 
     def _write_state(self, snapshot):
@@ -355,12 +353,14 @@ class DramPoolResourceReporter:
             ucmmetrics.merge_histogram_stats(histograms)
             ucmmetrics.update_stats(counters | gauges)
         except Exception as error:
-            self._error("import", error)
+            logger.warning(f"Failed to import DramPool resource metrics: {error}")
+            ucmmetrics.update_stats({"drampool_resource_read_errors_total": 1.0})
             return
         try:
             self._write_state(snapshot)
         except OSError as error:
-            self._error("state_write", error)
+            logger.warning(f"Failed to write DramPool reporter state: {error}")
+            ucmmetrics.update_stats({"drampool_resource_read_errors_total": 1.0})
         # As in YuanRong, the next round reads the persisted baseline again.
         # Import and state replacement are not a transaction; failures can replay.
 
@@ -372,13 +372,19 @@ class DramPoolResourceReporter:
                 if not self._try_become_leader():
                     return
             except Exception as error:
-                self._error("read", error)
+                logger.warning(f"Failed to elect DramPool resource reporter: {error}")
+                ucmmetrics.update_stats({"drampool_resource_read_errors_total": 1.0})
                 return
             while not self._stop_event.is_set():
                 try:
                     self._collect_once()
                 except Exception as error:
-                    self._error("read", error)
+                    logger.warning(
+                        f"Failed to collect DramPool resource metrics: {error}"
+                    )
+                    ucmmetrics.update_stats(
+                        {"drampool_resource_read_errors_total": 1.0}
+                    )
                 self._stop_event.wait(self.interval_sec)
         finally:
             self._release_leadership()
