@@ -309,7 +309,7 @@ def test_native_merge_total_overflow_is_atomic():
 
 def make_reporter(tmp_path, monkeypatch):
     reader = reporter.DramPoolResourceReporter(
-        str(tmp_path / "metrics.log"), str(tmp_path)
+        str(tmp_path / "metrics.log"), shared_memory_dir=str(tmp_path)
     )
     reader.source_id = "127.0.0.1:12345"
     reader._state_path = tmp_path / "state.json"
@@ -468,7 +468,7 @@ def test_real_flock_excludes_other_processes(tmp_path):
     readers = [
         reporter.DramPoolResourceReporter(
             str(tmp_path / "metrics.log"),
-            str(tmp_path),
+            shared_memory_dir=str(tmp_path),
         )
         for _ in range(2)
     ]
@@ -515,11 +515,11 @@ def test_reporter_role_and_enable_guards(overrides):
 
 @pytest.mark.skipif(os.name != "posix", reason="reporter lifecycle uses POSIX flock")
 def test_reporter_thread_elects_once_and_loser_exits(tmp_path, monkeypatch):
-    monkeypatch.setattr(reporter, "POLL_SECONDS", 0.01)
     readers = [
         reporter.DramPoolResourceReporter(
             str(tmp_path / "metrics.log"),
-            str(tmp_path),
+            interval_sec=1,
+            shared_memory_dir=str(tmp_path),
         )
         for _ in range(2)
     ]

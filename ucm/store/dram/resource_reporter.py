@@ -40,8 +40,7 @@ from ucm.shared.metrics import ucmmetrics
 logger = init_logger(__name__)
 UINT64_MAX = (1 << 64) - 1
 MAX_RECORD_BYTES = 1024 * 1024
-POLL_SECONDS = 10
-_REPORTERS: list["DramPoolResourceReporter"] = []
+_REPORTER: "DramPoolResourceReporter | None" = None
 
 
 def _number(value: Any) -> int | float:
@@ -194,9 +193,11 @@ class DramPoolResourceReporter:
     def __init__(
         self,
         log_path: str,
+        interval_sec: float = 15.0,
         shared_memory_dir: str = "/dev/shm",
     ):
         self.log_path = Path(log_path)
+        self.interval_sec = max(float(interval_sec), 1.0)
         self.shared_dir = Path(shared_memory_dir)
         if not self.shared_dir.is_dir():
             self.shared_dir = Path(tempfile.gettempdir())
@@ -215,7 +216,7 @@ class DramPoolResourceReporter:
     def stop(self):
         self._stop_event.set()
         if self._thread.is_alive() and threading.current_thread() is not self._thread:
-            self._thread.join(timeout=5)
+            self._thread.join(timeout=min(self.interval_sec + 1.0, 5.0))
         # Only _run's finally releases leadership. A slow file operation must not
         # allow another leader while this thread could still import a snapshot.
 
@@ -366,7 +367,7 @@ class DramPoolResourceReporter:
                     self._collect_once()
                 except Exception as error:
                     self._error("read", error)
-                self._stop_event.wait(POLL_SECONDS)
+                self._stop_event.wait(self.interval_sec)
         finally:
             if self._lock_file is not None:
                 self._lock_file.close()
@@ -374,11 +375,18 @@ class DramPoolResourceReporter:
 
 
 def start_drampool_resource_reporter(config: dict) -> DramPoolResourceReporter | None:
+    global _REPORTER
+
     path = str(config.get("drampool_resource_log_path", ""))
     enabled = bool(config.get("drampool_resource_metrics_enable", bool(path)))
     if not enabled or not path or int(config.get("device_id", -1)) >= 0:
         return None
-    reporter = DramPoolResourceReporter(path)
-    _REPORTERS.append(reporter)
-    reporter.start()
-    return reporter
+    if _REPORTER is None:
+        _REPORTER = DramPoolResourceReporter(
+            path,
+            interval_sec=float(
+                config.get("drampool_resource_metrics_interval_sec", 15)
+            ),
+        )
+        _REPORTER.start()
+    return _REPORTER
