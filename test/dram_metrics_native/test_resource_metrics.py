@@ -309,11 +309,11 @@ def test_native_merge_total_overflow_is_atomic():
 
 def make_reporter(tmp_path, monkeypatch):
     reader = reporter.DramPoolResourceReporter(
-        str(tmp_path / "metrics.log"), ["127.0.0.1:12345"], str(tmp_path)
+        str(tmp_path / "metrics.log"), str(tmp_path)
     )
     reader.source_id = "127.0.0.1:12345"
     reader._state_path = tmp_path / "state.json"
-    monkeypatch.setattr(reader, "_try_become_leader", lambda snapshot: True)
+    monkeypatch.setattr(reader, "_try_become_leader", lambda: True)
     return reader
 
 
@@ -468,14 +468,12 @@ def test_real_flock_excludes_other_processes(tmp_path):
     readers = [
         reporter.DramPoolResourceReporter(
             str(tmp_path / "metrics.log"),
-            ["127.0.0.1:12345"],
             str(tmp_path),
         )
         for _ in range(2)
     ]
-    snapshot = parse(record())
     try:
-        assert readers[0]._try_become_leader(snapshot)
+        assert readers[0]._try_become_leader()
         # An independent process must also be excluded by the actual OS lock.
         probe = """
 import fcntl, sys
@@ -487,11 +485,11 @@ with open(sys.argv[1], 'a+') as lock:
 """
         lock_path = readers[0]._lock_file.name
         assert subprocess.run([sys.executable, "-c", probe, lock_path]).returncode == 7
-        assert not readers[1]._try_become_leader(snapshot)
+        assert not readers[1]._try_become_leader()
         readers[0]._lock_file.close()
         readers[0]._lock_file = None
         assert subprocess.run([sys.executable, "-c", probe, lock_path]).returncode == 0
-        assert readers[1]._try_become_leader(snapshot)
+        assert readers[1]._try_become_leader()
     finally:
         for reader in readers:
             if reader._lock_file:
@@ -521,12 +519,10 @@ def test_reporter_thread_elects_once_and_loser_exits(tmp_path, monkeypatch):
     readers = [
         reporter.DramPoolResourceReporter(
             str(tmp_path / "metrics.log"),
-            ["127.0.0.1:12345"],
             str(tmp_path),
         )
         for _ in range(2)
     ]
-    write_record(readers[0], record())
 
     def wait_until(predicate):
         deadline = time.monotonic() + 5
@@ -536,6 +532,8 @@ def test_reporter_thread_elects_once_and_loser_exits(tmp_path, monkeypatch):
 
     try:
         readers[0].start()
+        wait_until(lambda: readers[0]._lock_file is not None)
+        write_record(readers[0], record())
         wait_until(lambda: readers[0]._state_path and readers[0]._state_path.exists())
         readers[1].start()
         readers[1]._thread.join(timeout=5)

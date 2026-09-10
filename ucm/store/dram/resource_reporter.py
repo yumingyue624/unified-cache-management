@@ -194,14 +194,12 @@ class DramPoolResourceReporter:
     def __init__(
         self,
         log_path: str,
-        endpoints: list[str],
         shared_memory_dir: str = "/dev/shm",
     ):
         self.log_path = Path(log_path)
         self.shared_dir = Path(shared_memory_dir)
         if not self.shared_dir.is_dir():
             self.shared_dir = Path(tempfile.gettempdir())
-        self.endpoints = frozenset(endpoints)
         self.source_id = ""
         self._lock_file = None
         self._state_path: Path | None = None
@@ -253,12 +251,7 @@ class DramPoolResourceReporter:
                 self._error("parse", error)
         raise ValueError("No complete valid DramPool snapshot")
 
-    def _try_become_leader(self, snapshot):
-        if self.source_id and snapshot.source_id != self.source_id:
-            raise ValueError("The configured local file changed source identity")
-        if snapshot.source_id not in self.endpoints:
-            raise ValueError("Snapshot source is not a configured DramPool endpoint")
-        self.source_id = snapshot.source_id
+    def _try_become_leader(self):
         if self._lock_file is not None:
             return True
         try:
@@ -270,7 +263,9 @@ class DramPoolResourceReporter:
             self._stop_event.set()
             return False
 
-        identity = hashlib.sha256(self.source_id.encode()).hexdigest()[:24]
+        identity = hashlib.sha256(str(self.log_path.resolve()).encode()).hexdigest()[
+            :24
+        ]
         lock_file = (self.shared_dir / f"ucm_drampool_metrics_{identity}.lock").open(
             "a+"
         )
@@ -333,7 +328,9 @@ class DramPoolResourceReporter:
         if self._stop_event.is_set():
             return
         snapshot = self._read_latest_snapshot()
-        if snapshot.source_id != self.source_id:
+        if not self.source_id:
+            self.source_id = snapshot.source_id
+        elif snapshot.source_id != self.source_id:
             raise ValueError("Snapshot source changed")
         previous = self._read_state()
         counters, gauges, histograms = snapshot_deltas(snapshot, previous)
@@ -359,7 +356,7 @@ class DramPoolResourceReporter:
             if self._stop_event.is_set():
                 return
             try:
-                if not self._try_become_leader(self._read_latest_snapshot()):
+                if not self._try_become_leader():
                     return
             except Exception as error:
                 self._error("read", error)
@@ -381,10 +378,7 @@ def start_drampool_resource_reporter(config: dict) -> DramPoolResourceReporter |
     enabled = bool(config.get("drampool_resource_metrics_enable", bool(path)))
     if not enabled or not path or int(config.get("device_id", -1)) >= 0:
         return None
-    reporter = DramPoolResourceReporter(
-        path,
-        list(config.get("node_control_endpoints", [])),
-    )
+    reporter = DramPoolResourceReporter(path)
     _REPORTERS.append(reporter)
     reporter.start()
     return reporter
