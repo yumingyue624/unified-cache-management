@@ -57,12 +57,6 @@ def _count(value: Any) -> int:
     return value
 
 
-def _identity(value: Any) -> str:
-    if not isinstance(value, str) or not value or len(value) > 256:
-        raise ValueError("Missing or invalid source identity")
-    return value
-
-
 @dataclass(frozen=True)
 class HistogramSnapshot:
     upper_bounds: tuple[float, ...]
@@ -77,7 +71,6 @@ class HistogramSnapshot:
 
 @dataclass(frozen=True)
 class DramPoolResourceSnapshot:
-    source_id: str
     timestamp: float
     counters: dict[str, int | float]
     gauges: dict[str, int | float]
@@ -129,7 +122,6 @@ def parse_drampool_resource_snapshot(line: str) -> DramPoolResourceSnapshot:
                 raise ValueError(f"Nonzero sum for empty histogram {name}")
             destination[name] = HistogramSnapshot(bounds, counts, total, "us")
     return DramPoolResourceSnapshot(
-        _identity(record["source_id"]),
         float(_number(timestamp)),
         counters,
         gauges,
@@ -141,8 +133,6 @@ def snapshot_deltas(
     current: DramPoolResourceSnapshot, previous: DramPoolResourceSnapshot | None
 ):
     """Compute metric deltas, treating decreases as source resets."""
-    if previous is not None and current.source_id != previous.source_id:
-        raise ValueError("DramPool source changed")
     counters, histograms = {}, {}
     for name, value in current.counters.items():
         old = previous.counters.get(name, 0) if previous is not None else None
@@ -172,7 +162,6 @@ def _snapshot_record(snapshot: DramPoolResourceSnapshot) -> dict:
     return {
         "event": "drampool_metrics_snapshot",
         "schema_version": "v1",
-        "source_id": snapshot.source_id,
         "timestamp": snapshot.timestamp,
         "counters": snapshot.counters,
         "gauges": snapshot.gauges,
@@ -201,7 +190,6 @@ class DramPoolResourceReporter:
         self.shared_dir = Path(shared_memory_dir)
         if not self.shared_dir.is_dir():
             self.shared_dir = Path(tempfile.gettempdir())
-        self.source_id = ""
         self._lock_file = None
         self._state_path: Path | None = None
         self._stop_event = threading.Event()
@@ -299,10 +287,7 @@ class DramPoolResourceReporter:
             state = json.loads(data)
             if state["state_version"] != 1:
                 raise ValueError("Unsupported reporter state")
-            previous = parse_drampool_resource_snapshot(json.dumps(state["snapshot"]))
-            if previous.source_id != self.source_id:
-                raise ValueError("Reporter state belongs to another source")
-            return previous
+            return parse_drampool_resource_snapshot(json.dumps(state["snapshot"]))
         except FileNotFoundError:
             return None
         except (
@@ -338,10 +323,6 @@ class DramPoolResourceReporter:
         if self._stop_event.is_set():
             return
         snapshot = self._read_latest_snapshot()
-        if not self.source_id:
-            self.source_id = snapshot.source_id
-        elif snapshot.source_id != self.source_id:
-            raise ValueError("Snapshot source changed")
         previous = self._read_state()
         counters, gauges, histograms = snapshot_deltas(snapshot, previous)
         gauges |= {

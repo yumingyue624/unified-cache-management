@@ -82,7 +82,6 @@ def record(tick=41, counts=None, total=12000, counter=36):
     return {
         "event": "drampool_metrics_snapshot",
         "schema_version": "v1",
-        "source_id": "127.0.0.1:12345",
         "timestamp": 1788825600 + tick,
         "counters": {COUNTER: counter},
         "gauges": {GAUGE: 4096},
@@ -311,7 +310,6 @@ def make_reporter(tmp_path, monkeypatch):
     reader = reporter.DramPoolResourceReporter(
         str(tmp_path / "metrics.log"), shared_memory_dir=str(tmp_path)
     )
-    reader.source_id = "127.0.0.1:12345"
     reader._state_path = tmp_path / "state.json"
     monkeypatch.setattr(reader, "_try_become_leader", lambda: True)
     return reader
