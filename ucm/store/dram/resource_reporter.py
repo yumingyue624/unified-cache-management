@@ -79,11 +79,8 @@ class DramPoolResourceSnapshot:
 
 def parse_drampool_resource_snapshot(line: str) -> DramPoolResourceSnapshot:
     record = json.loads(line)
-    if (
-        record.get("event") != "drampool_metrics_snapshot"
-        or record.get("schema_version") != "v1"
-    ):
-        raise ValueError("Unsupported DramPool snapshot event/schema")
+    if record.get("event") != "drampool_metrics_snapshot":
+        raise ValueError("Not a DramPool metrics snapshot")
     timestamp = record["timestamp"]
     if isinstance(timestamp, str):
         parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
@@ -161,7 +158,6 @@ def snapshot_deltas(
 def _snapshot_record(snapshot: DramPoolResourceSnapshot) -> dict:
     return {
         "event": "drampool_metrics_snapshot",
-        "schema_version": "v1",
         "timestamp": snapshot.timestamp,
         "counters": snapshot.counters,
         "gauges": snapshot.gauges,

@@ -81,7 +81,6 @@ def record(tick=41, counts=None, total=12000, counter=36):
     counts = [10, 20, 5, 1] if counts is None else counts
     return {
         "event": "drampool_metrics_snapshot",
-        "schema_version": "v1",
         "timestamp": 1788825600 + tick,
         "counters": {COUNTER: counter},
         "gauges": {GAUGE: 4096},
