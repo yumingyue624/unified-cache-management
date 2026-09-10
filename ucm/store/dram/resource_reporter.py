@@ -140,7 +140,7 @@ def parse_drampool_resource_snapshot(line: str) -> DramPoolResourceSnapshot:
 def snapshot_deltas(
     current: DramPoolResourceSnapshot, previous: DramPoolResourceSnapshot | None
 ):
-    """YuanRong-style cumulative differences, with whole-Histogram resets."""
+    """Compute metric deltas, treating decreases as source resets."""
     if previous is not None and current.source_id != previous.source_id:
         raise ValueError("DramPool source changed")
     counters, histograms = {}, {}
@@ -360,8 +360,6 @@ class DramPoolResourceReporter:
         except OSError as error:
             logger.warning(f"Failed to write DramPool reporter state: {error}")
             ucmmetrics.update_stats({"drampool_resource_read_errors_total": 1.0})
-        # As in YuanRong, the next round reads the persisted baseline again.
-        # Import and state replacement are not a transaction; failures can replay.
 
     def _run(self):
         try:
