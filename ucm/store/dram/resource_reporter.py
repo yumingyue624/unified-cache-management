@@ -27,8 +27,8 @@ import hashlib
 import json
 import math
 import os
+import tempfile
 import threading
-import time
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -41,9 +41,7 @@ logger = init_logger(__name__)
 UINT64_MAX = (1 << 64) - 1
 MAX_RECORD_BYTES = 1024 * 1024
 POLL_SECONDS = 10
-STALE_SECONDS = 30
-_REPORTER: "DramPoolResourceReporter | None" = None
-_REPORTER_LOCK = threading.Lock()
+_REPORTERS: list["DramPoolResourceReporter"] = []
 
 
 def _number(value: Any) -> int | float:
@@ -196,21 +194,22 @@ class DramPoolResourceReporter:
     def __init__(
         self,
         log_path: str,
-        shared_dir: str,
         endpoints: list[str],
+        shared_memory_dir: str = "/dev/shm",
     ):
         self.log_path = Path(log_path)
-        self.shared_dir = Path(shared_dir)
+        self.shared_dir = Path(shared_memory_dir)
+        if not self.shared_dir.is_dir():
+            self.shared_dir = Path(tempfile.gettempdir())
         self.endpoints = frozenset(endpoints)
         self.source_id = ""
-        self._snapshot_timestamp = 0.0
         self._lock_file = None
         self._state_path: Path | None = None
         self._stop_event = threading.Event()
         self._thread = threading.Thread(
             target=self._run, name="drampool-resource-reporter", daemon=True
         )
-        self._last_warning: dict[str, float] = {}
+        atexit.register(self.stop)
 
     def start(self):
         self._thread.start()
@@ -223,14 +222,8 @@ class DramPoolResourceReporter:
         # allow another leader while this thread could still import a snapshot.
 
     def _error(self, stage: str, error: Exception):
-        try:
-            ucmmetrics.update_stats({f"drampool_resource_{stage}_errors_total": 1.0})
-        except Exception:
-            pass
-        now = time.monotonic()
-        if now - self._last_warning.get(stage, -math.inf) >= 60:
-            logger.warning(f"DramPool resource {stage} failed: {error}")
-            self._last_warning[stage] = now
+        logger.warning(f"DramPool resource {stage} failed: {error}")
+        ucmmetrics.update_stats({"drampool_resource_read_errors_total": 1.0})
 
     def _read_latest_snapshot(self):
         with self.log_path.open("rb") as stream:
@@ -268,10 +261,15 @@ class DramPoolResourceReporter:
         self.source_id = snapshot.source_id
         if self._lock_file is not None:
             return True
-        import fcntl
+        try:
+            import fcntl
+        except ImportError:
+            logger.warning(
+                "DramPool resource reporter requires fcntl for host election"
+            )
+            self._stop_event.set()
+            return False
 
-        # All containers must share this directory; do not silently fall back to
-        # a container-private temporary directory.
         identity = hashlib.sha256(self.source_id.encode()).hexdigest()[:24]
         lock_file = (self.shared_dir / f"ucm_drampool_metrics_{identity}.lock").open(
             "a+"
@@ -339,34 +337,22 @@ class DramPoolResourceReporter:
             raise ValueError("Snapshot source changed")
         previous = self._read_state()
         counters, gauges, histograms = snapshot_deltas(snapshot, previous)
+        gauges |= {
+            "drampool_resource_snapshot_timestamp_seconds": snapshot.timestamp,
+            "drampool_resource_reporter_leader": 1.0,
+        }
         try:
             ucmmetrics.merge_histogram_stats(histograms)
             ucmmetrics.update_stats(counters | gauges)
         except Exception as error:
             self._error("import", error)
             return
-        self._snapshot_timestamp = snapshot.timestamp
         try:
             self._write_state(snapshot)
         except OSError as error:
             self._error("state_write", error)
         # As in YuanRong, the next round reads the persisted baseline again.
         # Import and state replacement are not a transaction; failures can replay.
-
-    def _health(self):
-        leader = self._lock_file is not None
-        updates = {"drampool_resource_reporter_leader": float(leader)}
-        if leader:
-            timestamp = self._snapshot_timestamp
-            age = max(0.0, time.time() - timestamp)
-            updates |= {
-                "drampool_resource_snapshot_timestamp_seconds": timestamp,
-                "drampool_resource_snapshot_age_seconds": age,
-                "drampool_resource_snapshot_fresh": float(
-                    bool(timestamp) and age <= STALE_SECONDS
-                ),
-            }
-        ucmmetrics.update_stats(updates)
 
     def _run(self):
         try:
@@ -383,10 +369,6 @@ class DramPoolResourceReporter:
                     self._collect_once()
                 except Exception as error:
                     self._error("read", error)
-                try:
-                    self._health()
-                except Exception as error:
-                    self._error("import", error)
                 self._stop_event.wait(POLL_SECONDS)
         finally:
             if self._lock_file is not None:
@@ -394,51 +376,15 @@ class DramPoolResourceReporter:
                 self._lock_file = None
 
 
-def get_drampool_resource_source() -> str:
-    return _REPORTER.source_id if _REPORTER is not None else ""
-
-
-def stop_drampool_resource_reporter():
-    if _REPORTER is not None:
-        _REPORTER.stop()
-
-
 def start_drampool_resource_reporter(config: dict) -> DramPoolResourceReporter | None:
-    global _REPORTER
     path = str(config.get("drampool_resource_log_path", ""))
-    enabled = config.get("drampool_resource_metrics_enable", bool(path))
-    if isinstance(enabled, str):
-        enabled = enabled.lower() in {"true", "1", "yes", "on"}
+    enabled = bool(config.get("drampool_resource_metrics_enable", bool(path)))
     if not enabled or not path or int(config.get("device_id", -1)) >= 0:
         return None
-    shared_dir = str(config.get("drampool_resource_shared_dir", ""))
-    if not shared_dir or not Path(shared_dir).is_dir():
-        logger.warning(
-            "DramPool reporter requires an existing host-shared state directory"
-        )
-        return None
-    if os.name != "posix":
-        logger.warning("DramPool resource election requires POSIX flock")
-        return None
-    if not hasattr(ucmmetrics, "merge_histogram_stats"):
-        logger.warning(
-            "DramPool reporter requires the Histogram import metrics binding"
-        )
-        return None
-    with _REPORTER_LOCK:
-        if _REPORTER is not None:
-            if _REPORTER.log_path.resolve() != Path(path).resolve():
-                logger.warning(
-                    "Only one local DramPool resource source is supported per process"
-                )
-                return None
-            return _REPORTER
-        reporter = DramPoolResourceReporter(
-            path,
-            shared_dir,
-            list(config.get("node_control_endpoints", [])),
-        )
-        reporter.start()
-        _REPORTER = reporter
-        atexit.register(stop_drampool_resource_reporter)
-        return reporter
+    reporter = DramPoolResourceReporter(
+        path,
+        list(config.get("node_control_endpoints", [])),
+    )
+    _REPORTERS.append(reporter)
+    reporter.start()
+    return reporter

@@ -42,8 +42,7 @@ void Register()
         for (const auto* suffix :
              {"tasks_submitted_total", "tasks_rejected_total", "tasks_succeeded_total",
               "tasks_failed_total", "requests_completed_total", "requests_failed_total",
-              "acknowledged_entries_total", "acknowledged_bytes_total", "failed_entries_total",
-              "unconfirmed_entries_total", "task_timeouts_total", "request_submit_errors_total"}) {
+              "task_timeouts_total", "request_submit_errors_total"}) {
             Metrics::CreateStats(std::string(prefix) + suffix, "counter");
         }
         for (const auto* suffix :
@@ -122,9 +121,6 @@ void TestNodeResults()
     auto [c, g, h] = Metrics::GetAllStatsAndClear();
     assert(c["dramstore_dump_requests_completed_total"] == 1);
     assert(c["dramstore_dump_requests_failed_total"] == 1);
-    assert(c["dramstore_dump_acknowledged_entries_total"] == 1);
-    assert(c["dramstore_dump_acknowledged_bytes_total"] == 64);
-    assert(c["dramstore_dump_failed_entries_total"] == 1);
     assert(c["dramstore_stale_replies_total"] == 1);
 }
 

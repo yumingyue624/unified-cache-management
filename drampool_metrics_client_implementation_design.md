@@ -48,7 +48,7 @@ DramStore C++ 业务线程
 | `ucm/store/yuanrongstore/resource_reporter.py` | 文件尾读、flock、累计差分、state 原子替换 | 仅作参考，不修改；在 `ucm/store/dram/resource_reporter.py` 新增独立实现，支持 Histogram，不抽象公共 Reporter |
 | `ucm/store/pipeline/connector.py::_dram_pipeline_builder` | 只 Stack Dram | 增加 metrics 预加载和 Reporter 注册入口 |
 | `ucm/store/dram/cc/task_manager.*` | Task admission、路由拆分、请求结果聚合、promise 完成 | Task 级计数和耗时的主要落点 |
-| `ucm/store/dram/cc/node_actor.*` | 节点请求状态机、回复、超时、fence、连接恢复 | Request 级计数、耗时、entry 结果的主要落点 |
+| `ucm/store/dram/cc/node_actor.*` | 节点请求状态机、回复、超时、fence、连接恢复 | Request 级计数、耗时和恢复指标的主要落点 |
 
 关键事实：现有 vLLM Histogram 出口已能接收 bucket 快照；缺的是 Python → C++ 的导入能力。另一个实际缺口是 Scheduler patch 的条件分支，不能仅完成 Reporter 就认为链路贯通。
 
@@ -98,18 +98,9 @@ Histogram 的 `bucket_counts` 是各区间的计数，而非 Prometheus 文本�
 | `dramstore_<op>_requests_failed_total` | Counter | 上述请求最终 status 失败数 |
 | `dramstore_<op>_request_duration_us` | Histogram | NodeActor 接受请求至 QueueCompletion，包含节点内排队和恢复等待 |
 | `dramstore_<op>_request_submit_errors_total` | Counter | TaskManager 向 NodeScheduler 移交失败；不计入 NodeActor completed |
-| `dramstore_lookup_hit_entries_total` / `miss_entries_total` | Counter | 客户端接受的有效 LOOKUP 回复中的命中/未命中 entry 数 |
-| `dramstore_<dump/load>_acknowledged_entries_total` | Counter | 有效回复确认成功的 IO entry 数 |
-| `dramstore_<dump/load>_acknowledged_bytes_total` | Counter | 上述成功 entry 的请求长度之和 |
-| `dramstore_<dump/load>_failed_entries_total` | Counter | 有效回复中明确失败的 entry 数 |
-| `dramstore_<op>_unconfirmed_entries_total` | Counter | 未得到可接受的最终 entry 结果的数量，例如客户端超时 |
 | `dramstore_dump_prerequisite_duration_us` / `prerequisite_errors_total` | Histogram / Counter | DramStore::Dump 中等待前置 event 的耗时与失败，独立于 TaskManager task |
 
-一个 task 可拆成多个 node request；DUMP/LOAD 的一个 shard 又会按 tensorSizes 展开成多个 IO entry。因此 tasks、requests、entries、shards、blocks 不能混用，也不能期待客户端 task 数等于服务端 request 数。
-
-`acknowledged_bytes` 是逻辑确认字节数。重复 DUMP key 可能成功但没有新传输，客户端无法凭现有回复区分，故不得将该指标称为 RDMA 实际吞吐或新增缓存字节。真实数据面吞吐取 DramPool 指标。
-
-请求 status 失败不一定意味着全部 entry 失败。若协议解码保留了有效逐项结果，按结果记录成功/失败；若返回路径已丢弃逐项结果，则记 unconfirmed，不推测局部成功。实施时需核对 ReplyService 的解析和错误传播，保留已有有效信息，不改变网络协议。
+一个 task 可拆成多个 node request，因此 task 数不能等同于服务端 request 数。首版不增加 entry 级指标，避免为了统计部分结果改变现有 entry result 的传递语义。真实数据面吞吐取 DramPool 指标。
 
 ### 4.2 客户端恢复和资源诊断
 
@@ -125,7 +116,7 @@ Queue depth、active requests、used IO entries 等 Gauge 放在第二批：由�
 
 ### 4.4 消费链路健康指标
 
-至少提供 `drampool_resource_snapshot_timestamp_seconds`、`snapshot_age_seconds`、`snapshot_fresh`、`reporter_leader`，以及 read/parse/import/state-write errors 的 Counter。不再提供依赖实例识别的 source restarts 计数。
+与 YuanRong 保持同一级别的 Reporter 自监控：提供 snapshot timestamp、reporter leader 和一个读取错误 Counter，不再为 parse/import/state 等内部阶段分别增加指标。
 
 重复快照不能重复导入 Counter/Histogram，但仍更新 freshness，并周期重发有效 Gauge。快照陈旧时保留最后一次容量值同时标记 stale，不能把缓存使用量清零。初始没有快照时只输出健康指标，不伪造业务数据。
 
@@ -147,11 +138,11 @@ Queue depth、active requests、used IO entries 等 Gauge 放在第二批：由�
 
 `Check` 和 `Wait` 只观察结果，不统计 task completed。否则重复 Check、延迟 Wait、调用方不 Wait 都会扭曲数据。task duration 与 Wait 调用阻塞耗时是不同概念。
 
-### 5.3 Request 与 entry 的唯一结算
+### 5.3 Request 的唯一结算
 
 以 `NodeActor::QueueCompletion` 为 request 主结算点。当前立即过期、pending 过期及 RetireRequest 均汇入这里，适合统一计数。起点在 Handle(Request) 接受请求时记录并随 Request 保留。
 
-逐项结果在 Request 和 EntryResult 同时可见时结算，使用请求原有 BufferRef.length 累加字节。stale/重复 ReplyObserved 在现有 token/epoch 检查处丢弃，只记 stale reply，不增加成功数。
+stale/重复 ReplyObserved 在现有 token/epoch 检查处丢弃，只记 stale reply，不增加成功数。
 
 已暴露的请求超时后可能等待 fence 才安全退休：请求 duration 结束于最终 QueueCompletion；“到达 deadline”是另一个诊断事件，不能提前销毁统计上下文或重复结束请求。
 
@@ -199,9 +190,7 @@ Python metrics 定义注册须在启动业务打点线程与文件 Reporter 前�
 | --- | --- |
 | `drampool_resource_log_path` | 当前容器可见的本机活动快照文件路径；未配置不启动 |
 | `drampool_resource_metrics_enable` | 显式开关；可默认跟随路径是否配置 |
-| `drampool_resource_shared_dir` | 所有本机候选 Scheduler 共享且可写的 lock/state 目录 |
-
-首版采集轮询固定 10 秒，不增加无必要的调参项。新鲜度阈值默认三个约定生产周期，并允许启动宽限；它属于监控判断，不触发业务断连。
+与 YuanRong 一致，lock/state 默认写入 `/dev/shm`；目录不存在时回退到系统临时目录，不新增目录配置项。首版采集轮询固定 10 秒，不增加无必要的调参项。
 
 `UCMConnector._setup_ucm_metrics()` 在创建具体 connector/store 前统一注册 metrics。`_dram_pipeline_builder` 在 Stack 成功后启动 Reporter，沿用 YuanRong 的职责划分：Reporter 只检查资源采集开关、路径和角色，不读取 metrics 配置或 dispatcher，不判断消费端是否启用。不向嵌套 store 配置复制全局 metrics 设置。DramStore 没有脱离 vLLM/UCM 的独立运行场景，不增加兜底初始化。只在 Scheduler 角色启动，采用现有明确角色/device_id 约定，不凭 rank==0 代替 Scheduler 判断。
 
@@ -218,7 +207,7 @@ Python metrics 定义注册须在启动业务打点线程与文件 Reporter 前�
       → Counter / Histogram 做差，Gauge 取当前值
       → merge_histogram_stats，再 update_stats
       → 同目录临时文件原子替换 state
-      → 更新健康指标，stop_event.wait(10 秒)
+      → 更新 snapshot timestamp 和 leader，stop_event.wait(10 秒)
 ```
 
 重复读取同一累计快照时，差值自然为零，不额外增加 sequence 去重或分阶段导入重试记录。循环内异常记录日志，下一轮重新读取 state。
@@ -233,7 +222,7 @@ Python metrics 定义注册须在启动业务打点线程与文件 Reporter 前�
 
 每周期重新 open 活动文件，避免 rename 后一直跟随旧 inode。按 64 KiB 分块从尾部向前读取，设内部最大扫描/单记录上限（建议 1 MiB，并与生产端约定），不能无限回扫历史日志。
 
-丢弃没有结尾换行的尾部半行，以及分块起点截断的首行；从最新完整记录开始校验。畸形行可在扫描上限内回退上一条有效记录，同时保留错误计数和 stale 判断。新文件为空或轮转窗口暂时不存在时保留旧状态，下轮重试。
+丢弃没有结尾换行的尾部半行，以及分块起点截断的首行；从最新完整记录开始校验。畸形行可在扫描上限内回退上一条有效记录，同时记录读取错误。新文件为空或轮转窗口暂时不存在时保留旧状态，下轮重试。
 
 校验内容：event/version/source、必要字段、有限非负 Counter/耗时、整数桶、桶长度/边界、count 与桶计数之和一致、sum 合法。未知可选字段忽略；关键字段缺失或主版本不支持时不导入。schema 不匹配不能以补零或截断桶的方式继续。
 
@@ -350,7 +339,7 @@ UCMConnectorStats 直接复用既有 Counter/Gauge/Histogram 聚合语义。Sche
 
 ### 8.2 节点身份与 Leader 切换
 
-DramStore 指标沿用 engine/worker_rank 标签。导入的 DramPool 指标额外携带稳定 `drampool_endpoint` 来源，以串行化的 ConnectorStats 元数据传递，在创建对应 Prometheus family 时增加该标签；不将所有 UCM 指标全局扩标签。
+DramStore 和导入的 DramPool 指标都沿用现有 engine/worker_rank 标签，不为 Reporter 单独修改 ConnectorStats 或 Prometheus family。
 
 当前 libmetrics 本身无动态 label，因此首版限制一个进程导入一个本机 DramPool source；Reporter/connector 持有其固定 source 元数据。该限制符合本任务的一机一 DramPool 模型，不设计多源任意汇总。
 
@@ -373,8 +362,7 @@ DramPool Histogram 桶以双方契约为准，消费端必须逐一匹配；不�
 | DramStore 现有业务结算位置 | 直接使用 `UpdateStats` 和 `NAME_TO_METRIC_ID`，不新增专用埋点封装文件 |
 | `ucm/store/dram/cc/dram_store.cc` | prerequisite 指标、必要入口错误统计 |
 | `ucm/store/dram/cc/task_manager.h/.cc` | Task 时间上下文与统一终态打点 |
-| `ucm/store/dram/cc/types.h`、`node_actor.h/.cc` | Request 本地时间上下文、entry 结果、恢复事件 |
-| `ucm/store/dram/cc/reply_service.cc` | 仅在需要保留有效逐项结果时做最小适配；不改协议 |
+| `ucm/store/dram/cc/types.h`、`node_actor.h/.cc` | Request 本地时间上下文与恢复事件；不为指标改变 entry 结果传递语义 |
 | `ucm/store/dram/CMakeLists.txt` | dramstore 链接 libmetrics 和安装 RPATH；不改 drampool target |
 | `ucm/store/dram/resource_reporter.py`（新增） | 文件消费、差分、选主、state、健康指标 |
 | `ucm/store/pipeline/connector.py` | Dram metrics 预加载、Reporter 登记 |
@@ -391,7 +379,7 @@ DramPool Histogram 桶以双方契约为准，消费端必须逐一匹配；不�
 
 1. **契约和出口先行**：固定 snapshot schema/identity/buckets；用 test 下快照验证新增指标通过既有转换路径输出，复用 Scheduler/Worker 各自的已有上报机制。
 2. **Histogram 与 Reporter**：完成 shared API、读取/差分/选主/state；使用测试文件完成整个累计快照回流闭环。
-3. **DramStore 打点**：先 Task/Request/entry/时延，再连接恢复指标，最后评估资源 Gauge；按真实状态机结算。
+3. **DramStore 打点**：先 Task/Request/时延，再连接恢复指标，最后评估资源 Gauge；按真实状态机结算。
 4. **联调与性能验证**：接同事的真实快照和 DramStore 请求，验证数值回退、轮转、一次选主、部分失败及多 endpoint 查询行为。
 
 测试代码、fixtures、fake 和测试构建支持均位于 `test/` 路径，包括已有 `ucm/shared/test/`、`ucm/store/test/`。真实 Ascend/外部服务验证仅放在显式 opt-in integration target；本次设计阶段不运行硬件测试。
@@ -406,7 +394,7 @@ DramPool Histogram 桶以双方契约为准，消费端必须逐一匹配；不�
 - 多进程竞争同一共享锁只产生一个 Leader；抢锁失败线程退出且 Leader 停止后不自动接任；锁释放顺序与同进程重复初始化。
 - state 写失败时下一轮读旧基线，允许重复回流；故障窗口测试体现 best-effort 边界，不伪造 exactly-once 断言。
 - Task 成功、入队拒绝、入队后过期、部分 request 失败、重复 Check/Wait、异常清理；一个 accepted task 只结算一次。
-- Request pending 过期、fence 后退休、重复/过期回复、部分 entry 失败、DUMP 重复 key 的逻辑字节含义。
+- Request pending 过期、fence 后退休、重复/过期回复和部分 entry 失败时保持既有结果语义。
 - 保留既有 Scheduler/Worker 采集路径回归；健康数据沿用实际 stats cadence；新增 Histogram seconds 桶和 sum 一致。
 - 打包安装后 DramStore 与 pybind 共用同一 libmetrics；不启用 metrics 时业务仍能运行。
 
@@ -422,6 +410,6 @@ DramPool Histogram 桶以双方契约为准，消费端必须逐一匹配；不�
 - Histogram 保留原分布，新增生产导入 API；不重放虚构 observation。
 - Scheduler/Worker 各自沿用既有上报路径，不增加同时采集或合并补丁。
 - state 原子替换只保证文件完整，不保证数据已经被 Prometheus 接收；端到端语义明确为 best effort。
-- 服务端实际字节、客户端逻辑确认字节分开，防止重复 DUMP 被误解释为真实传输。
+- 实际字节由 DramPool 指标提供，DramStore 首版不推断数据面吞吐。
 
 本设计可以在同事实现 DramPool 内部的同时推进。需要双方先固定的只有快照身份、累计语义、schema/桶边界和宿主机共享路径；消费端测试使用 `test/` 下快照即可独立开展。

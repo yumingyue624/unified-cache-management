@@ -61,12 +61,9 @@ class UCMConnectorStats(KVConnectorStats):
         histogram_stats: dict[str, Any],
         worker_rank: int | str | None,
         metric_definitions: list[MetricDefinition],
-        resource_source: str = "",
     ) -> "UCMConnectorStats":
         stats = cls(worker_rank=worker_rank)
         rank = stats._rank_key()
-        if resource_source:
-            stats.data["resource_sources_by_rank"][rank] = resource_source
         definitions_by_name = {
             definition.name: definition
             for definition in metric_definitions
@@ -111,7 +108,6 @@ class UCMConnectorStats(KVConnectorStats):
             "counters_by_rank": {},
             "gauges_by_rank": {},
             "histograms_by_rank": {},
-            "resource_sources_by_rank": {},
         }
 
     def record(
@@ -152,10 +148,6 @@ class UCMConnectorStats(KVConnectorStats):
             target = self.data.setdefault(section, {})
             for rank, rank_data in other.data.get(section, {}).items():
                 target.setdefault(str(rank), {}).update(rank_data)
-
-        self.data.setdefault("resource_sources_by_rank", {}).update(
-            other.data.get("resource_sources_by_rank", {})
-        )
 
         histograms_by_rank = self.data.setdefault("histograms_by_rank", {})
         other_histograms = other.data.get("histograms_by_rank", {})
@@ -212,19 +204,13 @@ if UCM_HAS_PROM_METRICS:
                 definition.name: definition for definition in definitions
             }
             self._metrics_by_name: dict[str, PromMetricT] = {}
-            self._labeled_metrics: dict[tuple[int | str, ...], PromMetricT] = {}
+            self._labeled_metrics: dict[tuple[int, str, str], PromMetricT] = {}
             counts = {"counter": 0, "gauge": 0, "histogram": 0}
 
             for definition in definitions:
                 self._metrics_by_name[definition.name] = self._create_metric(
                     definition,
-                    labelnames
-                    + ["worker_rank"]
-                    + (
-                        ["drampool_endpoint"]
-                        if definition.name.startswith("drampool_")
-                        else []
-                    ),
+                    labelnames + ["worker_rank"],
                 )
                 counts[definition.metric_type] += 1
             logger.info(
@@ -271,14 +257,7 @@ if UCM_HAS_PROM_METRICS:
                     value_float = _finite(value)
                     if value_float is None or value_float < 0:
                         continue
-                    self._metric(
-                        engine_idx,
-                        worker_rank,
-                        metric_name,
-                        transfer_stats_data.get("resource_sources_by_rank", {}).get(
-                            str(worker_rank), "unknown"
-                        ),
-                    ).inc(value_float)
+                    self._metric(engine_idx, worker_rank, metric_name).inc(value_float)
 
         def _observe_gauges(
             self, transfer_stats_data: dict[str, Any], engine_idx: int
@@ -293,14 +272,7 @@ if UCM_HAS_PROM_METRICS:
                     value_float = _finite(value)
                     if value_float is None:
                         continue
-                    self._metric(
-                        engine_idx,
-                        worker_rank,
-                        metric_name,
-                        transfer_stats_data.get("resource_sources_by_rank", {}).get(
-                            str(worker_rank), "unknown"
-                        ),
-                    ).set(value_float)
+                    self._metric(engine_idx, worker_rank, metric_name).set(value_float)
 
         def _observe_histograms(
             self, transfer_stats_data: dict[str, Any], engine_idx: int
@@ -312,14 +284,7 @@ if UCM_HAS_PROM_METRICS:
                     definition = self._definition(metric_name, "histogram")
                     if definition is None:
                         continue
-                    histogram = self._metric(
-                        engine_idx,
-                        worker_rank,
-                        metric_name,
-                        transfer_stats_data.get("resource_sources_by_rank", {}).get(
-                            str(worker_rank), "unknown"
-                        ),
-                    )
+                    histogram = self._metric(engine_idx, worker_rank, metric_name)
                     if isinstance(value, list):
                         for observation in value:
                             value_float = _finite(observation)
@@ -365,18 +330,13 @@ if UCM_HAS_PROM_METRICS:
             return definition
 
         def _metric(
-            self,
-            engine_idx: int,
-            worker_rank: int | str,
-            metric_name: str,
-            resource_source: str = "unknown",
+            self, engine_idx: int, worker_rank: int | str, metric_name: str
         ) -> PromMetricT:
             worker_rank = str(worker_rank)
-            extra = [resource_source] if metric_name.startswith("drampool_") else []
-            key = (engine_idx, worker_rank, metric_name, *extra)
+            key = (engine_idx, worker_rank, metric_name)
             if key not in self._labeled_metrics:
                 self._labeled_metrics[key] = self._metrics_by_name[metric_name].labels(
-                    *(self._engine_labelvalues[engine_idx] + [worker_rank] + extra)
+                    *(self._engine_labelvalues[engine_idx] + [worker_rank])
                 )
             return self._labeled_metrics[key]
 

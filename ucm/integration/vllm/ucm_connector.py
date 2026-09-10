@@ -2866,14 +2866,6 @@ class UCMConnector(KVConnectorBase_V1, SupportsHMA):
     def get_block_size(self) -> int:
         return self.connector.get_block_size()
 
-    def shutdown(self) -> None:
-        from ucm.store.dram.resource_reporter import stop_drampool_resource_reporter
-
-        stop_drampool_resource_reporter()
-        shutdown = getattr(self.connector, "shutdown", None)
-        if callable(shutdown):
-            shutdown()
-
     def _setup_ucm_metrics(self, vllm_config: "VllmConfig", role: KVConnectorRole):
         self._vllm_metrics_enabled = False
         self._vllm_metric_definitions = []
@@ -2923,15 +2915,12 @@ class UCMConnector(KVConnectorBase_V1, SupportsHMA):
         counter_stats, gauge_stats, histogram_stats = (
             self._metrics_dispatcher.get_stats_and_clear(VLLM_CONNECTOR_CONSUMER)
         )
-        from ucm.store.dram.resource_reporter import get_drampool_resource_source
-
         stats = UCMConnectorStats.from_ucm_snapshot(
             counter_stats,
             gauge_stats,
             histogram_stats,
             worker_rank=self._worker_rank,
             metric_definitions=self._vllm_metric_definitions,
-            resource_source=get_drampool_resource_source(),
         )
         return None if stats.is_empty() else stats
 

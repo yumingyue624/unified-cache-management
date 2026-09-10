@@ -152,42 +152,6 @@ void NodeActor::QueueCompletion(Request request, Status status,
                                                       request.metricsStarted)
                 .count());
     }
-    if (entryResults.size() == request.entries.size()) {
-        for (std::size_t i = 0; i < entryResults.size(); ++i) {
-            if (request.op == OpType::LOOKUP) {
-                UC::Metrics::UpdateStats(
-                    entryResults[i].found
-                        ? NAME_TO_METRIC_ID("dramstore_lookup_hit_entries_total")
-                        : NAME_TO_METRIC_ID("dramstore_lookup_miss_entries_total"),
-                    1.0);
-            } else if (entryResults[i].code == 0) {
-                UC::Metrics::UpdateStats(
-                    request.op == OpType::DUMP
-                        ? NAME_TO_METRIC_ID("dramstore_dump_acknowledged_entries_total")
-                        : NAME_TO_METRIC_ID("dramstore_load_acknowledged_entries_total"),
-                    1.0);
-                UC::Metrics::UpdateStats(
-                    request.op == OpType::DUMP
-                        ? NAME_TO_METRIC_ID("dramstore_dump_acknowledged_bytes_total")
-                        : NAME_TO_METRIC_ID("dramstore_load_acknowledged_bytes_total"),
-                    static_cast<double>(request.entries[i].buffer.length));
-            } else {
-                UC::Metrics::UpdateStats(
-                    request.op == OpType::DUMP
-                        ? NAME_TO_METRIC_ID("dramstore_dump_failed_entries_total")
-                        : NAME_TO_METRIC_ID("dramstore_load_failed_entries_total"),
-                    1.0);
-            }
-        }
-    } else {
-        UC::Metrics::UpdateStats(
-            request.op == OpType::LOOKUP
-                ? NAME_TO_METRIC_ID("dramstore_lookup_unconfirmed_entries_total")
-            : request.op == OpType::DUMP
-                ? NAME_TO_METRIC_ID("dramstore_dump_unconfirmed_entries_total")
-                : NAME_TO_METRIC_ID("dramstore_load_unconfirmed_entries_total"),
-            static_cast<double>(request.entries.size()));
-    }
     for (std::size_t index = 0; index < entryResults.size(); ++index) {
         entryResults[index].originalIndex = request.entries[index].originalIndex;
     }
@@ -530,10 +494,7 @@ void NodeActor::Handle(ReplyObserved event, TimePoint now)
                 failedEntries, event.entryResults.size(), firstErrorCode);
             status = Status::Error("DramPool returned an item failure");
         }
-    }
-    if (event.status.Success()) {
-        // Keep valid per-entry results even when some items make the request
-        // fail. The TaskManager still receives the same overall failure status.
+    } else if (status.Success()) {
         entryResults = std::move(event.entryResults);
     }
     if (event.status.Failure()) {

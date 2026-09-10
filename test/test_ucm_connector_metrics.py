@@ -2865,8 +2865,8 @@ def test_dram_reporter_does_not_depend_on_metrics_policy(
 
     monkeypatch.setattr(config_module, "load_launch_metrics_config", unexpected_access)
     monkeypatch.setattr(dispatcher_module, "get_metrics_dispatcher", unexpected_access)
-    monkeypatch.setattr(reporter, "_REPORTER", None)
-    monkeypatch.setattr(reporter, "os", SimpleNamespace(name="posix"))
+    monkeypatch.setattr(reporter, "_REPORTERS", [])
+    monkeypatch.setattr(reporter.tempfile, "gettempdir", lambda: str(tmp_path))
     monkeypatch.setattr(reporter.atexit, "register", lambda *args: None)
     monkeypatch.setattr(reporter.DramPoolResourceReporter, "start", lambda self: None)
     monkeypatch.setattr(
@@ -2874,11 +2874,12 @@ def test_dram_reporter_does_not_depend_on_metrics_policy(
     )
     store_config = {
         "drampool_resource_log_path": str(tmp_path / "metrics.log"),
-        "drampool_resource_shared_dir": str(tmp_path),
         # The reporter only observes its own resource settings.
         "metrics_config_path": "must-not-be-read.yaml",
         "enable_metrics": False,
     }
     started = reporter.start_drampool_resource_reporter(store_config)
     assert started is not None
+    assert started.shared_dir == tmp_path
+    assert reporter._REPORTERS == [started]
     assert dispatcher_module._DISPATCHER is dispatcher

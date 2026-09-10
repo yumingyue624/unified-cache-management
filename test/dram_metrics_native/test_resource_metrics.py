@@ -309,7 +309,7 @@ def test_native_merge_total_overflow_is_atomic():
 
 def make_reporter(tmp_path, monkeypatch):
     reader = reporter.DramPoolResourceReporter(
-        str(tmp_path / "metrics.log"), str(tmp_path), ["127.0.0.1:12345"]
+        str(tmp_path / "metrics.log"), ["127.0.0.1:12345"], str(tmp_path)
     )
     reader.source_id = "127.0.0.1:12345"
     reader._state_path = tmp_path / "state.json"
@@ -448,7 +448,6 @@ def test_real_prometheus_export(monkeypatch):
         h,
         "scheduler",
         get_metric_definitions(config),
-        resource_source="127.0.0.1:12345",
     )
     vllm_config = SimpleNamespace(
         kv_transfer_config=SimpleNamespace(launch_config={"metrics_config": config})
@@ -458,14 +457,10 @@ def test_real_prometheus_export(monkeypatch):
     samples = [s for metric in registry.collect() for s in metric.samples]
     buckets = [s for s in samples if s.name.endswith("_bucket")]
     assert [s.value for s in buckets] == [2, 5, 6, 6]
-    assert all(s.labels["drampool_endpoint"] == "127.0.0.1:12345" for s in buckets)
     assert next(s.value for s in samples if s.name.endswith("_sum")) == pytest.approx(
         0.0019
     )
     assert next(s.value for s in samples if s.name.endswith("_count")) == 6
-    assert b'drampool_endpoint="127.0.0.1:12345"' in prometheus.generate_latest(
-        registry
-    )
 
 
 @pytest.mark.skipif(os.name != "posix", reason="real flock election requires POSIX")
@@ -473,8 +468,8 @@ def test_real_flock_excludes_other_processes(tmp_path):
     readers = [
         reporter.DramPoolResourceReporter(
             str(tmp_path / "metrics.log"),
-            str(tmp_path),
             ["127.0.0.1:12345"],
+            str(tmp_path),
         )
         for _ in range(2)
     ]
@@ -526,8 +521,8 @@ def test_reporter_thread_elects_once_and_loser_exits(tmp_path, monkeypatch):
     readers = [
         reporter.DramPoolResourceReporter(
             str(tmp_path / "metrics.log"),
-            str(tmp_path),
             ["127.0.0.1:12345"],
+            str(tmp_path),
         )
         for _ in range(2)
     ]
@@ -541,7 +536,7 @@ def test_reporter_thread_elects_once_and_loser_exits(tmp_path, monkeypatch):
 
     try:
         readers[0].start()
-        wait_until(lambda: readers[0]._snapshot_timestamp > 0)
+        wait_until(lambda: readers[0]._state_path and readers[0]._state_path.exists())
         readers[1].start()
         readers[1]._thread.join(timeout=5)
         assert not readers[1]._thread.is_alive()
