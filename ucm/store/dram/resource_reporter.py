@@ -319,9 +319,7 @@ class DramPoolResourceReporter:
         finally:
             temporary.unlink(missing_ok=True)
 
-    def _collect_once(self):
-        snapshot = self._read_latest_snapshot()
-        previous = self._read_state()
+    def _publish_snapshot(self, snapshot, previous):
         counters, gauges, histograms = snapshot_deltas(snapshot, previous)
         gauges |= {
             "drampool_resource_snapshot_timestamp_seconds": snapshot.timestamp,
@@ -339,6 +337,11 @@ class DramPoolResourceReporter:
         except OSError as error:
             logger.warning(f"Failed to write DramPool reporter state: {error}")
             ucmmetrics.update_stats({"drampool_resource_read_errors_total": 1.0})
+
+    def _collect_once(self):
+        snapshot = self._read_latest_snapshot()
+        previous = self._read_state()
+        self._publish_snapshot(snapshot, previous)
 
     def _run(self):
         try:
