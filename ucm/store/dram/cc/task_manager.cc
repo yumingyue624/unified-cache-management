@@ -244,16 +244,14 @@ std::vector<Request> TaskManager::BuildRequests(OpType op, std::vector<IoEntry> 
 
 void TaskManager::ProcessSubmission(Submission submission)
 {
-    if (submission.metricsStarted != std::chrono::steady_clock::time_point{}) {
-        UC::Metrics::UpdateStats(submission.op == OpType::LOOKUP
-                                     ? NAME_TO_METRIC_ID("dramstore_lookup_task_queue_duration_us")
-                                 : submission.op == OpType::DUMP
-                                     ? NAME_TO_METRIC_ID("dramstore_dump_task_queue_duration_us")
-                                     : NAME_TO_METRIC_ID("dramstore_load_task_queue_duration_us"),
-                                 std::chrono::duration<double, std::micro>(
-                                     std::chrono::steady_clock::now() - submission.metricsStarted)
-                                     .count());
-    }
+    UC::Metrics::UpdateStats(submission.op == OpType::LOOKUP
+                                 ? NAME_TO_METRIC_ID("dramstore_lookup_task_queue_duration_us")
+                             : submission.op == OpType::DUMP
+                                 ? NAME_TO_METRIC_ID("dramstore_dump_task_queue_duration_us")
+                                 : NAME_TO_METRIC_ID("dramstore_load_task_queue_duration_us"),
+                             std::chrono::duration<double, std::micro>(
+                                 std::chrono::steady_clock::now() - submission.metricsStarted)
+                                 .count());
     if (submission.deadline <= Clock::now()) {
         UC_WARN("DramStore task expired before processing, task_id={} op={}", submission.taskId,
                 static_cast<unsigned>(submission.op));
@@ -269,17 +267,15 @@ void TaskManager::ProcessSubmission(Submission submission)
                                      ? NAME_TO_METRIC_ID("dramstore_dump_task_timeouts_total")
                                      : NAME_TO_METRIC_ID("dramstore_load_task_timeouts_total"),
                                  1.0);
-        if (submission.metricsStarted != std::chrono::steady_clock::time_point{}) {
-            UC::Metrics::UpdateStats(
-                submission.op == OpType::LOOKUP
-                    ? NAME_TO_METRIC_ID("dramstore_lookup_task_duration_us")
-                : submission.op == OpType::DUMP
-                    ? NAME_TO_METRIC_ID("dramstore_dump_task_duration_us")
-                    : NAME_TO_METRIC_ID("dramstore_load_task_duration_us"),
-                std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() -
-                                                          submission.metricsStarted)
-                    .count());
-        }
+        UC::Metrics::UpdateStats(
+            submission.op == OpType::LOOKUP
+                ? NAME_TO_METRIC_ID("dramstore_lookup_task_duration_us")
+            : submission.op == OpType::DUMP
+                ? NAME_TO_METRIC_ID("dramstore_dump_task_duration_us")
+                : NAME_TO_METRIC_ID("dramstore_load_task_duration_us"),
+            std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() -
+                                                      submission.metricsStarted)
+                .count());
         submission.promise.set_value(TaskResult{Status::Timeout(), {}});
         return;
     }
@@ -301,17 +297,15 @@ void TaskManager::ProcessSubmission(Submission submission)
                                      ? NAME_TO_METRIC_ID("dramstore_dump_tasks_failed_total")
                                      : NAME_TO_METRIC_ID("dramstore_load_tasks_failed_total"),
                                  1.0);
-        if (submission.metricsStarted != std::chrono::steady_clock::time_point{}) {
-            UC::Metrics::UpdateStats(
-                submission.op == OpType::LOOKUP
-                    ? NAME_TO_METRIC_ID("dramstore_lookup_task_duration_us")
-                : submission.op == OpType::DUMP
-                    ? NAME_TO_METRIC_ID("dramstore_dump_task_duration_us")
-                    : NAME_TO_METRIC_ID("dramstore_load_task_duration_us"),
-                std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() -
-                                                          submission.metricsStarted)
-                    .count());
-        }
+        UC::Metrics::UpdateStats(
+            submission.op == OpType::LOOKUP
+                ? NAME_TO_METRIC_ID("dramstore_lookup_task_duration_us")
+            : submission.op == OpType::DUMP
+                ? NAME_TO_METRIC_ID("dramstore_dump_task_duration_us")
+                : NAME_TO_METRIC_ID("dramstore_load_task_duration_us"),
+            std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() -
+                                                      submission.metricsStarted)
+                .count());
         submission.promise.set_value(TaskResult{Status::NoSpace(), {}});
         return;
     }
@@ -405,15 +399,13 @@ void TaskManager::CompleteRequest(TaskId taskId, Status status, std::vector<Entr
                                       : NAME_TO_METRIC_ID("dramstore_load_task_timeouts_total"),
             1.0);
     }
-    if (task.metricsStarted != std::chrono::steady_clock::time_point{}) {
-        UC::Metrics::UpdateStats(
-            task.op == OpType::LOOKUP ? NAME_TO_METRIC_ID("dramstore_lookup_task_duration_us")
-            : task.op == OpType::DUMP ? NAME_TO_METRIC_ID("dramstore_dump_task_duration_us")
-                                      : NAME_TO_METRIC_ID("dramstore_load_task_duration_us"),
-            std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() -
-                                                      task.metricsStarted)
-                .count());
-    }
+    UC::Metrics::UpdateStats(
+        task.op == OpType::LOOKUP ? NAME_TO_METRIC_ID("dramstore_lookup_task_duration_us")
+        : task.op == OpType::DUMP ? NAME_TO_METRIC_ID("dramstore_dump_task_duration_us")
+                                  : NAME_TO_METRIC_ID("dramstore_load_task_duration_us"),
+        std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() -
+                                                  task.metricsStarted)
+            .count());
     activeTasks_.erase(found);
     promise.set_value(TaskResult{std::move(taskStatus), std::move(lookupResults)});
 }
@@ -468,17 +460,15 @@ void TaskManager::Run() noexcept
                         ? NAME_TO_METRIC_ID("dramstore_dump_tasks_failed_total")
                         : NAME_TO_METRIC_ID("dramstore_load_tasks_failed_total"),
                     1.0);
-                if (submission.metricsStarted != std::chrono::steady_clock::time_point{}) {
-                    UC::Metrics::UpdateStats(
-                        submission.op == OpType::LOOKUP
-                            ? NAME_TO_METRIC_ID("dramstore_lookup_task_duration_us")
-                        : submission.op == OpType::DUMP
-                            ? NAME_TO_METRIC_ID("dramstore_dump_task_duration_us")
-                            : NAME_TO_METRIC_ID("dramstore_load_task_duration_us"),
-                        std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() -
-                                                                  submission.metricsStarted)
-                            .count());
-                }
+                UC::Metrics::UpdateStats(
+                    submission.op == OpType::LOOKUP
+                        ? NAME_TO_METRIC_ID("dramstore_lookup_task_duration_us")
+                    : submission.op == OpType::DUMP
+                        ? NAME_TO_METRIC_ID("dramstore_dump_task_duration_us")
+                        : NAME_TO_METRIC_ID("dramstore_load_task_duration_us"),
+                    std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() -
+                                                              submission.metricsStarted)
+                        .count());
                 submission.promise.set_value(
                     TaskResult{Status::Error("TaskManager stopped unexpectedly"), {}});
             }
@@ -489,17 +479,15 @@ void TaskManager::Run() noexcept
                 : task.op == OpType::DUMP ? NAME_TO_METRIC_ID("dramstore_dump_tasks_failed_total")
                                           : NAME_TO_METRIC_ID("dramstore_load_tasks_failed_total"),
                 1.0);
-            if (task.metricsStarted != std::chrono::steady_clock::time_point{}) {
-                UC::Metrics::UpdateStats(
-                    task.op == OpType::LOOKUP
-                        ? NAME_TO_METRIC_ID("dramstore_lookup_task_duration_us")
-                    : task.op == OpType::DUMP
-                        ? NAME_TO_METRIC_ID("dramstore_dump_task_duration_us")
-                        : NAME_TO_METRIC_ID("dramstore_load_task_duration_us"),
-                    std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() -
-                                                              task.metricsStarted)
-                        .count());
-            }
+            UC::Metrics::UpdateStats(
+                task.op == OpType::LOOKUP
+                    ? NAME_TO_METRIC_ID("dramstore_lookup_task_duration_us")
+                : task.op == OpType::DUMP
+                    ? NAME_TO_METRIC_ID("dramstore_dump_task_duration_us")
+                    : NAME_TO_METRIC_ID("dramstore_load_task_duration_us"),
+                std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() -
+                                                          task.metricsStarted)
+                    .count());
             task.promise.set_value(
                 TaskResult{Status::Error("TaskManager stopped unexpectedly"), {}});
         }

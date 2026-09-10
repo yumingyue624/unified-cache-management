@@ -251,8 +251,6 @@ class DramPoolResourceReporter:
         raise ValueError("No complete valid DramPool snapshot")
 
     def _try_become_leader(self):
-        if self._lock_file is not None:
-            return True
         try:
             import fcntl
         except ImportError:
@@ -322,8 +320,6 @@ class DramPoolResourceReporter:
             temporary.unlink(missing_ok=True)
 
     def _collect_once(self):
-        if self._stop_event.is_set():
-            return
         snapshot = self._read_latest_snapshot()
         previous = self._read_state()
         counters, gauges, histograms = snapshot_deltas(snapshot, previous)

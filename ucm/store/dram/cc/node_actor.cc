@@ -143,15 +143,13 @@ void NodeActor::QueueCompletion(Request request, Status status,
                                      : NAME_TO_METRIC_ID("dramstore_load_requests_failed_total"),
                                  1.0);
     }
-    if (request.metricsStarted != std::chrono::steady_clock::time_point{}) {
-        UC::Metrics::UpdateStats(
-            request.op == OpType::LOOKUP ? NAME_TO_METRIC_ID("dramstore_lookup_request_duration_us")
-            : request.op == OpType::DUMP ? NAME_TO_METRIC_ID("dramstore_dump_request_duration_us")
-                                         : NAME_TO_METRIC_ID("dramstore_load_request_duration_us"),
-            std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() -
-                                                      request.metricsStarted)
-                .count());
-    }
+    UC::Metrics::UpdateStats(
+        request.op == OpType::LOOKUP ? NAME_TO_METRIC_ID("dramstore_lookup_request_duration_us")
+        : request.op == OpType::DUMP ? NAME_TO_METRIC_ID("dramstore_dump_request_duration_us")
+                                     : NAME_TO_METRIC_ID("dramstore_load_request_duration_us"),
+        std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() -
+                                                  request.metricsStarted)
+            .count());
     for (std::size_t index = 0; index < entryResults.size(); ++index) {
         entryResults[index].originalIndex = request.entries[index].originalIndex;
     }
