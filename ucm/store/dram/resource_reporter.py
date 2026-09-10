@@ -275,8 +275,6 @@ class DramPoolResourceReporter:
             if len(data) > MAX_RECORD_BYTES:
                 raise ValueError("Oversized reporter state")
             state = json.loads(data)
-            if state["state_version"] != 1:
-                raise ValueError("Unsupported reporter state")
             return parse_drampool_resource_snapshot(json.dumps(state["snapshot"]))
         except FileNotFoundError:
             return None
@@ -290,10 +288,7 @@ class DramPoolResourceReporter:
         try:
             with temporary.open("w", encoding="utf-8") as stream:
                 json.dump(
-                    {
-                        "state_version": 1,
-                        "snapshot": _snapshot_record(snapshot),
-                    },
+                    {"snapshot": _snapshot_record(snapshot)},
                     stream,
                     allow_nan=False,
                     separators=(",", ":"),
