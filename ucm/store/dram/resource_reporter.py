@@ -217,8 +217,20 @@ class DramPoolResourceReporter:
         self._stop_event.set()
         if self._thread.is_alive() and threading.current_thread() is not self._thread:
             self._thread.join(timeout=min(self.interval_sec + 1.0, 5.0))
-        # Only _run's finally releases leadership. A slow file operation must not
-        # allow another leader while this thread could still import a snapshot.
+        if not self._thread.is_alive():
+            self._release_leadership()
+
+    def _release_leadership(self):
+        if self._lock_file is None:
+            return
+        try:
+            import fcntl
+
+            fcntl.flock(self._lock_file.fileno(), fcntl.LOCK_UN)
+        except (ImportError, OSError):
+            pass
+        self._lock_file.close()
+        self._lock_file = None
 
     def _error(self, stage: str, error: Exception):
         logger.warning(f"DramPool resource {stage} failed: {error}")
@@ -369,9 +381,7 @@ class DramPoolResourceReporter:
                     self._error("read", error)
                 self._stop_event.wait(self.interval_sec)
         finally:
-            if self._lock_file is not None:
-                self._lock_file.close()
-                self._lock_file = None
+            self._release_leadership()
 
 
 def start_drampool_resource_reporter(config: dict) -> DramPoolResourceReporter | None:
