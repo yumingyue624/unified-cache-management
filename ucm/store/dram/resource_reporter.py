@@ -216,7 +216,7 @@ class DramPoolResourceReporter:
             import fcntl
 
             fcntl.flock(self._lock_file.fileno(), fcntl.LOCK_UN)
-        except (ImportError, OSError):
+        except Exception:
             pass
         self._lock_file.close()
         self._lock_file = None
@@ -280,14 +280,7 @@ class DramPoolResourceReporter:
             return parse_drampool_resource_snapshot(json.dumps(state["snapshot"]))
         except FileNotFoundError:
             return None
-        except (
-            OSError,
-            ValueError,
-            KeyError,
-            TypeError,
-            AttributeError,
-            OverflowError,
-        ) as error:
+        except Exception as error:
             logger.warning(f"Ignoring invalid DramPool reporter state: {error}")
             ucmmetrics.update_stats({"drampool_resource_read_errors_total": 1.0})
             return None
