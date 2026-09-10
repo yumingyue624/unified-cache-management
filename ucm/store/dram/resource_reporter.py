@@ -191,6 +191,7 @@ class DramPoolResourceReporter:
         if not self.shared_dir.is_dir():
             self.shared_dir = Path(tempfile.gettempdir())
         self._lock_file = None
+        self._lock_path: Path | None = None
         self._state_path: Path | None = None
         self._stop_event = threading.Event()
         self._thread = threading.Thread(
@@ -264,8 +265,9 @@ class DramPoolResourceReporter:
         identity = hashlib.sha256(str(self.log_path.resolve()).encode()).hexdigest()[
             :24
         ]
+        self._lock_path = self.shared_dir / f"ucm_drampool_metrics_{identity}.lock"
         self._state_path = self.shared_dir / f"ucm_drampool_metrics_{identity}.json"
-        lock_file = self._state_path.with_suffix(".lock").open("a+")
+        lock_file = self._lock_path.open("a+")
         try:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
