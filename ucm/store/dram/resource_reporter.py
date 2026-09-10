@@ -319,7 +319,7 @@ class DramPoolResourceReporter:
         finally:
             temporary.unlink(missing_ok=True)
 
-    def _publish_snapshot(self, snapshot, previous):
+    def _report_snapshot(self, snapshot, previous):
         counters, gauges, histograms = snapshot_deltas(snapshot, previous)
         gauges |= {
             "drampool_resource_snapshot_timestamp_seconds": snapshot.timestamp,
@@ -341,7 +341,7 @@ class DramPoolResourceReporter:
     def _collect_once(self):
         snapshot = self._read_latest_snapshot()
         previous = self._read_state()
-        self._publish_snapshot(snapshot, previous)
+        self._report_snapshot(snapshot, previous)
 
     def _run(self):
         try:
