@@ -239,13 +239,7 @@ class DramPoolResourceReporter:
                 if len(line) > MAX_RECORD_BYTES:
                     raise ValueError("Snapshot exceeds 1 MiB")
                 return parse_drampool_resource_snapshot(line.decode("utf-8"))
-            except (
-                ValueError,
-                KeyError,
-                TypeError,
-                OverflowError,
-                AttributeError,
-            ) as error:
+            except Exception as error:
                 logger.warning(f"Failed to parse DramPool resource snapshot: {error}")
                 ucmmetrics.update_stats({"drampool_resource_read_errors_total": 1.0})
         raise ValueError("No complete valid DramPool snapshot")
