@@ -25,9 +25,8 @@ from ucm.metrics_config import (
     MetricDefinition,
     consumer_enabled,
     get_metric_definitions,
-    load_launch_metrics_config,
-    metrics_enabled,
 )
+from ucm.metrics_dispatcher import get_initialized_metrics_dispatcher
 from ucm.shared.metrics import ucmmetrics
 
 logger = init_logger(__name__)
@@ -418,16 +417,12 @@ def start_drampool_resource_reporter(config: dict) -> DramPoolResourceReporter |
     enabled = config.get("drampool_resource_metrics_enable", bool(path))
     if isinstance(enabled, str):
         enabled = enabled.lower() in {"true", "1", "yes", "on"}
-    if (
-        not enabled
-        or not path
-        or int(config.get("device_id", -1)) >= 0
-        or not metrics_enabled(config)
-    ):
+    if not enabled or not path or int(config.get("device_id", -1)) >= 0:
         return None
-    from ucm.metrics_dispatcher import get_metrics_dispatcher
-
-    active_config = get_metrics_dispatcher(load_launch_metrics_config(config)).config
+    dispatcher = get_initialized_metrics_dispatcher()
+    if dispatcher is None:
+        return None
+    active_config = dispatcher.config
     if not consumer_enabled(active_config, VLLM_CONNECTOR_CONSUMER):
         logger.warning(
             "DramPool resource reporter requires the vllm_connector consumer"

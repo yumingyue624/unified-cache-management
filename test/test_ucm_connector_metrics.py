@@ -92,7 +92,7 @@ class FakeHistogram(FakeMetric):
 
 
 class FakeThread:
-    def __init__(self, target):
+    def __init__(self, target, *, name=None, daemon=None):
         self.target = target
         self.started = False
         self.joined = False
@@ -2812,7 +2812,7 @@ def test_pipeline_dashboard_contains_only_performance_panels_with_chinese_hints(
     )
 
 
-def test_dram_store_inherits_launch_metrics_policy(monkeypatch):
+def test_dram_store_does_not_copy_launch_metrics_policy(monkeypatch):
     connector = object.__new__(UCMDirectConnector)
     connector.connector_configs = [
         {
@@ -2840,9 +2840,64 @@ def test_dram_store_inherits_launch_metrics_policy(monkeypatch):
         raising=False,
     )
     config = connector._create_store(None)
-    assert config["enable_metrics"] is False
-    assert config["metrics_config"] == connector.launch_config["metrics_config"]
-    assert config["metrics_config"] is not connector.launch_config["metrics_config"]
+    assert config["enable_metrics"] is True
+    assert "metrics_config" not in config
     assert (
         connector.connector_configs[0]["ucm_connector_config"]["enable_metrics"] is True
+    )
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_dram_reporter_uses_connector_metrics_runtime(tmp_path, monkeypatch, enabled):
+    from ucm.store.dram import resource_reporter as reporter
+    from ucm.metrics_dispatcher import get_initialized_metrics_dispatcher
+
+    _reset_fakes()
+    monkeypatch.setattr(reporter, "_REPORTER", None)
+    monkeypatch.setattr(reporter, "os", SimpleNamespace(name="posix"))
+    monkeypatch.setattr(reporter.atexit, "register", lambda *args: None)
+    monkeypatch.setattr(reporter.DramPoolResourceReporter, "start", lambda self: None)
+    monkeypatch.setattr(
+        fake_ucmmetrics, "merge_histogram_stats", lambda values: None, raising=False
+    )
+    store_config = {
+        "drampool_resource_log_path": str(tmp_path / "metrics.log"),
+        "drampool_resource_shared_dir": str(tmp_path),
+        # Nested settings must not override the connector's launch policy.
+        "metrics_config_path": "must-not-be-read.yaml",
+        "enable_metrics": not enabled,
+    }
+    assert reporter.start_drampool_resource_reporter(store_config) is None
+    assert get_initialized_metrics_dispatcher() is None
+
+    connector = object.__new__(UCMConnector)
+    connector.launch_config = {
+        "enable_metrics": enabled,
+        "metrics_config": {
+            "consumers": {"vllm_connector": True, "multiproc": False},
+            "gauge": [{"name": "drampool_used_bytes"}],
+        },
+    }
+    connector._setup_ucm_metrics(_vllm_config(), KVConnectorRole.SCHEDULER)
+    dispatcher = get_initialized_metrics_dispatcher()
+    started = reporter.start_drampool_resource_reporter(store_config)
+    assert get_initialized_metrics_dispatcher() is dispatcher
+    if enabled:
+        assert started is not None
+        assert set(started.definitions) == {"drampool_used_bytes"}
+    else:
+        assert started is None
+        assert dispatcher is None
+
+
+def test_dram_reporter_respects_active_consumer_policy(monkeypatch):
+    from ucm.store.dram import resource_reporter as reporter
+
+    _reset_fakes()
+    get_metrics_dispatcher({"consumers": {"multiproc": True, "vllm_connector": False}})
+    assert (
+        reporter.start_drampool_resource_reporter(
+            {"drampool_resource_log_path": "unused.log"}
+        )
+        is None
     )

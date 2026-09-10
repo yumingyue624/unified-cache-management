@@ -157,7 +157,7 @@ Queue depth、active requests、used IO entries 等 Gauge 放在第二批：由�
 
 ### 5.4 链接和启动顺序
 
-`dramstore` 显式链接已有 `metrics` shared target，并为安装后的库补齐 metrics 目录的 RPATH；Python `_preload_metrics` 与现有 Posix/Cache 使用方式保持一致。确保 SO 与 pybind 使用同一份 libmetrics，不把 metrics.cc 再编译进 dramstore，避免两个单例导致数据不可见。
+`dramstore` 显式链接已有 `metrics` shared target，并为安装后的库补齐 metrics 目录的 RPATH；Python 复用 pipeline 模块已有的 `_preload_metrics`，Dram builder 不重复预加载。确保 SO 与 pybind 使用同一份 libmetrics，不把 metrics.cc 再编译进 dramstore，避免两个单例导致数据不可见。
 
 Python metrics 定义注册须在启动业务打点线程与文件 Reporter 前完成。Connector/Store 的独立使用应保留现有未启用 metrics 时 no-op 行为，不能要求用户为了业务运行必须启用监控。
 
@@ -203,7 +203,7 @@ Python metrics 定义注册须在启动业务打点线程与文件 Reporter 前�
 
 首版采集轮询固定 10 秒，不增加无必要的调参项。新鲜度阈值默认三个约定生产周期，并允许启动宽限；它属于监控判断，不触发业务断连。
 
-`_dram_pipeline_builder` 在 Stack 成功后登记 Reporter；正式 start 必须等待 metrics 注册完成，若实际初始化顺序相反，由 connector 初始化完成阶段激活。只在 Scheduler 角色启动，采用现有明确角色/device_id 约定，不凭 rank==0 代替 Scheduler 判断。
+`UCMConnector._setup_ucm_metrics()` 在创建具体 connector/store 前统一注册 metrics。`_dram_pipeline_builder` 在 Stack 成功后启动 Reporter；Reporter 通过 `get_initialized_metrics_dispatcher()` 读取已有 dispatcher 的生效配置，没有已初始化的 dispatcher 时不启动，不加载配置或创建 dispatcher。不向嵌套 store 配置复制全局 metrics 设置。DramStore 没有脱离 vLLM/UCM 的独立运行场景，不增加兜底初始化。只在 Scheduler 角色启动，采用现有明确角色/device_id 约定，不凭 rank==0 代替 Scheduler 判断。
 
 同进程对同一 source 只创建一个 Reporter。所有对象在 fork 后创建；线程不跨 fork 继承。关闭通过 stop Event 唤醒，在线程退出后释放锁；不能 join 超时后仍释放锁而让旧线程继续导入。优先绑定 connector/store 显式关闭，atexit 仅作兜底。
 

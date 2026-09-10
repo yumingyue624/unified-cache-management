@@ -142,6 +142,12 @@ class MetricsDispatcher:
         return ({}, {}, {})
 
 
+def get_initialized_metrics_dispatcher() -> MetricsDispatcher | None:
+    """Let metric producers use the runtime initialized by the connector."""
+    with _DISPATCHER_LOCK:
+        return _DISPATCHER
+
+
 def get_metrics_dispatcher(config: dict[str, Any] | None) -> MetricsDispatcher:
     global _DISPATCHER
     with _DISPATCHER_LOCK:

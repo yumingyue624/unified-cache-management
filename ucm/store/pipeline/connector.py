@@ -376,32 +376,10 @@ def _yuanrong_posix_pipeline_builder(
 def _dram_pipeline_builder(
     config: Dict[str, object], pipeline: ucmpipelinestore.PipelineStore
 ):
-    from ucm.metrics_config import (
-        MULTIPROC_CONSUMER,
-        VLLM_CONNECTOR_CONSUMER,
-        consumer_enabled,
-        load_launch_metrics_config,
-        setup_ucm_metrics,
-    )
-    from ucm.metrics_dispatcher import get_metrics_dispatcher
     from ucm.store.dram.resource_reporter import start_drampool_resource_reporter
 
-    metrics_config = load_launch_metrics_config(config)
-    if metrics_config:
-        active_config = get_metrics_dispatcher(metrics_config).config
-        if any(
-            consumer_enabled(active_config, c)
-            for c in (MULTIPROC_CONSUMER, VLLM_CONNECTOR_CONSUMER)
-        ):
-            setup_ucm_metrics(active_config)
     store_dir = Path(__file__).resolve().parent.parent
-    _preload_metrics(store_dir)
-    # Inline metric definitions belong to the Python reporter/dispatcher. The
-    # native store accepts scalar/list configuration values only.
-    store_config = {
-        key: value for key, value in config.items() if key != "metrics_config"
-    }
-    pipeline.Stack("Dram", str(store_dir / "dram/libdramstore.so"), store_config)
+    pipeline.Stack("Dram", str(store_dir / "dram/libdramstore.so"), config)
     start_drampool_resource_reporter(config)
 
 

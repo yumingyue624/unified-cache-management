@@ -1329,12 +1329,6 @@ class UCMDirectConnector(KVConnectorBase_V1):
         name = self.connector_configs[0]["ucm_connector_name"]
         module_path = self.connector_configs[0].get("ucm_connector_module_path", None)
         config = copy.deepcopy(self.connector_configs[0]["ucm_connector_config"])
-        if config.get("store_pipeline") == "Dram":
-            # The store config is nested; preserve the launch-wide metrics policy
-            # when its Python reporter is constructed with only this dictionary.
-            for key in ("enable_metrics", "metrics_config", "metrics_config_path"):
-                if key in self.launch_config:
-                    config[key] = copy.deepcopy(self.launch_config[key])
         config.setdefault("share_buffer_enable", self.is_mla)
         self._set_default_shm_buffer_capacity(config)
         if "storage_backends" in config:
