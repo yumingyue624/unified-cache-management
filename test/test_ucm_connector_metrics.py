@@ -92,7 +92,7 @@ class FakeHistogram(FakeMetric):
 
 
 class FakeThread:
-    def __init__(self, target):
+    def __init__(self, target, *, name=None, daemon=None):
         self.target = target
         self.started = False
         self.joined = False
@@ -302,7 +302,7 @@ def _install_stubs():
     _install_package("ucm", REPO_ROOT / "ucm")
     _install_package("ucm.integration", REPO_ROOT / "ucm" / "integration")
     _install_package("ucm.integration.vllm", REPO_ROOT / "ucm" / "integration" / "vllm")
-    _install_module("torch", Tensor=type("Tensor", (), {}))
+    _install_module("torch", Tensor=type("Tensor", (), {}), dtype=type("dtype", (), {}))
     _install_module(
         "prometheus_client",
         Counter=FakeCounter,
@@ -350,6 +350,7 @@ def _install_stubs():
         KVCacheConfig=type("KVCacheConfig", (), {}),
         KVCacheSpec=type("KVCacheSpec", (), {}),
         MambaSpec=type("MambaSpec", (), {}),
+        MLAAttentionSpec=type("MLAAttentionSpec", (), {}),
         SlidingWindowSpec=type("SlidingWindowSpec", (), {}),
         UniformTypeKVCacheSpecs=type("UniformTypeKVCacheSpecs", (), {}),
     )
@@ -360,6 +361,7 @@ def _install_stubs():
     _install_module(
         "ucm.integration.vllm.device",
         create_device=lambda *args, **kwargs: None,
+        get_current_device_id=lambda: 0,
     )
     _install_module("ucm.logger", init_logger=lambda name: _Logger())
     _install_module("ucm.shared.metrics", ucmmetrics=fake_ucmmetrics)
@@ -2808,3 +2810,80 @@ def test_pipeline_dashboard_contains_only_performance_panels_with_chinese_hints(
         any("\u4e00" <= char <= "\u9fff" for char in panel["description"])
         for panel in all_panels
     )
+
+
+def test_dram_store_does_not_copy_launch_metrics_policy(monkeypatch):
+    connector = object.__new__(UCMDirectConnector)
+    connector.connector_configs = [
+        {
+            "ucm_connector_name": "UcmPipelineStore",
+            "ucm_connector_config": {
+                "store_pipeline": "Dram",
+                "enable_metrics": True,
+            },
+        }
+    ]
+    connector.launch_config = {
+        "enable_metrics": False,
+        "metrics_config": _metrics_config(),
+    }
+    connector.is_mla = False
+    connector.unique_id = "test"
+    connector._role = KVConnectorRole.SCHEDULER
+    connector._vllm_config = SimpleNamespace(
+        parallel_config=SimpleNamespace(data_parallel_rank=1)
+    )
+    monkeypatch.setattr(
+        ucm_connector_module.UcmConnectorFactoryV1,
+        "create_connector",
+        lambda name, config, module_path: config,
+        raising=False,
+    )
+    config = connector._create_store(None)
+    assert config["enable_metrics"] is True
+    assert "metrics_config" not in config
+    assert (
+        connector.connector_configs[0]["ucm_connector_config"]["enable_metrics"] is True
+    )
+
+
+@pytest.mark.parametrize("consumer", [None, "multiproc", "vllm_connector"])
+def test_dram_reporter_does_not_depend_on_metrics_policy(
+    tmp_path, monkeypatch, consumer
+):
+    import ucm.metrics_config as config_module
+    import ucm.metrics_dispatcher as dispatcher_module
+    from ucm.store.dram import resource_reporter as reporter
+
+    _reset_fakes()
+    dispatcher = (
+        get_metrics_dispatcher({"consumers": {consumer: True}}) if consumer else None
+    )
+
+    def unexpected_access(*args):
+        pytest.fail("reporter must not load metrics config or acquire a dispatcher")
+
+    monkeypatch.setattr(config_module, "load_launch_metrics_config", unexpected_access)
+    monkeypatch.setattr(dispatcher_module, "get_metrics_dispatcher", unexpected_access)
+    monkeypatch.setattr(reporter, "_REPORTER", None)
+    monkeypatch.setattr(reporter.tempfile, "gettempdir", lambda: str(tmp_path))
+    monkeypatch.setattr(reporter.atexit, "register", lambda *args: None)
+    monkeypatch.setattr(reporter.DramPoolResourceReporter, "start", lambda self: None)
+    monkeypatch.setattr(
+        fake_ucmmetrics, "merge_histogram_stats", lambda values: None, raising=False
+    )
+    store_config = {
+        "drampool_resource_log_path": str(tmp_path / "metrics.log"),
+        # The reporter only observes its own resource settings.
+        "metrics_config_path": "must-not-be-read.yaml",
+        "enable_metrics": False,
+        "drampool_resource_metrics_interval_sec": 23,
+    }
+    started = reporter.start_drampool_resource_reporter(store_config)
+    restarted = reporter.start_drampool_resource_reporter(store_config)
+    assert started is not None
+    assert restarted is started
+    assert started.shared_dir == tmp_path
+    assert started.interval_sec == 23
+    assert reporter._REPORTER is started
+    assert dispatcher_module._DISPATCHER is dispatcher
