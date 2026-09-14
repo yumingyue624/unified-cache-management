@@ -26,6 +26,7 @@
 #include <cassert>
 #include <cstring>
 #include <utility>
+#include "dram_metrics.h"
 #include "logger/logger.h"
 #include "metrics_api.h"
 
@@ -129,24 +130,12 @@ Status NodeActor::EncodeRequest(const ReplySlot& replySlot, RequestId requestId,
 void NodeActor::QueueCompletion(Request request, Status status,
                                 std::vector<EntryResult> entryResults)
 {
-    UC::Metrics::UpdateStats(request.op == OpType::LOOKUP
-                                 ? NAME_TO_METRIC_ID("dramstore_lookup_requests_completed_total")
-                             : request.op == OpType::DUMP
-                                 ? NAME_TO_METRIC_ID("dramstore_dump_requests_completed_total")
-                                 : NAME_TO_METRIC_ID("dramstore_load_requests_completed_total"),
-                             1.0);
+    UC::Metrics::UpdateStats(DRAMSTORE_OP_METRIC(request.op, "requests_completed_total"), 1.0);
     if (status.Failure()) {
-        UC::Metrics::UpdateStats(request.op == OpType::LOOKUP
-                                     ? NAME_TO_METRIC_ID("dramstore_lookup_requests_failed_total")
-                                 : request.op == OpType::DUMP
-                                     ? NAME_TO_METRIC_ID("dramstore_dump_requests_failed_total")
-                                     : NAME_TO_METRIC_ID("dramstore_load_requests_failed_total"),
-                                 1.0);
+        UC::Metrics::UpdateStats(DRAMSTORE_OP_METRIC(request.op, "requests_failed_total"), 1.0);
     }
     UC::Metrics::UpdateStats(
-        request.op == OpType::LOOKUP ? NAME_TO_METRIC_ID("dramstore_lookup_request_duration_us")
-        : request.op == OpType::DUMP ? NAME_TO_METRIC_ID("dramstore_dump_request_duration_us")
-                                     : NAME_TO_METRIC_ID("dramstore_load_request_duration_us"),
+        DRAMSTORE_OP_METRIC(request.op, "request_duration_us"),
         std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() -
                                                   request.metricsStarted)
             .count());
