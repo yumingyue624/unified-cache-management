@@ -32,6 +32,26 @@
 #include "router/router.h"
 
 namespace UC::Dram {
+namespace {
+
+void RecordTaskCompletionMetrics(OpType op, const Status& status,
+                                 std::chrono::steady_clock::time_point started)
+{
+    if (status.Success()) {
+        UC::Metrics::UpdateStats(DRAMSTORE_OP_METRIC(op, "tasks_succeeded_total"), 1.0);
+    } else {
+        UC::Metrics::UpdateStats(DRAMSTORE_OP_METRIC(op, "tasks_failed_total"), 1.0);
+    }
+    if (status == Status::Timeout()) {
+        UC::Metrics::UpdateStats(DRAMSTORE_OP_METRIC(op, "task_timeouts_total"), 1.0);
+    }
+    UC::Metrics::UpdateStats(
+        DRAMSTORE_OP_METRIC(op, "task_duration_us"),
+        std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - started)
+            .count());
+}
+
+}  // namespace
 
 TaskManager::TaskManager(TaskManagerConfig config, TaskManagerDependencies dependencies)
     : config_(std::move(config)),
@@ -244,14 +264,9 @@ void TaskManager::ProcessSubmission(Submission submission)
     if (submission.deadline <= Clock::now()) {
         UC_WARN("DramStore task expired before processing, task_id={} op={}", submission.taskId,
                 static_cast<unsigned>(submission.op));
-        UC::Metrics::UpdateStats(DRAMSTORE_OP_METRIC(submission.op, "tasks_failed_total"), 1.0);
-        UC::Metrics::UpdateStats(DRAMSTORE_OP_METRIC(submission.op, "task_timeouts_total"), 1.0);
-        UC::Metrics::UpdateStats(
-            DRAMSTORE_OP_METRIC(submission.op, "task_duration_us"),
-            std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() -
-                                                      submission.metricsStarted)
-                .count());
-        submission.promise.set_value(TaskResult{Status::Timeout(), {}});
+        auto status = Status::Timeout();
+        RecordTaskCompletionMetrics(submission.op, status, submission.metricsStarted);
+        submission.promise.set_value(TaskResult{std::move(status), {}});
         return;
     }
 
@@ -266,13 +281,9 @@ void TaskManager::ProcessSubmission(Submission submission)
             "used_entries={} capacity={}",
             submission.taskId, static_cast<unsigned>(submission.op), entryCount, usedIoEntries_,
             config_.maxIoEntries);
-        UC::Metrics::UpdateStats(DRAMSTORE_OP_METRIC(submission.op, "tasks_failed_total"), 1.0);
-        UC::Metrics::UpdateStats(
-            DRAMSTORE_OP_METRIC(submission.op, "task_duration_us"),
-            std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() -
-                                                      submission.metricsStarted)
-                .count());
-        submission.promise.set_value(TaskResult{Status::NoSpace(), {}});
+        auto status = Status::NoSpace();
+        RecordTaskCompletionMetrics(submission.op, status, submission.metricsStarted);
+        submission.promise.set_value(TaskResult{std::move(status), {}});
         return;
     }
     auto requests = BuildRequests(submission.op, std::move(entries), submission.deadline);
@@ -340,19 +351,7 @@ void TaskManager::CompleteRequest(TaskId taskId, Status status, std::vector<Entr
     auto lookupResults =
         taskStatus.Success() ? std::move(task.lookupResults) : std::vector<std::uint8_t>{};
     usedIoEntries_ -= task.entryCount;
-    if (taskStatus.Success()) {
-        UC::Metrics::UpdateStats(DRAMSTORE_OP_METRIC(task.op, "tasks_succeeded_total"), 1.0);
-    } else {
-        UC::Metrics::UpdateStats(DRAMSTORE_OP_METRIC(task.op, "tasks_failed_total"), 1.0);
-    }
-    if (taskStatus == Status::Timeout()) {
-        UC::Metrics::UpdateStats(DRAMSTORE_OP_METRIC(task.op, "task_timeouts_total"), 1.0);
-    }
-    UC::Metrics::UpdateStats(
-        DRAMSTORE_OP_METRIC(task.op, "task_duration_us"),
-        std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() -
-                                                  task.metricsStarted)
-            .count());
+    RecordTaskCompletionMetrics(task.op, taskStatus, task.metricsStarted);
     activeTasks_.erase(found);
     promise.set_value(TaskResult{std::move(taskStatus), std::move(lookupResults)});
 }
@@ -400,26 +399,15 @@ void TaskManager::Run() noexcept
             accepting_ = false;
             while (!submissions_.Empty()) {
                 auto submission = submissions_.Pop();
-                UC::Metrics::UpdateStats(
-                    DRAMSTORE_OP_METRIC(submission.op, "tasks_failed_total"), 1.0);
-                UC::Metrics::UpdateStats(
-                    DRAMSTORE_OP_METRIC(submission.op, "task_duration_us"),
-                    std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() -
-                                                              submission.metricsStarted)
-                        .count());
-                submission.promise.set_value(
-                    TaskResult{Status::Error("TaskManager stopped unexpectedly"), {}});
+                auto status = Status::Error("TaskManager stopped unexpectedly");
+                RecordTaskCompletionMetrics(submission.op, status, submission.metricsStarted);
+                submission.promise.set_value(TaskResult{std::move(status), {}});
             }
         }
         for (auto& [taskId, task] : activeTasks_) {
-            UC::Metrics::UpdateStats(DRAMSTORE_OP_METRIC(task.op, "tasks_failed_total"), 1.0);
-            UC::Metrics::UpdateStats(
-                DRAMSTORE_OP_METRIC(task.op, "task_duration_us"),
-                std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() -
-                                                          task.metricsStarted)
-                    .count());
-            task.promise.set_value(
-                TaskResult{Status::Error("TaskManager stopped unexpectedly"), {}});
+            auto status = Status::Error("TaskManager stopped unexpectedly");
+            RecordTaskCompletionMetrics(task.op, status, task.metricsStarted);
+            task.promise.set_value(TaskResult{std::move(status), {}});
         }
         activeTasks_.clear();
         usedIoEntries_ = 0;

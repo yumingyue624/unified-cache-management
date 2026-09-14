@@ -63,6 +63,19 @@ void FillTransferEntries(const std::vector<IoEntry>& entries,
     }
 }
 
+void RecordRequestCompletionMetrics(OpType op, const Status& status,
+                                    std::chrono::steady_clock::time_point started)
+{
+    UC::Metrics::UpdateStats(DRAMSTORE_OP_METRIC(op, "requests_completed_total"), 1.0);
+    if (status.Failure()) {
+        UC::Metrics::UpdateStats(DRAMSTORE_OP_METRIC(op, "requests_failed_total"), 1.0);
+    }
+    UC::Metrics::UpdateStats(
+        DRAMSTORE_OP_METRIC(op, "request_duration_us"),
+        std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - started)
+            .count());
+}
+
 }  // namespace
 
 NodeActor::NodeActor(Config config, NodeDependencies dependencies)
@@ -130,15 +143,7 @@ Status NodeActor::EncodeRequest(const ReplySlot& replySlot, RequestId requestId,
 void NodeActor::QueueCompletion(Request request, Status status,
                                 std::vector<EntryResult> entryResults)
 {
-    UC::Metrics::UpdateStats(DRAMSTORE_OP_METRIC(request.op, "requests_completed_total"), 1.0);
-    if (status.Failure()) {
-        UC::Metrics::UpdateStats(DRAMSTORE_OP_METRIC(request.op, "requests_failed_total"), 1.0);
-    }
-    UC::Metrics::UpdateStats(
-        DRAMSTORE_OP_METRIC(request.op, "request_duration_us"),
-        std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() -
-                                                  request.metricsStarted)
-            .count());
+    RecordRequestCompletionMetrics(request.op, status, request.metricsStarted);
     for (std::size_t index = 0; index < entryResults.size(); ++index) {
         entryResults[index].originalIndex = request.entries[index].originalIndex;
     }
