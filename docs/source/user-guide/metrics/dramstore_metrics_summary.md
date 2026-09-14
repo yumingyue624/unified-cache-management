@@ -17,13 +17,14 @@ LOOKUP/DUMP/LOAD 如何横向对比和归并，以及请求总时延升高时如
 
 | 层级 | 含义 | 数量关系 | 当前主要指标 |
 | --- | --- | --- | --- |
-| Task | 一次 LOOKUP/DUMP/LOAD API 调用 | 1 次调用 = 1 Task | `dramstore_<op>_tasks_*`, `dramstore_<op>_task_duration_seconds` |
-| Request | Task 按目标节点拆出的子请求 | 1 Task = 0..N Request | `dramstore_<op>_requests_*`, `dramstore_<op>_request_duration_seconds` |
+| Task | 一次 LOOKUP/DUMP/LOAD API 调用 | 1 次调用 = 1 Task | `dramstore_<op>_tasks_*`, `dramstore_<op>_task_duration_ms` |
+| Request | Task 按目标节点拆出的子请求 | 1 Task = 0..N Request | `dramstore_<op>_requests_*`, `dramstore_<op>_request_duration_ms` |
 
 ## 2. LOOKUP、DUMP、LOAD 对比矩阵
 
-下表中的 `<op>` 可替换为 `lookup`、`dump`、`load`。三类操作均使用相同的
-Histogram buckets：100 us 至 30 s；经 vLLM connector 暴露时统一换算成 seconds。
+下表中的 `<op>` 可替换为 `lookup`、`dump`、`load`。以下均使用代码中的原始指标名，
+Histogram 单位为毫秒。Task/Request 总时延 buckets 为 0.1–5000 ms，Task 排队为
+0.1–500 ms，DUMP 前置等待为 0.1–500 ms。
 
 | 观察面 | 统一指标模式 | LOOKUP | DUMP | LOAD | 是否可归并 | 说明 |
 | --- | --- | :---: | :---: | :---: | --- | --- |
@@ -32,13 +33,13 @@ Histogram buckets：100 us 至 30 s；经 vLLM connector 暴露时统一换算�
 | Task 成功 | `dramstore_<op>_tasks_succeeded_total` | ✓ | ✓ | ✓ | 是 | accepted Task 的最终状态 |
 | Task 失败 | `dramstore_<op>_tasks_failed_total` | ✓ | ✓ | ✓ | 是 | 包含 timeout；分析失败原因时不要再与 timeout 相加 |
 | Task 超时 | `dramstore_<op>_task_timeouts_total` | ✓ | ✓ | ✓ | 是 | failed 的子集 |
-| Task 总时延 | `dramstore_<op>_task_duration_seconds` | ✓ | ✓ | ✓ | 是 | 从 Submit 开始到最终结算；包含 Task 排队和所有子 Request 完成 |
-| Task 排队 | `dramstore_<op>_task_queue_duration_seconds` | ✓ | ✓ | ✓ | 是 | 从 Submit 开始到 TaskManager worker 取出 submission |
+| Task 总时延 | `dramstore_<op>_task_duration_ms` | ✓ | ✓ | ✓ | 是 | 从 Submit 开始到最终结算；包含 Task 排队和所有子 Request 完成 |
+| Task 排队 | `dramstore_<op>_task_queue_duration_ms` | ✓ | ✓ | ✓ | 是 | 从 Submit 开始到 TaskManager worker 取出 submission |
 | Request 完成 | `dramstore_<op>_requests_completed_total` | ✓ | ✓ | ✓ | 是 | 成功和失败均计数 |
 | Request 失败 | `dramstore_<op>_requests_failed_total` | ✓ | ✓ | ✓ | 是 | completed 的子集 |
 | Request 提交错误 | `dramstore_<op>_request_submit_errors_total` | ✓ | ✓ | ✓ | 是 | TaskManager 到 NodeActor 的同步提交失败；不等同远端执行失败 |
-| Request 总时延 | `dramstore_<op>_request_duration_seconds` | ✓ | ✓ | ✓ | 是 | NodeActor 接收 Request 到完成；包含节点 pending、连接/限流等待、客户端传输及远端处理 |
-| 前置事件等待 | `dramstore_dump_prerequisite_duration_seconds` | — | ✓ | — | 否，DUMP 专属 | 在 Task Submit 之前等待 compute event，故不包含在 DUMP Task duration 内 |
+| Request 总时延 | `dramstore_<op>_request_duration_ms` | ✓ | ✓ | ✓ | 是 | NodeActor 接收 Request 到完成；包含节点 pending、连接/限流等待、客户端传输及远端处理 |
+| 前置事件等待 | `dramstore_dump_prerequisite_duration_ms` | — | ✓ | — | 否，DUMP 专属 | 在 Task Submit 之前等待 compute event，故不包含在 DUMP Task duration 内 |
 | 前置事件错误 | `dramstore_dump_prerequisite_errors_total` | — | ✓ | — | 否，DUMP 专属 | prerequisite 等待失败 |
 
 ### 公共连接和恢复指标
@@ -84,8 +85,8 @@ DUMP API 的调用方感知总时延还多一个 Task 外阶段：
 
 ```text
 DUMP API wall time
-  ≈ dramstore_dump_prerequisite_duration_seconds
-  + dramstore_dump_task_duration_seconds
+  ≈ dramstore_dump_prerequisite_duration_ms
+  + dramstore_dump_task_duration_ms
 ```
 
 这里两个 histogram 的同分位数仍然**不能直接相加**；上式只表达单次调用的计时边界。
@@ -136,22 +137,22 @@ Histogram 的 p99 通常来自不同样本。
 
 ## 5. PromQL 模板
 
-以下使用 connector 暴露后的 metric 名称；实际部署若附加 namespace，请在名称前补上
-该前缀，并保留 `le` 以及需要对比的实例/operation 维度。
+以下使用代码中的原始 metric 名称；实际部署若附加 namespace，请在名称前补上该前缀，
+并保留 `le` 以及需要对比的实例/operation 维度。时延查询结果的单位为毫秒。
 
 ```promql
 # LOOKUP Task p99
 histogram_quantile(
   0.99,
   sum by (le) (
-    rate(dramstore_lookup_task_duration_seconds_bucket[$__rate_interval])
+    rate(dramstore_lookup_task_duration_ms_bucket[$__rate_interval])
   )
 )
 
 # LOOKUP Task 平均时延；_sum / _count 必须使用相同过滤条件
-sum(rate(dramstore_lookup_task_duration_seconds_sum[$__rate_interval]))
+sum(rate(dramstore_lookup_task_duration_ms_sum[$__rate_interval]))
 /
-sum(rate(dramstore_lookup_task_duration_seconds_count[$__rate_interval]))
+sum(rate(dramstore_lookup_task_duration_ms_count[$__rate_interval]))
 
 # accepted Task 成功率；timeout 已包含于 failed，不要把两者相加
 sum(rate(dramstore_lookup_tasks_succeeded_total[$__rate_interval]))
@@ -182,8 +183,8 @@ DUMP 再增加位于 root Task 之前或其父 span 下的
 不要把 request ID 放进 Prometheus label。
 
 如果短期不引入 tracing，最低成本的补强是新增低基数、同构的阶段 Histogram（如
-`dramstore_<op>_request_pending_duration_seconds` 和
-`dramstore_<op>_client_overhead_duration_seconds`）。它能改善“总体阶段归因”，但仍不能
+`dramstore_<op>_request_pending_duration_ms` 和
+`dramstore_<op>_client_overhead_duration_ms`）。它能改善“总体阶段归因”，但仍不能
 证明某一个 p99 Task 就对应另一个指标的 p99 Request。
 
 ## 7. 当前盲区和建议优先级
@@ -194,7 +195,7 @@ DUMP 再增加位于 root Task 之前或其父 span 下的
 | P0 | Request duration 未拆 NodeActor pending/client/network | Request 变慢时无法快速归因 | 增加 pending 和 client-side prepare/transport 阶段计时 |
 | P1 | 缺少 Task/Request entry 数和 client bytes | 难以区分请求变大与实现变慢 | 增加低基数 counter；用 bytes/s 与 duration 联合判断 |
 | P2 | 三操作靠名称而非 operation label | Dashboard query 重复 | 先用 recording rule 统一；只有兼容性规划后再考虑新 family |
-| P2 | 100 us–30 s 共用 buckets 较宽 | 快操作的低延迟区域分辨率有限 | 用真实分布和 SLO 调整 buckets；变更时保持生产/导入契约一致 |
+| P2 | 当前 buckets 沿用 UCM 同类模块的通用范围 | 真实分布可能与通用范围不完全匹配 | 上线后结合真实分布和 SLO 继续调整 buckets |
 
 阶段指标设计时要先声明区间是**互斥**还是**包含**。互斥阶段可以在同一条 trace 上
 相加；包含阶段只用于下钻，不能重复计入总时延。并行分支的关键路径取最大值而不是求和。

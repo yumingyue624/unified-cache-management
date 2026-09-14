@@ -362,8 +362,8 @@ Expected<Detail::TaskHandle> DramStore::Dump(Detail::TaskDesc task)
     const auto started = std::chrono::steady_clock::now();
     auto status = WaitPrerequisiteEvent(task.prerequisiteHandle);
     UC::Metrics::UpdateStats(
-        NAME_TO_METRIC_ID("dramstore_dump_prerequisite_duration_us"),
-        std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - started)
+        NAME_TO_METRIC_ID("dramstore_dump_prerequisite_duration_ms"),
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started)
             .count());
     if (status.Failure()) {
         UC::Metrics::UpdateStats(NAME_TO_METRIC_ID("dramstore_dump_prerequisite_errors_total"),

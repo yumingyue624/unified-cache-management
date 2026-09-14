@@ -71,8 +71,8 @@ void RecordRequestCompletionMetrics(OpType op, const Status& status,
         UC::Metrics::UpdateStats(DRAMSTORE_OP_METRIC(op, "requests_failed_total"), 1.0);
     }
     UC::Metrics::UpdateStats(
-        DRAMSTORE_OP_METRIC(op, "request_duration_us"),
-        std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - started)
+        DRAMSTORE_OP_METRIC(op, "request_duration_ms"),
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started)
             .count());
 }
 

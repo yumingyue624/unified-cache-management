@@ -66,9 +66,9 @@ protected:
                 Metrics::CreateStats(std::string(prefix) + suffix, "counter");
             }
             for (const auto* suffix :
-                 {"task_duration_us", "task_queue_duration_us", "request_duration_us"}) {
+                {"task_duration_ms", "task_queue_duration_ms", "request_duration_ms"}) {
                 Metrics::CreateStats(std::string(prefix) + suffix, "histogram",
-                                     {100, 1000, 1000000});
+                                     {0.1, 1, 100, 5000});
             }
         }
         Metrics::CreateStats("dramstore_stale_replies_total", "counter");
@@ -152,7 +152,7 @@ TEST_F(UCDramMetricsTest, NodeActorRecordsCompletedFailedAndStaleRequest)
     EXPECT_EQ(counters.at("dramstore_dump_requests_completed_total"), 1);
     EXPECT_EQ(counters.at("dramstore_dump_requests_failed_total"), 1);
     EXPECT_EQ(counters.at("dramstore_stale_replies_total"), 1);
-    EXPECT_EQ(HistogramCount(histograms.at("dramstore_dump_request_duration_us")), 1);
+    EXPECT_EQ(HistogramCount(histograms.at("dramstore_dump_request_duration_ms")), 1);
 }
 
 TEST_F(UCDramMetricsTest, TaskManagerSettlesAcceptedTaskOnceAndRecordsRejectedSubmission)
@@ -199,7 +199,7 @@ TEST_F(UCDramMetricsTest, TaskManagerSettlesAcceptedTaskOnceAndRecordsRejectedSu
     EXPECT_EQ(counters.at("dramstore_lookup_tasks_submitted_total"), 1);
     EXPECT_EQ(counters.at("dramstore_lookup_tasks_succeeded_total"), 1);
     EXPECT_EQ(counters.at("dramstore_lookup_tasks_rejected_total"), 1);
-    EXPECT_EQ(HistogramCount(histograms.at("dramstore_lookup_task_duration_us")), 1);
+    EXPECT_EQ(HistogramCount(histograms.at("dramstore_lookup_task_duration_ms")), 1);
 }
 
 }  // namespace
