@@ -23,8 +23,11 @@ LOOKUP/DUMP/LOAD 如何横向对比和归并，以及请求总时延升高时如
 ## 2. LOOKUP、DUMP、LOAD 对比矩阵
 
 下表中的 `<op>` 可替换为 `lookup`、`dump`、`load`。以下均使用代码中的原始指标名，
-Histogram 单位为毫秒。Task 总时延 buckets 为 0.1–5000 ms；可能快速结束的 Task 排队、
-Request 和 DUMP 前置等待从 0.01 ms 开始，分别覆盖至 500 ms、5000 ms 和 500 ms。
+指标按 Counter（累计次数）、Gauge（当前值）、Histogram（时延分布）分类。
+
+### 2.1 Counter：累计次数
+
+用于观察吞吐、拒绝、失败和超时；通常通过 `rate()` 查看每秒速率。
 
 | 观察面 | 统一指标模式 | LOOKUP | DUMP | LOAD | 是否可归并 | 说明 |
 | --- | --- | :---: | :---: | :---: | --- | --- |
@@ -33,12 +36,62 @@ Request 和 DUMP 前置等待从 0.01 ms 开始，分别覆盖至 500 ms、5000 
 | Task 成功 | `dramstore_<op>_tasks_succeeded_total` | ✓ | ✓ | ✓ | 是 | accepted Task 的最终状态 |
 | Task 失败 | `dramstore_<op>_tasks_failed_total` | ✓ | ✓ | ✓ | 是 | 包含 timeout；分析失败原因时不要再与 timeout 相加 |
 | Task 超时 | `dramstore_<op>_task_timeouts_total` | ✓ | ✓ | ✓ | 是 | failed 的子集 |
-| 端到端总时延 | `dramstore_<op>_duration_ms` | ✓ | ✓ | ✓ | 是 | 从 Submit 开始到最终结算；包含 Task 排队和所有子 Request 完成 |
-| Task 排队 | `dramstore_<op>_task_queue_duration_ms` | ✓ | ✓ | ✓ | 是 | 从 Submit 开始到 TaskManager worker 取出 submission |
-| Task 到 Request | `dramstore_<op>_task_to_request_duration_ms` | ✓ | ✓ | ✓ | 是 | 从 Task 成功入队到所有 Request 完成构造；包含 Task 排队 |
 | Request 完成 | `dramstore_<op>_requests_completed_total` | ✓ | ✓ | ✓ | 是 | 成功和失败均计数 |
 | Request 失败 | `dramstore_<op>_requests_failed_total` | ✓ | ✓ | ✓ | 是 | completed 的子集 |
 | Request 提交错误 | `dramstore_<op>_request_submit_errors_total` | ✓ | ✓ | ✓ | 是 | TaskManager 到 NodeActor 的同步提交失败；不等同远端执行失败 |
+| 前置事件错误 | `dramstore_dump_prerequisite_errors_total` | — | ✓ | — | 否，DUMP 专属 | prerequisite 等待失败 |
+
+#### 公共连接和恢复 Counter
+
+这些指标由三个操作共用，不按 LOOKUP/DUMP/LOAD 分开计数。
+
+| 指标 | 含义 | 推荐展示/告警 |
+| --- | --- | --- |
+| `dramstore_connect_attempts_total` | 连接尝试 | `rate()`，与 failure 同图 |
+| `dramstore_connect_failures_total` | 连接失败 | failure / attempts 比率和绝对速率 |
+| `dramstore_fence_attempts_total` | 超时恢复 fence 尝试 | 与 deadline recovery 对齐观察 |
+| `dramstore_fence_failures_total` | fence 提交或完成失败 | 非零速率告警 |
+| `dramstore_deadline_recoveries_total` | Request timeout 触发节点恢复 | 非零通常可解释批量长尾 |
+| `dramstore_stale_replies_total` | 旧 epoch/已退休请求的迟到回复 | 非零提示超时、恢复或网络长尾 |
+
+### 2.2 Gauge：当前值
+
+以下资源由 LOOKUP、DUMP、LOAD 共用，统一展示，不按操作重复计数。
+沿用 Posix 的使用量/容量命名方式，占用率在展示端计算：`used / capacity` 或
+`size / capacity`（容量大于零时）。Gauge 直接展示当前采样值，不使用 `rate()`。
+
+| 资源 | 当前使用量指标 | 容量指标 | 单位和含义 |
+| --- | --- | --- | --- |
+| Task 提交队列 | `dramstore_task_queue_size` | `dramstore_task_queue_capacity` | Task 数；等待 TaskManager worker 取出，不包含正在处理的 Task |
+| Request 完成队列 | `dramstore_completion_queue_size` | `dramstore_completion_queue_capacity` | RequestCompleted 事件数；等待 TaskManager 聚合 |
+| NodeScheduler 请求队列 | `dramstore_scheduler_request_queue_size` | 无固定容量 | 所有 runner 的待取 Request 总数；不包含已取出的 batch 和 NodeActor pending |
+| NodeScheduler 事件队列 | `dramstore_scheduler_event_queue_size` | 无固定容量 | 所有 runner 的待取 NodeEvent 总数；不包含已取出的 batch |
+| Transport 普通命令队列 | `dramstore_transport_queue_size` | `dramstore_transport_queue_capacity` | 所有 worker 合计的 Transmit/Connect 入队配额占用；在出队后归还配额时减少，不包含实际传输 |
+| Transport 恢复命令队列 | `dramstore_transport_fence_queue_size` | `dramstore_transport_fence_queue_capacity` | Fence 命令独立保留的入队配额，避免普通命令挤占恢复容量 |
+| Reply slot | `dramstore_reply_slots_used` | `dramstore_reply_slots_capacity` | 活跃租约数；reply 已到但尚未释放的 slot 仍算占用；空闲数 = capacity − used |
+| Reply buffer | `dramstore_reply_buffer_used_bytes` | `dramstore_reply_buffer_capacity_bytes` | 按 slot 对齐后的 stride 计算租用字节数和预分配总字节数；不是 reply 有效载荷大小，释放 slot 不归还预分配内存 |
+| 活跃 Task 的 entry 配额 | `dramstore_io_entries_used` | `dramstore_io_entries_capacity` | 已接纳处理的 Task 占用的 entry 数；不包含 submission queue 中的 Task |
+
+另有 `dramstore_tasks_active`：已进入 activeTasks、尚未完成结算的 Task 数；不包含
+排队 Task，也不包含已完成但调用方尚未领取的结果。
+
+每组指标由固定工作线程读取现有状态，目标每秒采样一次，避免多个线程的 Gauge
+缓存互相覆盖。空闲时继续采样；工作线程长时间执行操作时，采样会延后，停止后不再
+刷新。多 runner 的队列长度是依次采样后的合计，不是同一时刻的全局原子快照。
+这些指标用于观察持续压力，短暂队满仍应结合 `tasks_rejected_total` 等 Counter。
+当前尚未单独暴露 NodeActor pending/inflight 数。
+
+### 2.3 Histogram：时延分布
+
+以下指标单位均为毫秒，用于查看平均值、p50/p95/p99 和分布。
+Task 总时延 buckets 为 0.1–5000 ms；可能快速结束的 Task 排队、Request 和 DUMP
+前置等待从 0.01 ms 开始，分别覆盖至 500 ms、5000 ms 和 500 ms。
+
+| 观察面 | 统一指标模式 | LOOKUP | DUMP | LOAD | 是否可归并 | 说明 |
+| --- | --- | :---: | :---: | :---: | --- | --- |
+| 端到端总时延 | `dramstore_<op>_duration_ms` | ✓ | ✓ | ✓ | 是 | 从 Submit 开始到最终结算；包含 Task 排队和所有子 Request 完成 |
+| Task 排队 | `dramstore_<op>_task_queue_duration_ms` | ✓ | ✓ | ✓ | 是 | 从 Submit 开始到 TaskManager worker 取出 submission |
+| Task 到 Request | `dramstore_<op>_task_to_request_duration_ms` | ✓ | ✓ | ✓ | 是 | 从 Task 成功入队到所有 Request 完成构造；包含 Task 排队 |
 | Request 总时延 | `dramstore_<op>_request_duration_ms` | ✓ | ✓ | ✓ | 是 | Request 构造完成到 QueueCompletion；包含调度排队、节点 pending、发送、远端处理及回复 |
 | Request 调度排队 | `dramstore_<op>_request_queue_duration_ms` | ✓ | ✓ | ✓ | 是 | Request 构造完成到 NodeActor 接收，主要是 NodeScheduler queue |
 | Request pending | `dramstore_<op>_request_pending_duration_ms` | ✓ | ✓ | ✓ | 是 | NodeActor 接收到 StartRequest；包含断连、重连及 inflight 限流等待 |
@@ -47,18 +100,6 @@ Request 和 DUMP 前置等待从 0.01 ms 开始，分别覆盖至 500 ms、5000 
 | Transport 发送 | `dramstore_<op>_request_transport_send_duration_ms` | ✓ | ✓ | ✓ | 是 | TransportExecutor 调用 backend Transmit 到 TCP Send 返回 |
 | Request 远端 | `dramstore_<op>_request_remote_duration_ms` | ✓ | ✓ | ✓ | 是 | TCP 发送完成到 ReplyObserved；主要是远端执行及回复等待 |
 | 前置事件等待 | `dramstore_dump_prerequisite_duration_ms` | — | ✓ | — | 否，DUMP 专属 | 在 Task Submit 之前等待 compute event，故不包含在 DUMP Task duration 内 |
-| 前置事件错误 | `dramstore_dump_prerequisite_errors_total` | — | ✓ | — | 否，DUMP 专属 | prerequisite 等待失败 |
-
-### 公共连接和恢复指标
-
-| 指标 | 类型 | 含义 | 推荐展示/告警 |
-| --- | --- | --- | --- |
-| `dramstore_connect_attempts_total` | Counter | 连接尝试 | `rate()`，与 failure 同图 |
-| `dramstore_connect_failures_total` | Counter | 连接失败 | failure / attempts 比率和绝对速率 |
-| `dramstore_fence_attempts_total` | Counter | 超时恢复 fence 尝试 | 与 deadline recovery 对齐观察 |
-| `dramstore_fence_failures_total` | Counter | fence 提交或完成失败 | 非零速率告警 |
-| `dramstore_deadline_recoveries_total` | Counter | Request timeout 触发节点恢复 | 非零通常可解释批量长尾 |
-| `dramstore_stale_replies_total` | Counter | 旧 epoch/已退休请求的迟到回复 | 非零提示超时、恢复或网络长尾 |
 
 ## 3. 一条请求的时延由什么组成
 
@@ -107,6 +148,10 @@ DUMP API wall time
 | Task p99 高，queue 低，Request p99 高 | Task total vs Request total | 慢点进入节点请求路径 |
 | DUMP API 慢但 Task 不慢，prerequisite 高 | prerequisite vs Task total | compute event gating，不是远端服务慢 |
 | deadline recovery / fence / stale reply 激增 | 恢复 counters + Request heatmap | 超时恢复放大长尾，先看连接和服务端健康 |
+| Task queue 接近容量 | task_queue_size / task_queue_capacity + rejected | TaskManager 持续积压 |
+| Transport queue 高，send 时延也高 | transport_queue_size / capacity + transport_send | 传输 worker 消费跟不上 |
+| Reply slot 或 entry 配额接近容量 | reply_slots_used / capacity、io_entries_used / capacity | 请求长期占用资源；结合 remote 时延、超时和恢复指标排查 |
+| 完成队列持续增长 | completion_queue_size + tasks_active | TaskManager 完成聚合跟不上 |
 
 ## 4. 推荐 Grafana 表格
 

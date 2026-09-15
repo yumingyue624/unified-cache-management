@@ -367,10 +367,36 @@ void TaskManager::ProcessCompletion(RequestCompleted event)
     CompleteRequest(event.taskId, std::move(event.status), std::move(event.entryResults));
 }
 
+void TaskManager::RecordCapacityMetrics()
+{
+    std::size_t submissions, completions;
+    {
+        std::lock_guard lock(workMutex_);
+        submissions = config_.maxIoEntries - submissions_.Available();
+        completions = config_.maxIoEntries - completions_.Available();
+    }
+    UC::Metrics::UpdateStats(NAME_TO_METRIC_ID("dramstore_task_queue_size"), submissions);
+    UC::Metrics::UpdateStats(NAME_TO_METRIC_ID("dramstore_task_queue_capacity"),
+                             config_.maxIoEntries);
+    UC::Metrics::UpdateStats(NAME_TO_METRIC_ID("dramstore_completion_queue_size"), completions);
+    UC::Metrics::UpdateStats(NAME_TO_METRIC_ID("dramstore_completion_queue_capacity"),
+                             config_.maxIoEntries);
+    UC::Metrics::UpdateStats(NAME_TO_METRIC_ID("dramstore_tasks_active"), activeTasks_.size());
+    UC::Metrics::UpdateStats(NAME_TO_METRIC_ID("dramstore_io_entries_used"), usedIoEntries_);
+    UC::Metrics::UpdateStats(NAME_TO_METRIC_ID("dramstore_io_entries_capacity"),
+                             config_.maxIoEntries);
+}
+
 void TaskManager::Run() noexcept
 {
     try {
+        // One writer per Gauge: cross-thread metric buffers do not preserve update order.
+        auto nextMetricsAt = Clock::now();
         for (;;) {
+            if (Clock::now() >= nextMetricsAt) {
+                RecordCapacityMetrics();
+                nextMetricsAt = Clock::now() + std::chrono::seconds(1);
+            }
             std::optional<Submission> submission;
             std::optional<RequestCompleted> completion;
 
@@ -379,9 +405,10 @@ void TaskManager::Run() noexcept
                 const auto workReady = [this] {
                     return !accepting_ || !completions_.Empty() || !submissions_.Empty();
                 };
-                workReady_.wait(lock, workReady);
+                workReady_.wait_until(lock, nextMetricsAt, workReady);
 
                 if (!accepting_) { return; }
+                if (completions_.Empty() && submissions_.Empty()) { continue; }
                 if (!completions_.Empty()) {
                     completion.emplace(completions_.Pop());
                 } else {

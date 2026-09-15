@@ -98,18 +98,47 @@ void TransportExecutor::Execute(TransportCommand command) noexcept
     }
 }
 
+void TransportExecutor::RecordCapacityMetrics()
+{
+    std::size_t commands, fences;
+    {
+        std::lock_guard lock(admissionMutex_);
+        commands = queuedCommands_;
+        fences = queuedFences_;
+    }
+    UC::Metrics::UpdateStats(NAME_TO_METRIC_ID("dramstore_transport_queue_size"), commands);
+    UC::Metrics::UpdateStats(NAME_TO_METRIC_ID("dramstore_transport_queue_capacity"),
+                             commandQueueCapacity_);
+    UC::Metrics::UpdateStats(NAME_TO_METRIC_ID("dramstore_transport_fence_queue_size"), fences);
+    UC::Metrics::UpdateStats(NAME_TO_METRIC_ID("dramstore_transport_fence_queue_capacity"),
+                             fenceQueueCapacity_);
+}
+
 void TransportExecutor::Run(Worker& worker) noexcept
 {
+    // Worker zero reports aggregate admission occupancy for all transport workers.
+    const bool reportsMetrics = &worker == workers_.front().get();
+    auto nextMetricsAt = std::chrono::steady_clock::now();
     for (;;) {
+        if (reportsMetrics && std::chrono::steady_clock::now() >= nextMetricsAt) {
+            RecordCapacityMetrics();
+            nextMetricsAt = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+        }
         std::optional<TransportCommand> command;
         {
             std::unique_lock lock(worker.mutex);
-            worker.wake.wait(lock, [this, &worker] {
+            const auto ready = [this, &worker] {
                 return !worker.queue.Empty() || !acceptingCommands_.load(std::memory_order_acquire);
-            });
+            };
+            if (reportsMetrics) {
+                worker.wake.wait_until(lock, nextMetricsAt, ready);
+            } else {
+                worker.wake.wait(lock, ready);
+            }
             if (worker.queue.Empty() && !acceptingCommands_.load(std::memory_order_acquire)) {
                 return;
             }
+            if (worker.queue.Empty()) { continue; }
             command.emplace(worker.queue.Pop());
         }
         if (auto* transmit = std::get_if<Transmit>(&*command)) {

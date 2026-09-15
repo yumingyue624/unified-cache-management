@@ -117,6 +117,7 @@ private:
                                        TimePoint deadline) const;
 
     void Run() noexcept;
+    void RecordCapacityMetrics();
     void ProcessSubmission(Submission submission);
     void ProcessCompletion(RequestCompleted event);
     void CompleteRequest(TaskId taskId, Status status, std::vector<EntryResult> results = {});

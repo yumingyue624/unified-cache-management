@@ -28,6 +28,7 @@
 #include <memory>
 #include <numeric>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 #include "metrics_api.h"
 #include "node_actor.h"
@@ -76,6 +77,12 @@ protected:
             }
         }
         Metrics::CreateStats("dramstore_stale_replies_total", "counter");
+        for (const auto* name : {"dramstore_task_queue_size", "dramstore_task_queue_capacity",
+                                 "dramstore_completion_queue_size",
+                                 "dramstore_completion_queue_capacity", "dramstore_tasks_active",
+                                 "dramstore_io_entries_used", "dramstore_io_entries_capacity"}) {
+            Metrics::CreateStats(name, "gauge");
+        }
     }
 
     void SetUp() override { Metrics::GetAllStatsAndClear(); }
@@ -210,6 +217,56 @@ TEST_F(UCDramMetricsTest, TaskManagerSettlesAcceptedTaskOnceAndRecordsRejectedSu
     EXPECT_EQ(counters.at("dramstore_lookup_tasks_rejected_total"), 1);
     EXPECT_EQ(HistogramCount(histograms.at("dramstore_lookup_duration_ms")), 1);
     EXPECT_EQ(HistogramCount(histograms.at("dramstore_lookup_task_to_request_duration_ms")), 1);
+}
+
+TEST_F(UCDramMetricsTest, TaskCapacityGaugesRefreshWhileWaitingAndAfterCompletion)
+{
+    std::promise<Request> dispatched;
+    auto requestFuture = dispatched.get_future();
+    TaskManagerConfig config{
+        {64},
+        16, 8, {10s, 10s, 10s}
+    };
+    TaskManager manager(config, {std::make_shared<SingleRouter>(), [&](Request& request) {
+                                     dispatched.set_value(std::move(request));
+                                     return Status::OK();
+                                 }});
+    ASSERT_TRUE(manager.Start().Success());
+    Detail::BlockId key{};
+    auto submitted = manager.SubmitLookup(&key, 1);
+    ASSERT_TRUE(submitted);
+    ASSERT_EQ(requestFuture.wait_for(2s), std::future_status::ready);
+    const auto request = requestFuture.get();
+
+    const auto waitForActive = [](double expected) {
+        const auto deadline = std::chrono::steady_clock::now() + 3s;
+        std::unordered_map<std::string, double> gauges;
+        while (std::chrono::steady_clock::now() < deadline) {
+            const auto stats = Metrics::GetAllStatsAndClear();
+            for (const auto& [name, value] : std::get<1>(stats)) { gauges[name] = value; }
+            const auto found = gauges.find("dramstore_tasks_active");
+            const auto entries = gauges.find("dramstore_io_entries_used");
+            if (gauges.size() == 7 && found != gauges.end() && found->second == expected &&
+                entries != gauges.end() && entries->second == expected) {
+                EXPECT_EQ(gauges.at("dramstore_io_entries_used"), expected);
+                EXPECT_EQ(gauges.at("dramstore_io_entries_capacity"), 16);
+                EXPECT_EQ(gauges.at("dramstore_task_queue_size"), 0);
+                EXPECT_EQ(gauges.at("dramstore_task_queue_capacity"), 16);
+                EXPECT_EQ(gauges.at("dramstore_completion_queue_size"), 0);
+                EXPECT_EQ(gauges.at("dramstore_completion_queue_capacity"), 16);
+                return true;
+            }
+            std::this_thread::sleep_for(10ms);
+        }
+        return false;
+    };
+    ASSERT_TRUE(waitForActive(1));
+    std::vector<RequestCompleted> events{
+        {request.taskId, request.requestId, 1, Status::OK(), {{0, true, 0}}}
+    };
+    manager.Publish(events);
+    ASSERT_TRUE(manager.WaitLookup(submitted.Value()));
+    EXPECT_TRUE(waitForActive(0));
 }
 
 }  // namespace

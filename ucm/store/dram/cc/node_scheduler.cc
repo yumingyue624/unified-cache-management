@@ -31,6 +31,7 @@
 #include <thread>
 #include <utility>
 #include "logger/logger.h"
+#include "metrics_api.h"
 #include "node_actor.h"
 #include "trans/device.h"
 
@@ -136,6 +137,18 @@ void NodeScheduler::Publish(NodeId nodeId, NodeEvent event)
     runner.wake.notify_one();
 }
 
+void NodeScheduler::RecordQueueMetrics()
+{
+    std::size_t requests = 0, events = 0;
+    for (const auto& runner : runners_) {
+        std::lock_guard lock(runner->mutex);
+        requests += runner->commands.size();
+        events += runner->events.size();
+    }
+    UC::Metrics::UpdateStats(NAME_TO_METRIC_ID("dramstore_scheduler_request_queue_size"), requests);
+    UC::Metrics::UpdateStats(NAME_TO_METRIC_ID("dramstore_scheduler_event_queue_size"), events);
+}
+
 void NodeScheduler::RunActors(Runner& runner) noexcept
 {
     try {
@@ -152,7 +165,16 @@ void NodeScheduler::RunActors(Runner& runner) noexcept
         }
 
         auto nextWakeup = TimePoint::min();
+        const bool reportsMetrics = &runner == runners_.front().get();
+        auto nextMetricsAt = Clock::now();
         for (;;) {
+            if (reportsMetrics) {
+                if (Clock::now() >= nextMetricsAt) {
+                    RecordQueueMetrics();
+                    nextMetricsAt = Clock::now() + std::chrono::seconds(1);
+                }
+                nextWakeup = std::min(nextWakeup, nextMetricsAt);
+            }
             {
                 std::unique_lock lock(runner.mutex);
                 const auto ready = [this, &runner] {

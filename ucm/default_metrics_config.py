@@ -351,6 +351,91 @@ _COUNTER_METRICS = [
 ]
 _GAUGE_METRICS = [
     (
+        "dramstore_scheduler_request_queue_size",
+        "Sampled queued Requests across scheduler runners, excluding batches already dequeued",
+        {"multiprocess_mode": 'livemostrecent'},
+    ),
+    (
+        "dramstore_scheduler_event_queue_size",
+        "Sampled queued NodeEvents across scheduler runners, excluding batches already dequeued",
+        {"multiprocess_mode": 'livemostrecent'},
+    ),
+    (
+        "dramstore_task_queue_size",
+        "Sampled TaskManager submission queue occupancy (tasks)",
+        {"multiprocess_mode": 'livemostrecent'},
+    ),
+    (
+        "dramstore_task_queue_capacity",
+        "TaskManager submission queue capacity (tasks)",
+        {"multiprocess_mode": 'livemostrecent'},
+    ),
+    (
+        "dramstore_completion_queue_size",
+        "Sampled TaskManager completion queue occupancy (request completions)",
+        {"multiprocess_mode": 'livemostrecent'},
+    ),
+    (
+        "dramstore_completion_queue_capacity",
+        "TaskManager completion queue capacity (request completions)",
+        {"multiprocess_mode": 'livemostrecent'},
+    ),
+    (
+        "dramstore_tasks_active",
+        "Sampled tasks awaiting completion, excluding queued submissions and retained results",
+        {"multiprocess_mode": 'livemostrecent'},
+    ),
+    (
+        "dramstore_io_entries_used",
+        "Sampled entries reserved by active tasks",
+        {"multiprocess_mode": 'livemostrecent'},
+    ),
+    (
+        "dramstore_io_entries_capacity",
+        "Maximum entries reserved by active tasks",
+        {"multiprocess_mode": 'livemostrecent'},
+    ),
+    (
+        "dramstore_reply_slots_used",
+        "Sampled active reply leases, including delivered replies awaiting release",
+        {"multiprocess_mode": 'livemostrecent'},
+    ),
+    (
+        "dramstore_reply_slots_capacity",
+        "Reply slot capacity",
+        {"multiprocess_mode": 'livemostrecent'},
+    ),
+    (
+        "dramstore_reply_buffer_used_bytes",
+        "Sampled leased reply slot bytes including alignment, not payload bytes",
+        {"multiprocess_mode": 'livemostrecent'},
+    ),
+    (
+        "dramstore_reply_buffer_capacity_bytes",
+        "Preallocated reply buffer bytes including alignment",
+        {"multiprocess_mode": 'livemostrecent'},
+    ),
+    (
+        "dramstore_transport_queue_size",
+        "Sampled aggregate queued Transmit and Connect admission occupancy",
+        {"multiprocess_mode": 'livemostrecent'},
+    ),
+    (
+        "dramstore_transport_queue_capacity",
+        "Aggregate Transmit and Connect admission capacity",
+        {"multiprocess_mode": 'livemostrecent'},
+    ),
+    (
+        "dramstore_transport_fence_queue_size",
+        "Sampled aggregate queued Fence admission occupancy",
+        {"multiprocess_mode": 'livemostrecent'},
+    ),
+    (
+        "dramstore_transport_fence_queue_capacity",
+        "Aggregate reserved Fence admission capacity",
+        {"multiprocess_mode": 'livemostrecent'},
+    ),
+    (
         "yuanrong_dram_used_bytes",
         "YuanRong physical shared-memory usage in bytes",
         {"multiprocess_mode": 'livemostrecent'},

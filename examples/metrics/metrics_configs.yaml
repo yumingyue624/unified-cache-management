@@ -274,6 +274,57 @@ counter:
 
 # Gauge metrics configuration
 gauge:
+  - name: "dramstore_scheduler_request_queue_size"
+    documentation: "Sampled queued Requests across scheduler runners, excluding batches already dequeued"
+    multiprocess_mode: livemostrecent
+  - name: "dramstore_scheduler_event_queue_size"
+    documentation: "Sampled queued NodeEvents across scheduler runners, excluding batches already dequeued"
+    multiprocess_mode: livemostrecent
+  - name: "dramstore_task_queue_size"
+    documentation: "Sampled TaskManager submission queue occupancy (tasks)"
+    multiprocess_mode: livemostrecent
+  - name: "dramstore_task_queue_capacity"
+    documentation: "TaskManager submission queue capacity (tasks)"
+    multiprocess_mode: livemostrecent
+  - name: "dramstore_completion_queue_size"
+    documentation: "Sampled TaskManager completion queue occupancy (request completions)"
+    multiprocess_mode: livemostrecent
+  - name: "dramstore_completion_queue_capacity"
+    documentation: "TaskManager completion queue capacity (request completions)"
+    multiprocess_mode: livemostrecent
+  - name: "dramstore_tasks_active"
+    documentation: "Sampled tasks awaiting completion, excluding queued submissions and retained results"
+    multiprocess_mode: livemostrecent
+  - name: "dramstore_io_entries_used"
+    documentation: "Sampled entries reserved by active tasks"
+    multiprocess_mode: livemostrecent
+  - name: "dramstore_io_entries_capacity"
+    documentation: "Maximum entries reserved by active tasks"
+    multiprocess_mode: livemostrecent
+  - name: "dramstore_reply_slots_used"
+    documentation: "Sampled active reply leases, including delivered replies awaiting release"
+    multiprocess_mode: livemostrecent
+  - name: "dramstore_reply_slots_capacity"
+    documentation: "Reply slot capacity"
+    multiprocess_mode: livemostrecent
+  - name: "dramstore_reply_buffer_used_bytes"
+    documentation: "Sampled leased reply slot bytes including alignment, not payload bytes"
+    multiprocess_mode: livemostrecent
+  - name: "dramstore_reply_buffer_capacity_bytes"
+    documentation: "Preallocated reply buffer bytes including alignment"
+    multiprocess_mode: livemostrecent
+  - name: "dramstore_transport_queue_size"
+    documentation: "Sampled aggregate queued Transmit and Connect admission occupancy"
+    multiprocess_mode: livemostrecent
+  - name: "dramstore_transport_queue_capacity"
+    documentation: "Aggregate Transmit and Connect admission capacity"
+    multiprocess_mode: livemostrecent
+  - name: "dramstore_transport_fence_queue_size"
+    documentation: "Sampled aggregate queued Fence admission occupancy"
+    multiprocess_mode: livemostrecent
+  - name: "dramstore_transport_fence_queue_capacity"
+    documentation: "Aggregate reserved Fence admission capacity"
+    multiprocess_mode: livemostrecent
   # DramStore client and local DramPool resource metrics
   - name: "drampool_capacity_bytes"
     documentation: "Latest DramPool capacity bytes supplied by the server"
