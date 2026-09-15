@@ -69,7 +69,7 @@ protected:
                 {"duration_ms", "task_queue_duration_ms", "task_to_request_duration_ms",
                  "request_duration_ms", "request_queue_duration_ms",
                  "request_pending_duration_ms", "request_prepare_duration_ms",
-                 "request_transport_queue_duration_ms", "request_transmit_duration_ms",
+                 "request_transport_queue_duration_ms", "request_transport_send_duration_ms",
                  "request_remote_duration_ms"}) {
                 Metrics::CreateStats(std::string(prefix) + suffix, "histogram",
                                      {0.1, 1, 100, 5000});

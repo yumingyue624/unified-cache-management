@@ -71,7 +71,7 @@ void TransportExecutor::Execute(TransportCommand command) noexcept
                     const auto transmitStarted = std::chrono::steady_clock::now();
                     auto completed = options_.backend->Transmit(value);
                     UC::Metrics::UpdateStats(
-                        DRAMSTORE_OP_METRIC(value.op, "request_transmit_duration_ms"),
+                        DRAMSTORE_OP_METRIC(value.op, "request_transport_send_duration_ms"),
                         std::chrono::duration<double, std::milli>(
                             std::chrono::steady_clock::now() - transmitStarted)
                             .count());

@@ -102,7 +102,7 @@ Histogram 的 `bucket_counts` 是各区间的计数，而非 Prometheus 文本�
 | `dramstore_<op>_request_pending_duration_ms` | Histogram | NodeActor 接收至 StartRequest |
 | `dramstore_<op>_request_prepare_duration_ms` | Histogram | reply slot 获取与请求编码 |
 | `dramstore_<op>_request_transport_queue_duration_ms` | Histogram | TransportExecutor 入队至 worker 取出 |
-| `dramstore_<op>_request_transmit_duration_ms` | Histogram | backend Transmit 开始至 TCP Send 返回 |
+| `dramstore_<op>_request_transport_send_duration_ms` | Histogram | backend Transmit 开始至 TCP Send 返回 |
 | `dramstore_<op>_request_remote_duration_ms` | Histogram | TCP 发送完成至 ReplyObserved |
 | `dramstore_<op>_request_submit_errors_total` | Counter | TaskManager 向 NodeScheduler 移交失败；不计入 NodeActor completed |
 | `dramstore_dump_prerequisite_duration_ms` / `prerequisite_errors_total` | Histogram / Counter | DramStore::Dump 中等待前置 event 的耗时与失败，独立于 TaskManager task |

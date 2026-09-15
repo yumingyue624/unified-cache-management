@@ -44,7 +44,7 @@ Request 和 DUMP 前置等待从 0.01 ms 开始，分别覆盖至 500 ms、5000 
 | Request pending | `dramstore_<op>_request_pending_duration_ms` | ✓ | ✓ | ✓ | 是 | NodeActor 接收到 StartRequest；包含断连、重连及 inflight 限流等待 |
 | Request 准备 | `dramstore_<op>_request_prepare_duration_ms` | ✓ | ✓ | ✓ | 是 | reply slot 获取及请求编码 |
 | Transport 排队 | `dramstore_<op>_request_transport_queue_duration_ms` | ✓ | ✓ | ✓ | 是 | submitTransport 成功到 TransportExecutor worker 取出 |
-| Request 发送 | `dramstore_<op>_request_transmit_duration_ms` | ✓ | ✓ | ✓ | 是 | TransportExecutor 调用 backend Transmit 到 TCP Send 返回 |
+| Transport 发送 | `dramstore_<op>_request_transport_send_duration_ms` | ✓ | ✓ | ✓ | 是 | TransportExecutor 调用 backend Transmit 到 TCP Send 返回 |
 | Request 远端 | `dramstore_<op>_request_remote_duration_ms` | ✓ | ✓ | ✓ | 是 | TCP 发送完成到 ReplyObserved；主要是远端执行及回复等待 |
 | 前置事件等待 | `dramstore_dump_prerequisite_duration_ms` | — | ✓ | — | 否，DUMP 专属 | 在 Task Submit 之前等待 compute event，故不包含在 DUMP Task duration 内 |
 | 前置事件错误 | `dramstore_dump_prerequisite_errors_total` | — | ✓ | — | 否，DUMP 专属 | prerequisite 等待失败 |
