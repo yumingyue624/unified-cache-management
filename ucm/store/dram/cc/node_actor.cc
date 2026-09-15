@@ -342,14 +342,13 @@ void NodeActor::StartRequest(Request request)
     }
 
     const auto payloadSize = payload.size();
-    TransportCommand command{
-        Transmit{active.token, std::move(payload)}
-    };
-    const auto transmitStarted = std::chrono::steady_clock::now();
+    const auto transportQueuedAt = std::chrono::steady_clock::now();
     UC::Metrics::UpdateStats(
         DRAMSTORE_OP_METRIC(active.request.op, "request_prepare_duration_ms"),
-        std::chrono::duration<double, std::milli>(transmitStarted - prepareStarted).count());
-    active.transmitStarted = transmitStarted;
+        std::chrono::duration<double, std::milli>(transportQueuedAt - prepareStarted).count());
+    TransportCommand command{
+        Transmit{active.token, active.request.op, std::move(payload), transportQueuedAt}
+    };
     status = dependencies_.submitTransport(command);
     if (status.Success()) {
         UC_DEBUG(
@@ -544,9 +543,6 @@ void NodeActor::Handle(TransmitCompleted event, TimePoint now)
             NodeStateName(state_));
         return;
     }
-    UC::Metrics::UpdateStats(
-        DRAMSTORE_OP_METRIC(found->second.request.op, "request_transmit_duration_ms"),
-        std::chrono::duration<double, std::milli>(now - found->second.transmitStarted).count());
     if (event.status.Success()) {
         found->second.state = RequestState::INFLIGHT;
         found->second.remoteStarted = now;

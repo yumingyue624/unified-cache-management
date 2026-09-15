@@ -72,7 +72,6 @@ private:
         ReplySlot replySlot;
         Status failure{Status::OK()};
         std::vector<EntryResult> entryResults;
-        TimePoint transmitStarted{};
         TimePoint remoteStarted{};
 
         void Complete(Status status, std::vector<EntryResult> results = {})

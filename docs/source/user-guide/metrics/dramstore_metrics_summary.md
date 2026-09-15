@@ -43,7 +43,8 @@ Request 和 DUMP 前置等待从 0.01 ms 开始，分别覆盖至 500 ms、5000 
 | Request 调度排队 | `dramstore_<op>_request_queue_duration_ms` | ✓ | ✓ | ✓ | 是 | Request 构造完成到 NodeActor 接收，主要是 NodeScheduler queue |
 | Request pending | `dramstore_<op>_request_pending_duration_ms` | ✓ | ✓ | ✓ | 是 | NodeActor 接收到 StartRequest；包含断连、重连及 inflight 限流等待 |
 | Request 准备 | `dramstore_<op>_request_prepare_duration_ms` | ✓ | ✓ | ✓ | 是 | reply slot 获取及请求编码 |
-| Request 发送 | `dramstore_<op>_request_transmit_duration_ms` | ✓ | ✓ | ✓ | 是 | TransportExecutor 排队及 TCP 请求发送 |
+| Transport 排队 | `dramstore_<op>_request_transport_queue_duration_ms` | ✓ | ✓ | ✓ | 是 | submitTransport 成功到 TransportExecutor worker 取出 |
+| Request 发送 | `dramstore_<op>_request_transmit_duration_ms` | ✓ | ✓ | ✓ | 是 | TransportExecutor 调用 backend Transmit 到 TCP Send 返回 |
 | Request 远端 | `dramstore_<op>_request_remote_duration_ms` | ✓ | ✓ | ✓ | 是 | TCP 发送完成到 ReplyObserved；主要是远端执行及回复等待 |
 | 前置事件等待 | `dramstore_dump_prerequisite_duration_ms` | — | ✓ | — | 否，DUMP 专属 | 在 Task Submit 之前等待 compute event，故不包含在 DUMP Task duration 内 |
 | 前置事件错误 | `dramstore_dump_prerequisite_errors_total` | — | ✓ | — | 否，DUMP 专属 | prerequisite 等待失败 |
@@ -75,7 +76,8 @@ Request branch
   = NodeScheduler queue
   + NodeActor pending (断连、重连或 inflight 限流)
   + reply-slot / encode
-  + TransportExecutor queue / TCP send
+  + TransportExecutor queue
+  + TCP send
   + remote service / reply observation
   + fence recovery（发生超时时）
 ```
@@ -187,7 +189,8 @@ DUMP 再增加位于 root Task 之前或其父 span 下的
 `dump.prerequisite_wait`。只对慢请求/错误请求采样，在 exemplar 中保留 trace 关联，
 不要把 request ID 放进 Prometheus label。
 
-当前低基数阶段 Histogram 已覆盖 queue、pending、prepare、transmit 和 remote，能够改善
+当前低基数阶段 Histogram 已覆盖 request queue、pending、prepare、transport queue、
+transmit 和 remote，能够改善
 总体阶段归因，但仍不能证明某一个 p99 Task 就对应另一个指标的 p99 Request。
 
 ## 7. 当前盲区和建议优先级

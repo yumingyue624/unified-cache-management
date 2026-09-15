@@ -22,10 +22,13 @@
  * SOFTWARE.
  * */
 #include "transport_executor.h"
+#include <chrono>
 #include <exception>
 #include <limits>
 #include <optional>
 #include <type_traits>
+#include "dram_metrics.h"
+#include "metrics_api.h"
 
 namespace UC::Dram {
 namespace {
@@ -65,7 +68,14 @@ void TransportExecutor::Execute(TransportCommand command) noexcept
                 NodeEvent event;
                 if constexpr (std::is_same_v<Command, Transmit>) {
                     nodeId = value.token.nodeId;
-                    event = NodeEvent{options_.backend->Transmit(value)};
+                    const auto transmitStarted = std::chrono::steady_clock::now();
+                    auto completed = options_.backend->Transmit(value);
+                    UC::Metrics::UpdateStats(
+                        DRAMSTORE_OP_METRIC(value.op, "request_transmit_duration_ms"),
+                        std::chrono::duration<double, std::milli>(
+                            std::chrono::steady_clock::now() - transmitStarted)
+                            .count());
+                    event = NodeEvent{std::move(completed)};
                 } else if constexpr (std::is_same_v<Command, Connect>) {
                     nodeId = value.nodeId;
                     event = NodeEvent{
@@ -101,6 +111,13 @@ void TransportExecutor::Run(Worker& worker) noexcept
                 return;
             }
             command.emplace(worker.queue.Pop());
+        }
+        if (auto* transmit = std::get_if<Transmit>(&*command)) {
+            UC::Metrics::UpdateStats(
+                DRAMSTORE_OP_METRIC(transmit->op, "request_transport_queue_duration_ms"),
+                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
+                                                          transmit->metricsQueuedAt)
+                    .count());
         }
         {
             std::lock_guard lock(admissionMutex_);
