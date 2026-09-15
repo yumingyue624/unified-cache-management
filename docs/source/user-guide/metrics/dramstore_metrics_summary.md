@@ -23,8 +23,8 @@ LOOKUP/DUMP/LOAD 如何横向对比和归并，以及请求总时延升高时如
 ## 2. LOOKUP、DUMP、LOAD 对比矩阵
 
 下表中的 `<op>` 可替换为 `lookup`、`dump`、`load`。以下均使用代码中的原始指标名，
-Histogram 单位为毫秒。Task/Request 总时延 buckets 为 0.1–5000 ms，Task 排队为
-0.1–500 ms，DUMP 前置等待为 0.1–500 ms。
+Histogram 单位为毫秒。Task 总时延 buckets 为 0.1–5000 ms；可能快速结束的 Task 排队、
+Request 和 DUMP 前置等待从 0.01 ms 开始，分别覆盖至 500 ms、5000 ms 和 500 ms。
 
 | 观察面 | 统一指标模式 | LOOKUP | DUMP | LOAD | 是否可归并 | 说明 |
 | --- | --- | :---: | :---: | :---: | --- | --- |
