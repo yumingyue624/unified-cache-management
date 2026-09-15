@@ -38,8 +38,7 @@ LOOKUP/DUMP/LOAD 如何横向对比和归并，以及请求总时延升高时如
 | Task 超时 | `dramstore_<op>_task_timeouts_total` | ✓ | ✓ | ✓ | 是 | failed 的子集 |
 | Request 完成 | `dramstore_<op>_requests_completed_total` | ✓ | ✓ | ✓ | 是 | 成功和失败均计数 |
 | Request 失败 | `dramstore_<op>_requests_failed_total` | ✓ | ✓ | ✓ | 是 | completed 的子集 |
-| Request 提交错误 | `dramstore_<op>_request_submit_errors_total` | ✓ | ✓ | ✓ | 是 | TaskManager 到 NodeActor 的同步提交失败；不等同远端执行失败 |
-| 前置事件错误 | `dramstore_dump_prerequisite_errors_total` | — | ✓ | — | 否，DUMP 专属 | prerequisite 等待失败 |
+| Request 超时 | `dramstore_<op>_request_timeouts_total` | ✓ | ✓ | ✓ | 是 | Request 最终以 Timeout 结算时计一次，是 requests_failed 的子集；包含到期和节点恢复中被置为 Timeout 的请求，不与 failed 相加 |
 
 #### 公共连接和恢复 Counter
 
@@ -68,8 +67,7 @@ LOOKUP/DUMP/LOAD 如何横向对比和归并，以及请求总时延升高时如
 | NodeScheduler 事件队列 | `dramstore_scheduler_event_queue_size` | 无固定容量 | 所有 runner 的待取 NodeEvent 总数；不包含已取出的 batch |
 | Transport 普通命令队列 | `dramstore_transport_queue_size` | `dramstore_transport_queue_capacity` | 所有 worker 合计的 Transmit/Connect 入队配额占用；在出队后归还配额时减少，不包含实际传输 |
 | Transport 恢复命令队列 | `dramstore_transport_fence_queue_size` | `dramstore_transport_fence_queue_capacity` | Fence 命令独立保留的入队配额，避免普通命令挤占恢复容量 |
-| Reply slot | `dramstore_reply_slots_used` | `dramstore_reply_slots_capacity` | 活跃租约数；reply 已到但尚未释放的 slot 仍算占用；空闲数 = capacity − used |
-| Reply buffer | `dramstore_reply_buffer_used_bytes` | `dramstore_reply_buffer_capacity_bytes` | 按 slot 对齐后的 stride 计算租用字节数和预分配总字节数；不是 reply 有效载荷大小，释放 slot 不归还预分配内存 |
+| Reply buffer | `dramstore_reply_buffer_used_bytes` | `dramstore_reply_buffer_capacity_bytes` | 按 slot 对齐后的 stride 计算租用字节数和预分配总字节数；reply 已到但尚未释放的 slot 仍算占用；不是 reply 有效载荷大小，释放 slot 不归还预分配内存 |
 | 活跃 Task 的 entry 配额 | `dramstore_io_entries_used` | `dramstore_io_entries_capacity` | 已接纳处理的 Task 占用的 entry 数；不包含 submission queue 中的 Task |
 
 另有 `dramstore_tasks_active`：已进入 activeTasks、尚未完成结算的 Task 数；不包含
@@ -150,7 +148,7 @@ DUMP API wall time
 | deadline recovery / fence / stale reply 激增 | 恢复 counters + Request heatmap | 超时恢复放大长尾，先看连接和服务端健康 |
 | Task queue 接近容量 | task_queue_size / task_queue_capacity + rejected | TaskManager 持续积压 |
 | Transport queue 高，send 时延也高 | transport_queue_size / capacity + transport_send | 传输 worker 消费跟不上 |
-| Reply slot 或 entry 配额接近容量 | reply_slots_used / capacity、io_entries_used / capacity | 请求长期占用资源；结合 remote 时延、超时和恢复指标排查 |
+| Reply buffer 或 entry 配额接近容量 | reply_buffer_used_bytes / reply_buffer_capacity_bytes、io_entries_used / io_entries_capacity | 请求长期占用资源；结合 remote 时延、超时和恢复指标排查 |
 | 完成队列持续增长 | completion_queue_size + tasks_active | TaskManager 完成聚合跟不上 |
 
 ## 4. 推荐 Grafana 表格

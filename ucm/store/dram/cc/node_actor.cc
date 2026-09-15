@@ -26,7 +26,6 @@
 #include <cassert>
 #include <cstring>
 #include <utility>
-#include "dram_metrics.h"
 #include "logger/logger.h"
 #include "metrics_api.h"
 
@@ -69,6 +68,9 @@ void RecordRequestCompletionMetrics(OpType op, const Status& status,
     UC::Metrics::UpdateStats(DRAMSTORE_OP_METRIC(op, "requests_completed_total"), 1.0);
     if (status.Failure()) {
         UC::Metrics::UpdateStats(DRAMSTORE_OP_METRIC(op, "requests_failed_total"), 1.0);
+    }
+    if (status == Status::Timeout()) {
+        UC::Metrics::UpdateStats(DRAMSTORE_OP_METRIC(op, "request_timeouts_total"), 1.0);
     }
     UC::Metrics::UpdateStats(
         DRAMSTORE_OP_METRIC(op, "request_duration_ms"),

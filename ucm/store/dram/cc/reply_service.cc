@@ -245,9 +245,6 @@ void ReplyService::Run() noexcept
                 // The observer is the sole Gauge writer; include delivered leases until release.
                 const auto used = activeLeaseSnapshot.size();
                 const auto stride = buffers_.GetTotalSize() / options_.slotCount;
-                UC::Metrics::UpdateStats(NAME_TO_METRIC_ID("dramstore_reply_slots_used"), used);
-                UC::Metrics::UpdateStats(NAME_TO_METRIC_ID("dramstore_reply_slots_capacity"),
-                                         options_.slotCount);
                 UC::Metrics::UpdateStats(NAME_TO_METRIC_ID("dramstore_reply_buffer_used_bytes"),
                                          used * stride);
                 UC::Metrics::UpdateStats(NAME_TO_METRIC_ID("dramstore_reply_buffer_capacity_bytes"),

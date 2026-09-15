@@ -26,7 +26,6 @@
 #include <fmt/format.h>
 #include <string>
 #include <system_error>
-#include "dram_metrics.h"
 #include "logger/logger.h"
 #include "metrics_api.h"
 #include "router/router.h"
@@ -314,8 +313,6 @@ void TaskManager::ProcessSubmission(Submission submission)
     for (auto& request : requests) {
         const auto status = dependencies_.submitRequest(request);
         if (status.Failure()) {
-            UC::Metrics::UpdateStats(
-                DRAMSTORE_OP_METRIC(submission.op, "request_submit_errors_total"), 1.0);
             UC_WARN(
                 "DramStore request submission failed, task_id={} request_id={} op={} "
                 "node_id={} entries={} status={}",

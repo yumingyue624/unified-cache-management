@@ -366,8 +366,6 @@ Expected<Detail::TaskHandle> DramStore::Dump(Detail::TaskDesc task)
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started)
             .count());
     if (status.Failure()) {
-        UC::Metrics::UpdateStats(NAME_TO_METRIC_ID("dramstore_dump_prerequisite_errors_total"),
-                                 1.0);
         UC_ERROR("DramStore dump prerequisite wait failed, prerequisite_handle={} status={}",
                  task.prerequisiteHandle, status);
         return status;

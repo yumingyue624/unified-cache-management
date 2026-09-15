@@ -27,7 +27,6 @@
 #include <limits>
 #include <optional>
 #include <type_traits>
-#include "dram_metrics.h"
 #include "metrics_api.h"
 
 namespace UC::Dram {

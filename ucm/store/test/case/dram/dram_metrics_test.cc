@@ -59,11 +59,11 @@ protected:
     static void SetUpTestSuite()
     {
         Metrics::SetUp();
-        for (const auto* prefix : {"dramstore_dump_", "dramstore_lookup_"}) {
+        for (const auto* prefix : {"dramstore_dump_", "dramstore_lookup_", "dramstore_load_"}) {
             for (const auto* suffix :
                  {"tasks_submitted_total", "tasks_rejected_total", "tasks_succeeded_total",
                   "tasks_failed_total", "requests_completed_total", "requests_failed_total",
-                  "task_timeouts_total", "request_submit_errors_total"}) {
+                  "task_timeouts_total", "request_timeouts_total"}) {
                 Metrics::CreateStats(std::string(prefix) + suffix, "counter");
             }
             for (const auto* suffix :
@@ -163,12 +163,52 @@ TEST_F(UCDramMetricsTest, NodeActorRecordsCompletedFailedAndStaleRequest)
     const auto& histograms = std::get<2>(stats);
     EXPECT_EQ(counters.at("dramstore_dump_requests_completed_total"), 1);
     EXPECT_EQ(counters.at("dramstore_dump_requests_failed_total"), 1);
+    EXPECT_EQ(counters.count("dramstore_dump_request_timeouts_total"), 0);
     EXPECT_EQ(counters.at("dramstore_stale_replies_total"), 1);
     EXPECT_EQ(HistogramCount(histograms.at("dramstore_dump_request_duration_ms")), 1);
     EXPECT_EQ(HistogramCount(histograms.at("dramstore_dump_request_queue_duration_ms")), 1);
     EXPECT_EQ(HistogramCount(histograms.at("dramstore_dump_request_pending_duration_ms")), 1);
     EXPECT_EQ(HistogramCount(histograms.at("dramstore_dump_request_prepare_duration_ms")), 1);
     EXPECT_EQ(HistogramCount(histograms.at("dramstore_dump_request_remote_duration_ms")), 1);
+}
+
+TEST_F(UCDramMetricsTest, RequestTimeoutsCountOnceAtAdmissionAndWhilePending)
+{
+    for (const auto op : {OpType::LOOKUP, OpType::DUMP, OpType::LOAD}) {
+        std::size_t completed = 0;
+        NodeDependencies dependencies;
+        dependencies.submitTransport = [](TransportCommand&) { return Status::Retry(); };
+        dependencies.publishCompletion = [&](std::vector<RequestCompleted>& events) {
+            for (const auto& event : events) {
+                EXPECT_EQ(event.status, Status::Timeout());
+                ++completed;
+            }
+        };
+        NodeActor actor({{1, "127.0.0.1", 12345, "127.0.0.1:23456"}, {4, 8}, 1ms},
+                        std::move(dependencies));
+        const auto now = std::chrono::steady_clock::now();
+        for (RequestId id = 1; id <= 2; ++id) {
+            Request request;
+            request.taskId = id;
+            request.requestId = id;
+            request.nodeId = 1;
+            request.op = op;
+            request.metricsStarted = now;
+            request.deadline = id == 1 ? now : now + 1ms;
+            actor.Handle(std::move(request), now);
+        }
+        actor.Advance(now);
+        actor.Advance(now + 2ms);
+        actor.Advance(now + 3ms);
+        EXPECT_EQ(completed, 2);
+    }
+    const auto stats = Metrics::GetAllStatsAndClear();
+    const auto& counters = std::get<0>(stats);
+    for (const auto* prefix : {"dramstore_lookup_", "dramstore_dump_", "dramstore_load_"}) {
+        EXPECT_EQ(counters.at(std::string(prefix) + "request_timeouts_total"), 2);
+        EXPECT_EQ(counters.at(std::string(prefix) + "requests_failed_total"), 2);
+        EXPECT_EQ(counters.at(std::string(prefix) + "requests_completed_total"), 2);
+    }
 }
 
 TEST_F(UCDramMetricsTest, TaskManagerSettlesAcceptedTaskOnceAndRecordsRejectedSubmission)
