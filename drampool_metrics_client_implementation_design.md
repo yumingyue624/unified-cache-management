@@ -94,6 +94,7 @@ Histogram 的 `bucket_counts` 是各区间的计数，而非 Prometheus 文本�
 | `dramstore_<op>_task_timeouts_total` | Counter | failed 中最终状态为 Timeout 的子集 |
 | `dramstore_<op>_task_duration_ms` | Histogram | 从 admission 起点至 task promise 结果完成前，包含排队、路由、远端等待及必要恢复等待 |
 | `dramstore_<op>_task_queue_duration_ms` | Histogram | 成功入队至 ProcessSubmission 开始 |
+| `dramstore_<op>_task_to_request_duration_ms` | Histogram | 成功入队至全部 Request 完成构造，包含 Task 排队 |
 | `dramstore_<op>_requests_completed_total` | Counter | NodeActor 结算并生成唯一 RequestCompleted 的节点请求数 |
 | `dramstore_<op>_requests_failed_total` | Counter | 上述请求最终 status 失败数 |
 | `dramstore_<op>_request_duration_ms` | Histogram | NodeActor 接受请求至 QueueCompletion，包含节点内排队和恢复等待 |

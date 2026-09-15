@@ -337,6 +337,9 @@ histogram:
   - name: "dramstore_lookup_task_queue_duration_ms"
     documentation: "DramStore lookup task queue duration (ms)"
     buckets: [0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 500]
+  - name: "dramstore_lookup_task_to_request_duration_ms"
+    documentation: "DramStore lookup duration from task admission through request construction (ms)"
+    buckets: [0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500]
   - name: "dramstore_lookup_request_duration_ms"
     documentation: "DramStore lookup request duration (ms)"
     buckets: [0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000]
@@ -351,6 +354,9 @@ histogram:
   - name: "dramstore_dump_task_queue_duration_ms"
     documentation: "DramStore dump task queue duration (ms)"
     buckets: [0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 500]
+  - name: "dramstore_dump_task_to_request_duration_ms"
+    documentation: "DramStore dump duration from task admission through request construction (ms)"
+    buckets: [0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500]
   - name: "dramstore_dump_request_duration_ms"
     documentation: "DramStore dump request duration (ms)"
     buckets: [0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000]
@@ -365,6 +371,9 @@ histogram:
   - name: "dramstore_load_task_queue_duration_ms"
     documentation: "DramStore load task queue duration (ms)"
     buckets: [0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 500]
+  - name: "dramstore_load_task_to_request_duration_ms"
+    documentation: "DramStore load duration from task admission through request construction (ms)"
+    buckets: [0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500]
   - name: "dramstore_load_request_duration_ms"
     documentation: "DramStore load request duration (ms)"
     buckets: [0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000]

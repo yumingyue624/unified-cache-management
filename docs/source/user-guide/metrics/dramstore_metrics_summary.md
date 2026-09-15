@@ -35,6 +35,7 @@ Request 和 DUMP 前置等待从 0.01 ms 开始，分别覆盖至 500 ms、5000 
 | Task 超时 | `dramstore_<op>_task_timeouts_total` | ✓ | ✓ | ✓ | 是 | failed 的子集 |
 | Task 总时延 | `dramstore_<op>_task_duration_ms` | ✓ | ✓ | ✓ | 是 | 从 Submit 开始到最终结算；包含 Task 排队和所有子 Request 完成 |
 | Task 排队 | `dramstore_<op>_task_queue_duration_ms` | ✓ | ✓ | ✓ | 是 | 从 Submit 开始到 TaskManager worker 取出 submission |
+| Task 到 Request | `dramstore_<op>_task_to_request_duration_ms` | ✓ | ✓ | ✓ | 是 | 从 Task 成功入队到所有 Request 完成构造；包含 Task 排队 |
 | Request 完成 | `dramstore_<op>_requests_completed_total` | ✓ | ✓ | ✓ | 是 | 成功和失败均计数 |
 | Request 失败 | `dramstore_<op>_requests_failed_total` | ✓ | ✓ | ✓ | 是 | completed 的子集 |
 | Request 提交错误 | `dramstore_<op>_request_submit_errors_total` | ✓ | ✓ | ✓ | 是 | TaskManager 到 NodeActor 的同步提交失败；不等同远端执行失败 |
@@ -61,8 +62,7 @@ Request 和 DUMP 前置等待从 0.01 ms 开始，分别覆盖至 500 ms、5000 
 
 ```text
 Task total
-  = TaskManager queue
-  + normalize / split / dispatch overhead
+  = Task to Request（TaskManager queue + normalize / route / split）
   + max(Request branch 1, ..., Request branch N)
   + completion aggregation overhead
 
@@ -105,22 +105,22 @@ DUMP API wall time
 
 ### 4.1 总览表：每个 operation 一行
 
-| Operation | QPS | Success % | Reject/s | Timeout/s | Task p50 | Task p95 | Task p99 | Queue p99 | Request p99 |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| LOOKUP | `rate(submitted)` | `succeeded / submitted` | `rate(rejected)` | `rate(timeout)` | histogram | histogram | histogram | histogram | histogram |
-| DUMP | 同上 | 同上 | 同上 | 同上 | 同上 | 同上 | 同上 | 同上 | 同上 |
-| LOAD | 同上 | 同上 | 同上 | 同上 | 同上 | 同上 | 同上 | 同上 | 同上 |
+| Operation | QPS | Success % | Reject/s | Timeout/s | Task p50 | Task p95 | Task p99 | Task→Request p99 | Queue p99 | Request p99 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| LOOKUP | `rate(submitted)` | `succeeded / submitted` | `rate(rejected)` | `rate(timeout)` | histogram | histogram | histogram | histogram | histogram | histogram |
+| DUMP | 同上 | 同上 | 同上 | 同上 | 同上 | 同上 | 同上 | 同上 | 同上 | 同上 |
+| LOAD | 同上 | 同上 | 同上 | 同上 | 同上 | 同上 | 同上 | 同上 | 同上 | 同上 |
 
 这张表用于横向比较，不把不同层级的计数混为一个“请求数”。建议同时保留
 `worker_rank` 和 engine/实例作为 dashboard filters。
 
 ### 4.2 慢请求分解表：每个 operation 一行
 
-| Operation | Task p99 | Queue p99 | Request p99 | 专属阶段 | 判断 |
-| --- | ---: | ---: | ---: | ---: | --- |
-| LOOKUP | total | queue | client request | — | queue 高时优先定位本地排队；否则继续看 Request 路径 |
-| DUMP | total | queue | client request | prerequisite p99 | prerequisite 在 Task 外 |
-| LOAD | total | queue | client request | — | 同 LOOKUP |
+| Operation | Task p99 | Task→Request p99 | Queue p99 | Request p99 | 专属阶段 | 判断 |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| LOOKUP | total | task pre-request | queue | client request | — | Task→Request 高时先看 queue；否则定位路由和拆分 |
+| DUMP | total | task pre-request | queue | client request | prerequisite p99 | prerequisite 在 Task 外 |
+| LOAD | total | task pre-request | queue | client request | — | 同 LOOKUP |
 
 `p99(total) - p99(stage)` 和 `p99(A) + p99(B)` 都不是严格的单请求分解，因为各
 Histogram 的 p99 通常来自不同样本。
@@ -131,8 +131,8 @@ Histogram 的 p99 通常来自不同样本。
 | --- | --- | --- |
 | 1 | QPS、成功率、拒绝率、超时率 Stat/Time series | 先判断影响面和错误类型 |
 | 2 | 三操作 Task p50/p95/p99 Time series | 看用户可感知长尾及操作差异 |
-| 3 | Task / queue / Request p99 同图 | 找时延在哪一层开始抬升 |
-| 4 | Task / queue / Request duration Heatmap，按 operation 重复 | 看多峰、离群、分布漂移；只画 p99 会丢失这些信息 |
+| 3 | Task / Task→Request / queue / Request p99 同图 | 找时延在哪一层开始抬升 |
+| 4 | Task / Task→Request / queue / Request duration Heatmap，按 operation 重复 | 看多峰、离群、分布漂移；只画 p99 会丢失这些信息 |
 | 5 | connect/fence/recovery/stale counters | 解释网络和恢复型长尾 |
 
 ## 5. PromQL 模板

@@ -287,6 +287,11 @@ void TaskManager::ProcessSubmission(Submission submission)
         return;
     }
     auto requests = BuildRequests(submission.op, std::move(entries), submission.deadline);
+    UC::Metrics::UpdateStats(
+        DRAMSTORE_OP_METRIC(submission.op, "task_to_request_duration_ms"),
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
+                                                  submission.metricsStarted)
+            .count());
     usedIoEntries_ += entryCount;
 
     ActiveTask task;
