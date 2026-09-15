@@ -94,6 +94,7 @@ private:
         TimePoint deadline;
         TaskInput input;
         std::promise<TaskResult> promise;
+        TimePoint metricsStarted{};
     };
 
     struct ActiveTask {
@@ -103,6 +104,7 @@ private:
         std::optional<Status> failure;
         std::vector<std::uint8_t> lookupResults;
         std::promise<TaskResult> promise;
+        TimePoint metricsStarted{};
     };
 
     TaskId AllocateTaskIdLocked() noexcept;
@@ -115,6 +117,7 @@ private:
                                        TimePoint deadline) const;
 
     void Run() noexcept;
+    void RecordCapacityMetrics();
     void ProcessSubmission(Submission submission);
     void ProcessCompletion(RequestCompleted event);
     void CompleteRequest(TaskId taskId, Status status, std::vector<EntryResult> results = {});

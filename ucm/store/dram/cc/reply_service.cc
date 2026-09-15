@@ -26,6 +26,7 @@
 #include <limits>
 #include <system_error>
 #include "logger/logger.h"
+#include "metrics_api.h"
 #include "trans/device.h"
 namespace UC::Dram {
 
@@ -231,12 +232,24 @@ void ReplyService::Run() noexcept
     try {
         std::vector<std::size_t> activeLeaseSnapshot;
         activeLeaseSnapshot.reserve(options_.slotCount);
+        auto nextMetricsAt = std::chrono::steady_clock::now();
         while (acceptingLeases_.load(std::memory_order_acquire)) {
             std::uint64_t observedActiveLeaseVersion = 0;
             {
                 std::lock_guard lock(activeLeasesMutex_);
                 activeLeaseSnapshot.assign(activeLeaseIndices_.begin(), activeLeaseIndices_.end());
                 observedActiveLeaseVersion = activeLeaseVersion_;
+            }
+            const auto metricsNow = std::chrono::steady_clock::now();
+            if (metricsNow >= nextMetricsAt) {
+                // The observer is the sole Gauge writer; include delivered leases until release.
+                const auto used = activeLeaseSnapshot.size();
+                const auto stride = buffers_.GetTotalSize() / options_.slotCount;
+                UC::Metrics::UpdateStats(NAME_TO_METRIC_ID("dramstore_reply_buffer_used_bytes"),
+                                         used * stride);
+                UC::Metrics::UpdateStats(NAME_TO_METRIC_ID("dramstore_reply_buffer_capacity_bytes"),
+                                         buffers_.GetTotalSize());
+                nextMetricsAt = metricsNow + std::chrono::seconds(1);
             }
             bool progress = false;
             for (const auto index : activeLeaseSnapshot) {

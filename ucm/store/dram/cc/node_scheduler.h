@@ -54,6 +54,7 @@ private:
 
     Runner& GetRunner(NodeId nodeId) const noexcept;
     void RunActors(Runner& runner) noexcept;
+    void RecordQueueMetrics();
     void JoinAll();
 
     NodeSchedulerConfig config_;

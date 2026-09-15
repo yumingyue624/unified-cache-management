@@ -91,6 +91,7 @@ private:
 
     void Execute(TransportCommand command) noexcept;
     void Run(Worker& worker) noexcept;
+    void RecordCapacityMetrics();
 
     Options options_;
     std::size_t commandQueueCapacity_{0};

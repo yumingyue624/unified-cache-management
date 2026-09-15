@@ -72,6 +72,7 @@ private:
         ReplySlot replySlot;
         Status failure{Status::OK()};
         std::vector<EntryResult> entryResults;
+        TimePoint remoteStarted{};
 
         void Complete(Status status, std::vector<EntryResult> results = {})
         {

@@ -31,6 +31,7 @@
 #include <vector>
 #include "config.h"
 #include "logger/logger.h"
+#include "metrics_api.h"
 #include "node_scheduler.h"
 #include "reply_service.h"
 #include "router/router.h"
@@ -358,7 +359,12 @@ Expected<Detail::TaskHandle> DramStore::Load(Detail::TaskDesc task)
 
 Expected<Detail::TaskHandle> DramStore::Dump(Detail::TaskDesc task)
 {
+    const auto started = std::chrono::steady_clock::now();
     auto status = WaitPrerequisiteEvent(task.prerequisiteHandle);
+    UC::Metrics::UpdateStats(
+        NAME_TO_METRIC_ID("dramstore_dump_prerequisite_duration_ms"),
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started)
+            .count());
     if (status.Failure()) {
         UC_ERROR("DramStore dump prerequisite wait failed, prerequisite_handle={} status={}",
                  task.prerequisiteHandle, status);

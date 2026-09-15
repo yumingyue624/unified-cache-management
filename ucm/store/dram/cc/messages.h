@@ -24,6 +24,7 @@
 #ifndef UNIFIEDCACHE_DRAM_STORE_CC_MESSAGES_H
 #define UNIFIEDCACHE_DRAM_STORE_CC_MESSAGES_H
 
+#include <chrono>
 #include <functional>
 #include <string>
 #include <variant>
@@ -43,7 +44,9 @@ struct RequestCompleted {
 
 struct Transmit {
     RequestToken token;
+    OpType op{OpType::LOOKUP};
     std::vector<std::uint8_t> payload;
+    std::chrono::steady_clock::time_point metricsQueuedAt{};
 };
 
 struct Connect {
