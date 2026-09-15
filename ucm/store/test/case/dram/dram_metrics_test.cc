@@ -121,6 +121,7 @@ TEST_F(UCDramMetricsTest, NodeActorRecordsCompletedFailedAndStaleRequest)
     request.nodeId = 1;
     request.op = OpType::DUMP;
     request.deadline = now + 1h;
+    request.metricsStarted = now;
     for (std::uint8_t index = 0; index < 2; ++index) {
         IoEntry entry;
         entry.blockId[0] = static_cast<std::byte>(index + 1);

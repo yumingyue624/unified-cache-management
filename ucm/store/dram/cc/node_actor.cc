@@ -371,7 +371,6 @@ void NodeActor::StartRequest(Request request)
 
 void NodeActor::Handle(Request request, TimePoint now)
 {
-    if (request.metricsStarted == TimePoint{}) { request.metricsStarted = now; }
     UC::Metrics::UpdateStats(
         DRAMSTORE_OP_METRIC(request.op, "request_queue_duration_ms"),
         std::chrono::duration<double, std::milli>(now - request.metricsStarted).count());
@@ -482,6 +481,8 @@ void NodeActor::Handle(ReplyObserved event, TimePoint now)
         UC::Metrics::UpdateStats(NAME_TO_METRIC_ID("dramstore_stale_replies_total"), 1.0);
         return;
     }
+    // ReplyObserved and TransmitCompleted are published by different threads. A fast reply may
+    // therefore be handled first, in which case the remote phase has no valid start time yet.
     if (found->second.remoteStarted != TimePoint{}) {
         UC::Metrics::UpdateStats(
             DRAMSTORE_OP_METRIC(found->second.request.op, "request_remote_duration_ms"),
