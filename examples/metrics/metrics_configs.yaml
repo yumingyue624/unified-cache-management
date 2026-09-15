@@ -331,8 +331,8 @@ gauge:
 # Histogram metrics configuration
 histogram:
   # DramStore client and local DramPool resource metrics
-  - name: "dramstore_lookup_task_duration_ms"
-    documentation: "DramStore lookup task duration (ms)"
+  - name: "dramstore_lookup_duration_ms"
+    documentation: "End-to-end DramStore lookup duration (ms)"
     buckets: [0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000]
   - name: "dramstore_lookup_task_queue_duration_ms"
     documentation: "DramStore lookup task queue duration (ms)"
@@ -342,14 +342,29 @@ histogram:
     buckets: [0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500]
   - name: "dramstore_lookup_request_duration_ms"
     documentation: "DramStore lookup request duration (ms)"
+    buckets: [0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000]
+  - name: "dramstore_lookup_request_queue_duration_ms"
+    documentation: "DramStore lookup request NodeScheduler queue duration (ms)"
+    buckets: [0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 500]
+  - name: "dramstore_lookup_request_pending_duration_ms"
+    documentation: "DramStore lookup request NodeActor pending duration (ms)"
     buckets: [0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000]
+  - name: "dramstore_lookup_request_prepare_duration_ms"
+    documentation: "DramStore lookup request reply-slot and encoding duration (ms)"
+    buckets: [0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500]
+  - name: "dramstore_lookup_request_transmit_duration_ms"
+    documentation: "DramStore lookup request transport queue and TCP send duration (ms)"
+    buckets: [0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000]
+  - name: "dramstore_lookup_request_remote_duration_ms"
+    documentation: "DramStore lookup request remote processing and reply duration (ms)"
+    buckets: [0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000]
   - name: "drampool_lookup_duration_us"
     documentation: "DramPool lookup duration in us; schema v1 interval buckets"
     buckets: [100, 500, 1000, 5000, 10000, 50000, 100000, 500000, 1000000, 5000000, 10000000, 30000000]
     vllm_connector_name: "drampool_lookup_duration_seconds"
     vllm_connector_value_scale: 1.0e-06
-  - name: "dramstore_dump_task_duration_ms"
-    documentation: "DramStore dump task duration (ms)"
+  - name: "dramstore_dump_duration_ms"
+    documentation: "End-to-end DramStore dump duration (ms)"
     buckets: [0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000]
   - name: "dramstore_dump_task_queue_duration_ms"
     documentation: "DramStore dump task queue duration (ms)"
@@ -359,14 +374,29 @@ histogram:
     buckets: [0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500]
   - name: "dramstore_dump_request_duration_ms"
     documentation: "DramStore dump request duration (ms)"
+    buckets: [0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000]
+  - name: "dramstore_dump_request_queue_duration_ms"
+    documentation: "DramStore dump request NodeScheduler queue duration (ms)"
+    buckets: [0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 500]
+  - name: "dramstore_dump_request_pending_duration_ms"
+    documentation: "DramStore dump request NodeActor pending duration (ms)"
     buckets: [0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000]
+  - name: "dramstore_dump_request_prepare_duration_ms"
+    documentation: "DramStore dump request reply-slot and encoding duration (ms)"
+    buckets: [0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500]
+  - name: "dramstore_dump_request_transmit_duration_ms"
+    documentation: "DramStore dump request transport queue and TCP send duration (ms)"
+    buckets: [0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000]
+  - name: "dramstore_dump_request_remote_duration_ms"
+    documentation: "DramStore dump request remote processing and reply duration (ms)"
+    buckets: [0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000]
   - name: "drampool_dump_duration_us"
     documentation: "DramPool dump duration in us; schema v1 interval buckets"
     buckets: [100, 500, 1000, 5000, 10000, 50000, 100000, 500000, 1000000, 5000000, 10000000, 30000000]
     vllm_connector_name: "drampool_dump_duration_seconds"
     vllm_connector_value_scale: 1.0e-06
-  - name: "dramstore_load_task_duration_ms"
-    documentation: "DramStore load task duration (ms)"
+  - name: "dramstore_load_duration_ms"
+    documentation: "End-to-end DramStore load duration (ms)"
     buckets: [0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000]
   - name: "dramstore_load_task_queue_duration_ms"
     documentation: "DramStore load task queue duration (ms)"
@@ -376,7 +406,22 @@ histogram:
     buckets: [0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500]
   - name: "dramstore_load_request_duration_ms"
     documentation: "DramStore load request duration (ms)"
+    buckets: [0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000]
+  - name: "dramstore_load_request_queue_duration_ms"
+    documentation: "DramStore load request NodeScheduler queue duration (ms)"
+    buckets: [0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 500]
+  - name: "dramstore_load_request_pending_duration_ms"
+    documentation: "DramStore load request NodeActor pending duration (ms)"
     buckets: [0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000]
+  - name: "dramstore_load_request_prepare_duration_ms"
+    documentation: "DramStore load request reply-slot and encoding duration (ms)"
+    buckets: [0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500]
+  - name: "dramstore_load_request_transmit_duration_ms"
+    documentation: "DramStore load request transport queue and TCP send duration (ms)"
+    buckets: [0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000]
+  - name: "dramstore_load_request_remote_duration_ms"
+    documentation: "DramStore load request remote processing and reply duration (ms)"
+    buckets: [0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000]
   - name: "drampool_load_duration_us"
     documentation: "DramPool load duration in us; schema v1 interval buckets"
     buckets: [100, 500, 1000, 5000, 10000, 50000, 100000, 500000, 1000000, 5000000, 10000000, 30000000]

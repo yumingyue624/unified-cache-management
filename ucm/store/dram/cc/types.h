@@ -93,6 +93,7 @@ struct Request {
     std::chrono::steady_clock::time_point deadline;
     // Client observation only; never serialized into a KV request.
     std::chrono::steady_clock::time_point metricsStarted{};
+    std::chrono::steady_clock::time_point metricsPendingStarted{};
 };
 
 struct RequestToken {

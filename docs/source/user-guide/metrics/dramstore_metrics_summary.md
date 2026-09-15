@@ -17,7 +17,7 @@ LOOKUP/DUMP/LOAD 如何横向对比和归并，以及请求总时延升高时如
 
 | 层级 | 含义 | 数量关系 | 当前主要指标 |
 | --- | --- | --- | --- |
-| Task | 一次 LOOKUP/DUMP/LOAD API 调用 | 1 次调用 = 1 Task | `dramstore_<op>_tasks_*`, `dramstore_<op>_task_duration_ms` |
+| Task | 一次 LOOKUP/DUMP/LOAD API 调用 | 1 次调用 = 1 Task | `dramstore_<op>_tasks_*`, `dramstore_<op>_duration_ms` |
 | Request | Task 按目标节点拆出的子请求 | 1 Task = 0..N Request | `dramstore_<op>_requests_*`, `dramstore_<op>_request_duration_ms` |
 
 ## 2. LOOKUP、DUMP、LOAD 对比矩阵
@@ -33,13 +33,18 @@ Request 和 DUMP 前置等待从 0.01 ms 开始，分别覆盖至 500 ms、5000 
 | Task 成功 | `dramstore_<op>_tasks_succeeded_total` | ✓ | ✓ | ✓ | 是 | accepted Task 的最终状态 |
 | Task 失败 | `dramstore_<op>_tasks_failed_total` | ✓ | ✓ | ✓ | 是 | 包含 timeout；分析失败原因时不要再与 timeout 相加 |
 | Task 超时 | `dramstore_<op>_task_timeouts_total` | ✓ | ✓ | ✓ | 是 | failed 的子集 |
-| Task 总时延 | `dramstore_<op>_task_duration_ms` | ✓ | ✓ | ✓ | 是 | 从 Submit 开始到最终结算；包含 Task 排队和所有子 Request 完成 |
+| 端到端总时延 | `dramstore_<op>_duration_ms` | ✓ | ✓ | ✓ | 是 | 从 Submit 开始到最终结算；包含 Task 排队和所有子 Request 完成 |
 | Task 排队 | `dramstore_<op>_task_queue_duration_ms` | ✓ | ✓ | ✓ | 是 | 从 Submit 开始到 TaskManager worker 取出 submission |
 | Task 到 Request | `dramstore_<op>_task_to_request_duration_ms` | ✓ | ✓ | ✓ | 是 | 从 Task 成功入队到所有 Request 完成构造；包含 Task 排队 |
 | Request 完成 | `dramstore_<op>_requests_completed_total` | ✓ | ✓ | ✓ | 是 | 成功和失败均计数 |
 | Request 失败 | `dramstore_<op>_requests_failed_total` | ✓ | ✓ | ✓ | 是 | completed 的子集 |
 | Request 提交错误 | `dramstore_<op>_request_submit_errors_total` | ✓ | ✓ | ✓ | 是 | TaskManager 到 NodeActor 的同步提交失败；不等同远端执行失败 |
-| Request 总时延 | `dramstore_<op>_request_duration_ms` | ✓ | ✓ | ✓ | 是 | NodeActor 接收 Request 到完成；包含节点 pending、连接/限流等待、客户端传输及远端处理 |
+| Request 总时延 | `dramstore_<op>_request_duration_ms` | ✓ | ✓ | ✓ | 是 | Request 构造完成到 QueueCompletion；包含调度排队、节点 pending、发送、远端处理及回复 |
+| Request 调度排队 | `dramstore_<op>_request_queue_duration_ms` | ✓ | ✓ | ✓ | 是 | Request 构造完成到 NodeActor 接收，主要是 NodeScheduler queue |
+| Request pending | `dramstore_<op>_request_pending_duration_ms` | ✓ | ✓ | ✓ | 是 | NodeActor 接收到 StartRequest；包含断连、重连及 inflight 限流等待 |
+| Request 准备 | `dramstore_<op>_request_prepare_duration_ms` | ✓ | ✓ | ✓ | 是 | reply slot 获取及请求编码 |
+| Request 发送 | `dramstore_<op>_request_transmit_duration_ms` | ✓ | ✓ | ✓ | 是 | TransportExecutor 排队及 TCP 请求发送 |
+| Request 远端 | `dramstore_<op>_request_remote_duration_ms` | ✓ | ✓ | ✓ | 是 | TCP 发送完成到 ReplyObserved；主要是远端执行及回复等待 |
 | 前置事件等待 | `dramstore_dump_prerequisite_duration_ms` | — | ✓ | — | 否，DUMP 专属 | 在 Task Submit 之前等待 compute event，故不包含在 DUMP Task duration 内 |
 | 前置事件错误 | `dramstore_dump_prerequisite_errors_total` | — | ✓ | — | 否，DUMP 专属 | prerequisite 等待失败 |
 
@@ -67,17 +72,17 @@ Task total
   + completion aggregation overhead
 
 Request branch
-  = NodeActor pending (断连、重连或 inflight 限流)
-  + reply-slot / encode / local transport submit
-  + network request
-  + remote service
-  + network reply / flag observation
+  = NodeScheduler queue
+  + NodeActor pending (断连、重连或 inflight 限流)
+  + reply-slot / encode
+  + TransportExecutor queue / TCP send
+  + remote service / reply observation
   + fence recovery（发生超时时）
 ```
 
 Request 分支可能并行，因此 Task 总时延应与最慢 Request 分支比较，不能与所有
-Request 时延求和。当前 DramStore 指标只能观测完整的 client Request 时延，尚不能把
-远端处理时间从中独立拆出。
+Request 时延求和。当前阶段 Histogram 可以定位整体热点，但不同 Histogram 的同分位数
+不能直接相加或相减来还原某一条具体请求。
 
 ### DUMP
 
@@ -86,11 +91,11 @@ DUMP API 的调用方感知总时延还多一个 Task 外阶段：
 ```text
 DUMP API wall time
   ≈ dramstore_dump_prerequisite_duration_ms
-  + dramstore_dump_task_duration_ms
+  + dramstore_dump_duration_ms
 ```
 
 这里两个 histogram 的同分位数仍然**不能直接相加**；上式只表达单次调用的计时边界。
-当前 DUMP Task histogram 从 prerequisite 成功后提交开始计时。
+当前 DUMP 端到端 Histogram 从 prerequisite 成功后提交开始计时。
 
 ### 当前可以快速判断什么
 
@@ -145,14 +150,14 @@ Histogram 的 p99 通常来自不同样本。
 histogram_quantile(
   0.99,
   sum by (le) (
-    rate(dramstore_lookup_task_duration_ms_bucket[$__rate_interval])
+    rate(dramstore_lookup_duration_ms_bucket[$__rate_interval])
   )
 )
 
 # LOOKUP Task 平均时延；_sum / _count 必须使用相同过滤条件
-sum(rate(dramstore_lookup_task_duration_ms_sum[$__rate_interval]))
+sum(rate(dramstore_lookup_duration_ms_sum[$__rate_interval]))
 /
-sum(rate(dramstore_lookup_task_duration_ms_count[$__rate_interval]))
+sum(rate(dramstore_lookup_duration_ms_count[$__rate_interval]))
 
 # accepted Task 成功率；timeout 已包含于 failed，不要把两者相加
 sum(rate(dramstore_lookup_tasks_succeeded_total[$__rate_interval]))
@@ -182,17 +187,14 @@ DUMP 再增加位于 root Task 之前或其父 span 下的
 `dump.prerequisite_wait`。只对慢请求/错误请求采样，在 exemplar 中保留 trace 关联，
 不要把 request ID 放进 Prometheus label。
 
-如果短期不引入 tracing，最低成本的补强是新增低基数、同构的阶段 Histogram（如
-`dramstore_<op>_request_pending_duration_ms` 和
-`dramstore_<op>_client_overhead_duration_ms`）。它能改善“总体阶段归因”，但仍不能
-证明某一个 p99 Task 就对应另一个指标的 p99 Request。
+当前低基数阶段 Histogram 已覆盖 queue、pending、prepare、transmit 和 remote，能够改善
+总体阶段归因，但仍不能证明某一个 p99 Task 就对应另一个指标的 p99 Request。
 
 ## 7. 当前盲区和建议优先级
 
 | 优先级 | 缺口 | 影响 | 建议 |
 | --- | --- | --- | --- |
 | P0 | 无单请求关联 | 无法从异常 bucket 下钻到具体慢请求 | trace + exemplar；保留低基数 metrics 做告警 |
-| P0 | Request duration 未拆 NodeActor pending/client/network | Request 变慢时无法快速归因 | 增加 pending 和 client-side prepare/transport 阶段计时 |
 | P1 | 缺少 Task/Request entry 数和 client bytes | 难以区分请求变大与实现变慢 | 增加低基数 counter；用 bytes/s 与 duration 联合判断 |
 | P2 | 三操作靠名称而非 operation label | Dashboard query 重复 | 先用 recording rule 统一；只有兼容性规划后再考虑新 family |
 | P2 | 当前 buckets 沿用 UCM 同类模块的通用范围 | 真实分布可能与通用范围不完全匹配 | 上线后结合真实分布和 SLO 继续调整 buckets |

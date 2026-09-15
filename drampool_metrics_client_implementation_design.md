@@ -92,12 +92,17 @@ Histogram 的 `bucket_counts` 是各区间的计数，而非 Prometheus 文本�
 | `dramstore_<op>_tasks_succeeded_total` | Counter | 已接受任务以成功状态完成的数量 |
 | `dramstore_<op>_tasks_failed_total` | Counter | 已接受任务以失败状态完成，含过期和内部 IO 容量拒绝 |
 | `dramstore_<op>_task_timeouts_total` | Counter | failed 中最终状态为 Timeout 的子集 |
-| `dramstore_<op>_task_duration_ms` | Histogram | 从 admission 起点至 task promise 结果完成前，包含排队、路由、远端等待及必要恢复等待 |
+| `dramstore_<op>_duration_ms` | Histogram | 从 admission 起点至 task promise 结果完成前的端到端时延，包含排队、路由、远端等待及必要恢复等待 |
 | `dramstore_<op>_task_queue_duration_ms` | Histogram | 成功入队至 ProcessSubmission 开始 |
 | `dramstore_<op>_task_to_request_duration_ms` | Histogram | 成功入队至全部 Request 完成构造，包含 Task 排队 |
 | `dramstore_<op>_requests_completed_total` | Counter | NodeActor 结算并生成唯一 RequestCompleted 的节点请求数 |
 | `dramstore_<op>_requests_failed_total` | Counter | 上述请求最终 status 失败数 |
 | `dramstore_<op>_request_duration_ms` | Histogram | NodeActor 接受请求至 QueueCompletion，包含节点内排队和恢复等待 |
+| `dramstore_<op>_request_queue_duration_ms` | Histogram | Request 构造完成至 NodeActor 接收 |
+| `dramstore_<op>_request_pending_duration_ms` | Histogram | NodeActor 接收至 StartRequest |
+| `dramstore_<op>_request_prepare_duration_ms` | Histogram | reply slot 获取与请求编码 |
+| `dramstore_<op>_request_transmit_duration_ms` | Histogram | TransportExecutor 排队与 TCP 发送 |
+| `dramstore_<op>_request_remote_duration_ms` | Histogram | TCP 发送完成至 ReplyObserved |
 | `dramstore_<op>_request_submit_errors_total` | Counter | TaskManager 向 NodeScheduler 移交失败；不计入 NodeActor completed |
 | `dramstore_dump_prerequisite_duration_ms` / `prerequisite_errors_total` | Histogram / Counter | DramStore::Dump 中等待前置 event 的耗时与失败，独立于 TaskManager task |
 

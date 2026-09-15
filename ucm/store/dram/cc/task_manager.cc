@@ -46,7 +46,7 @@ void RecordTaskCompletionMetrics(OpType op, const Status& status,
         UC::Metrics::UpdateStats(DRAMSTORE_OP_METRIC(op, "task_timeouts_total"), 1.0);
     }
     UC::Metrics::UpdateStats(
-        DRAMSTORE_OP_METRIC(op, "task_duration_ms"),
+        DRAMSTORE_OP_METRIC(op, "duration_ms"),
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started)
             .count());
 }
@@ -249,6 +249,7 @@ std::vector<Request> TaskManager::BuildRequests(OpType op, std::vector<IoEntry> 
                 request.entries.push_back(std::move(entries[indexes[offset]]));
             }
             request.deadline = deadline;
+            request.metricsStarted = Clock::now();
             requests.push_back(std::move(request));
         }
     }
