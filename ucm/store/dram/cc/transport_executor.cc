@@ -22,7 +22,6 @@
  * SOFTWARE.
  * */
 #include "transport_executor.h"
-#include <chrono>
 #include <exception>
 #include <limits>
 #include <optional>
@@ -124,14 +123,12 @@ void TransportExecutor::Run(Worker& worker) noexcept
         std::optional<TransportCommand> command;
         {
             std::unique_lock lock(worker.mutex);
-            const auto ready = [this, &worker] {
+            worker.wake.wait(lock, [this, &worker] {
                 return !worker.queue.Empty() || !acceptingCommands_.load(std::memory_order_acquire);
-            };
-            worker.wake.wait(lock, ready);
+            });
             if (worker.queue.Empty() && !acceptingCommands_.load(std::memory_order_acquire)) {
                 return;
             }
-            if (worker.queue.Empty()) { continue; }
             command.emplace(worker.queue.Pop());
         }
         if (auto* transmit = std::get_if<Transmit>(&*command)) {
