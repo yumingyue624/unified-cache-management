@@ -165,14 +165,13 @@ void NodeScheduler::RunActors(Runner& runner) noexcept
         }
 
         auto nextWakeup = TimePoint::min();
-        // Only the first runner samples aggregate queues; other runners have no metrics timer.
+        // Only the first runner samples aggregate queues when normal scheduler work wakes it.
         auto nextMetricsAt = &runner == runners_.front().get() ? Clock::now() : TimePoint::max();
         for (;;) {
             if (Clock::now() >= nextMetricsAt) {
                 RecordQueueMetrics();
                 nextMetricsAt = Clock::now() + std::chrono::seconds(1);
             }
-            nextWakeup = std::min(nextWakeup, nextMetricsAt);
             {
                 std::unique_lock lock(runner.mutex);
                 const auto ready = [this, &runner] {
