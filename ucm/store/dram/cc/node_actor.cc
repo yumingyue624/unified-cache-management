@@ -304,6 +304,10 @@ void NodeActor::StartRequest(Request request)
     auto acquired = dependencies_.acquireReplySlot(active.token, active.request.op,
                                                    active.request.entries.size());
     if (!acquired) {
+        if (acquired.Error() == Status::NoSpace()) {
+            UC::Metrics::UpdateStats(NAME_TO_METRIC_ID("dramstore_reply_slot_exhausted_total"),
+                                     1.0);
+        }
         UC::Metrics::UpdateStats(
             DRAMSTORE_OP_METRIC(active.request.op, "request_setup_duration_ms"),
             (NowTime::Now() - prepareStarted) * 1e3);

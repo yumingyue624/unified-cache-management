@@ -78,6 +78,7 @@ protected:
             }
         }
         Metrics::CreateStats("dramstore_stale_replies_total", "counter");
+        Metrics::CreateStats("dramstore_reply_slot_exhausted_total", "counter");
         for (const auto* name : {"dramstore_task_queue_size", "dramstore_task_queue_capacity",
                                  "dramstore_completion_queue_size",
                                  "dramstore_completion_queue_capacity", "dramstore_tasks_active",
@@ -173,6 +174,58 @@ TEST_F(UCDramMetricsTest, NodeActorRecordsCompletedFailedAndStaleRequest)
     EXPECT_EQ(HistogramCount(histograms.at("dramstore_dump_request_remote_duration_ms")), 1);
     // Scheduler timestamps may precede actual dispatch; metrics use their own clock samples.
     for (const auto& [name, histogram] : histograms) { EXPECT_GE(histogram.sum, 0.0) << name; }
+}
+
+TEST_F(UCDramMetricsTest, ReplySlotExhaustionExcludesOtherAcquisitionFailures)
+{
+    const std::array<Status, 3> errors = {
+        Status(Status::NoSpace().Underlying(), "dram_reply_slots: no free slots"),
+        Status::InvalidParam("invalid reply lease request"),
+        Status::Error("ReplyService is stopping")};
+    std::size_t completed = 0;
+    for (const auto& error : errors) {
+        NodeDependencies dependencies;
+        dependencies.submitTransport = [](TransportCommand& command) {
+            EXPECT_TRUE(std::holds_alternative<Connect>(command));
+            return Status::OK();
+        };
+        dependencies.acquireReplySlot = [&](const RequestToken&, OpType,
+                                            std::size_t) -> Expected<ReplySlot> { return error; };
+        dependencies.releaseReplySlot = [](const RequestToken&, const ReplySlot&) {
+            ADD_FAILURE() << "Failed acquisition must not release a reply slot";
+            return Status::OK();
+        };
+        dependencies.publishCompletion = [&](std::vector<RequestCompleted>& events) {
+            for (const auto& event : events) {
+                EXPECT_EQ(event.status, error);
+                ++completed;
+            }
+        };
+        NodeActor actor({{1, "127.0.0.1", 12345, "127.0.0.1:23456"}, {4, 8}, 1ms},
+                        std::move(dependencies));
+        const auto now = std::chrono::steady_clock::now();
+        actor.Advance(now);
+        actor.Handle(NodeEvent{ConnectCompleted{1, kDefaultLaneId, 1, Status::OK()}}, now);
+        Request request;
+        request.taskId = 1;
+        request.requestId = 1;
+        request.nodeId = 1;
+        request.op = OpType::DUMP;
+        request.entries.emplace_back();
+        request.deadline = now + 1h;
+        request.metricsStarted = NowTime::Now();
+        actor.Handle(std::move(request), now);
+        actor.Advance(now);
+        actor.Advance(now);
+    }
+    EXPECT_EQ(completed, errors.size());
+    const auto stats = Metrics::GetAllStatsAndClear();
+    const auto& counters = std::get<0>(stats);
+    EXPECT_EQ(counters.at("dramstore_reply_slot_exhausted_total"), 1);
+    EXPECT_EQ(counters.at("dramstore_dump_requests_failed_total"), 3);
+    const auto& histogram = std::get<2>(stats).at("dramstore_dump_request_setup_duration_ms");
+    EXPECT_EQ(HistogramCount(histogram), 3);
+    EXPECT_GE(histogram.sum, 0.0);
 }
 
 TEST_F(UCDramMetricsTest, RequestTimeoutsCountOnceAtAdmissionAndWhilePending)
