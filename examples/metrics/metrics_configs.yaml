@@ -304,9 +304,6 @@ gauge:
   - name: "dramstore_reply_buffer_used_bytes"
     documentation: "Sampled leased reply slot bytes including alignment, not payload bytes"
     multiprocess_mode: livemostrecent
-  - name: "dramstore_reply_buffer_capacity_bytes"
-    documentation: "Preallocated reply buffer bytes including alignment"
-    multiprocess_mode: livemostrecent
   - name: "dramstore_transport_queue_size"
     documentation: "Sampled aggregate queued Transmit and Connect admission occupancy"
     multiprocess_mode: livemostrecent

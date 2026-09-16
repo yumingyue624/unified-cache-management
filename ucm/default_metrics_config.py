@@ -401,11 +401,6 @@ _GAUGE_METRICS = [
         {"multiprocess_mode": 'livemostrecent'},
     ),
     (
-        "dramstore_reply_buffer_capacity_bytes",
-        "Preallocated reply buffer bytes including alignment",
-        {"multiprocess_mode": 'livemostrecent'},
-    ),
-    (
         "dramstore_transport_queue_size",
         "Sampled aggregate queued Transmit and Connect admission occupancy",
         {"multiprocess_mode": 'livemostrecent'},

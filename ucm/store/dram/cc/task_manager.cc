@@ -114,8 +114,8 @@ Expected<TaskId> TaskManager::EnqueueTask(OpType op, TaskInput input)
         taskResults_.emplace(taskId, std::move(future));
     }
 
-    Submission submission{taskId,        op, deadline, std::move(input), std::move(promise),
-                          metricsStarted};
+    Submission submission{
+        taskId, op, deadline, std::move(input), std::move(promise), metricsStarted};
     auto enqueued = Status::OK();
     {
         std::lock_guard lock(workMutex_);
@@ -385,7 +385,6 @@ void TaskManager::RecordCapacityMetrics()
 void TaskManager::Run() noexcept
 {
     try {
-        // One writer per Gauge: cross-thread metric buffers do not preserve update order.
         for (;;) {
             RecordCapacityMetrics();
             std::optional<Submission> submission;
