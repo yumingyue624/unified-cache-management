@@ -31,10 +31,12 @@
 #include <vector>
 #include "config.h"
 #include "logger/logger.h"
+#include "metrics_api.h"
 #include "node_scheduler.h"
 #include "reply_service.h"
 #include "router/router.h"
 #include "task_manager.h"
+#include "time/now_time.h"
 #include "trans/device.h"
 #include "transport_executor.h"
 #include "transport_manager_backend.h"
@@ -358,7 +360,10 @@ Expected<Detail::TaskHandle> DramStore::Load(Detail::TaskDesc task)
 
 Expected<Detail::TaskHandle> DramStore::Dump(Detail::TaskDesc task)
 {
+    const auto started = NowTime::Now();
     auto status = WaitPrerequisiteEvent(task.prerequisiteHandle);
+    UC::Metrics::UpdateStats(NAME_TO_METRIC_ID("dramstore_dump_prerequisite_duration_ms"),
+                             (NowTime::Now() - started) * 1e3);
     if (status.Failure()) {
         UC_ERROR("DramStore dump prerequisite wait failed, prerequisite_handle={} status={}",
                  task.prerequisiteHandle, status);

@@ -87,10 +87,12 @@ private:
         std::condition_variable wake;
         BoundedQueue<TransportCommand> queue;
         std::thread thread;
+        double nextMetricsAt{0.0};
     };
 
     void Execute(TransportCommand command) noexcept;
     void Run(Worker& worker) noexcept;
+    void RecordCapacityMetrics(Worker& worker);
 
     Options options_;
     std::size_t commandQueueCapacity_{0};

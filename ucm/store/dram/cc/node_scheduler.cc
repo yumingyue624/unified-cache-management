@@ -31,7 +31,9 @@
 #include <thread>
 #include <utility>
 #include "logger/logger.h"
+#include "metrics_api.h"
 #include "node_actor.h"
+#include "time/now_time.h"
 #include "trans/device.h"
 
 namespace UC::Dram {
@@ -53,6 +55,7 @@ struct NodeScheduler::Runner {
     std::mutex mutex;
     std::condition_variable wake;
     std::thread thread;
+    double nextMetricsAt{0.0};
 };
 
 NodeScheduler::NodeScheduler(NodeSchedulerConfig config, NodeDependencies dependencies)
@@ -136,6 +139,23 @@ void NodeScheduler::Publish(NodeId nodeId, NodeEvent event)
     runner.wake.notify_one();
 }
 
+void NodeScheduler::RecordQueueMetrics(Runner& runner)
+{
+    if (&runner != runners_.front().get()) { return; }
+    const auto now = NowTime::Now();
+    if (now < runner.nextMetricsAt) { return; }
+    runner.nextMetricsAt = now + 1.0;
+
+    std::size_t requests = 0, events = 0;
+    for (const auto& runner : runners_) {
+        std::lock_guard lock(runner->mutex);
+        requests += runner->commands.size();
+        events += runner->events.size();
+    }
+    UC::Metrics::UpdateStats(NAME_TO_METRIC_ID("dramstore_scheduler_request_queue_size"), requests);
+    UC::Metrics::UpdateStats(NAME_TO_METRIC_ID("dramstore_scheduler_event_queue_size"), events);
+}
+
 void NodeScheduler::RunActors(Runner& runner) noexcept
 {
     try {
@@ -153,6 +173,7 @@ void NodeScheduler::RunActors(Runner& runner) noexcept
 
         auto nextWakeup = TimePoint::min();
         for (;;) {
+            RecordQueueMetrics(runner);
             {
                 std::unique_lock lock(runner.mutex);
                 const auto ready = [this, &runner] {

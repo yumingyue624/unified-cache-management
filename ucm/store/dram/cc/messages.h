@@ -43,7 +43,9 @@ struct RequestCompleted {
 
 struct Transmit {
     RequestToken token;
+    OpType op{OpType::LOOKUP};
     std::vector<std::uint8_t> payload;
+    double metricsQueuedAt{0.0};
 };
 
 struct Connect {

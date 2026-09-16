@@ -94,6 +94,7 @@ private:
         TimePoint deadline;
         TaskInput input;
         std::promise<TaskResult> promise;
+        double metricsStarted{0.0};
     };
 
     struct ActiveTask {
@@ -103,6 +104,7 @@ private:
         std::optional<Status> failure;
         std::vector<std::uint8_t> lookupResults;
         std::promise<TaskResult> promise;
+        double metricsStarted{0.0};
     };
 
     TaskId AllocateTaskIdLocked() noexcept;
@@ -115,6 +117,7 @@ private:
                                        TimePoint deadline) const;
 
     void Run() noexcept;
+    void RecordCapacityMetrics();
     void ProcessSubmission(Submission submission);
     void ProcessCompletion(RequestCompleted event);
     void CompleteRequest(TaskId taskId, Status status, std::vector<EntryResult> results = {});
@@ -133,6 +136,7 @@ private:
     BoundedQueue<Submission> submissions_;
     BoundedQueue<RequestCompleted> completions_;
 
+    double nextMetricsAt_{0.0};
     std::thread worker_;
 
     // Worker-only execution state.

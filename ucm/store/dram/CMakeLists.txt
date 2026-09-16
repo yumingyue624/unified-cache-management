@@ -23,7 +23,7 @@ add_library(dramstore SHARED ${UCM_DRAM_STORE_CC_SOURCE_FILES})
 
 set_target_properties(dramstore PROPERTIES
     BUILD_WITH_INSTALL_RPATH ON
-    INSTALL_RPATH "$ORIGIN;$ORIGIN/../../transport/p2p"
+    INSTALL_RPATH "$ORIGIN;$ORIGIN/../../transport/p2p;$ORIGIN/../../shared/metrics"
 )
 if(UCM_RUNTIME_ASCEND_FAMILY)
     target_compile_definitions(dramstore PRIVATE UC_DRAM_ASCEND_BACKEND)
@@ -43,6 +43,7 @@ target_link_libraries(dramstore
         infra_thread
         router
         buffer_pool
+        metrics
 )
 if(UCM_RUNTIME_ASCEND_FAMILY)
     target_link_libraries(dramstore PUBLIC ucm_p2p_transport)
