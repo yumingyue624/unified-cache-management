@@ -124,6 +124,7 @@ Status ReplyService::Start()
     if (acceptingLeases_.exchange(true, std::memory_order_acq_rel)) {
         return Status::DuplicateKey();
     }
+    nextMetricsAt_ = 0.0;
     try {
         worker_ = std::thread([this] { Run(); });
         return Status::OK();
@@ -131,6 +132,20 @@ Status ReplyService::Start()
         acceptingLeases_.store(false, std::memory_order_release);
         return Status::Error(fmt::format("failed to start ReplyService: {}", error.what()));
     }
+}
+
+void ReplyService::RecordCapacityMetrics(std::size_t usedSlots)
+{
+    const auto now = NowTime::Now();
+    if (now < nextMetricsAt_) { return; }
+    nextMetricsAt_ = now + 1.0;
+
+    // The observer is the sole Gauge writer; include delivered leases until release.
+    const auto stride = buffers_.GetTotalSize() / options_.slotCount;
+    UC::Metrics::UpdateStats(NAME_TO_METRIC_ID("dramstore_reply_buffer_used_bytes"),
+                             usedSlots * stride);
+    UC::Metrics::UpdateStats(NAME_TO_METRIC_ID("dramstore_reply_buffer_capacity_bytes"),
+                             buffers_.GetTotalSize());
 }
 
 Expected<ReplySlot> ReplyService::Acquire(const RequestToken& token, OpType op,
@@ -233,7 +248,6 @@ void ReplyService::Run() noexcept
     try {
         std::vector<std::size_t> activeLeaseSnapshot;
         activeLeaseSnapshot.reserve(options_.slotCount);
-        auto nextMetricsAt = 0.0;
         while (acceptingLeases_.load(std::memory_order_acquire)) {
             std::uint64_t observedActiveLeaseVersion = 0;
             {
@@ -241,17 +255,7 @@ void ReplyService::Run() noexcept
                 activeLeaseSnapshot.assign(activeLeaseIndices_.begin(), activeLeaseIndices_.end());
                 observedActiveLeaseVersion = activeLeaseVersion_;
             }
-            const auto metricsNow = NowTime::Now();
-            if (metricsNow >= nextMetricsAt) {
-                // The observer is the sole Gauge writer; include delivered leases until release.
-                const auto used = activeLeaseSnapshot.size();
-                const auto stride = buffers_.GetTotalSize() / options_.slotCount;
-                UC::Metrics::UpdateStats(NAME_TO_METRIC_ID("dramstore_reply_buffer_used_bytes"),
-                                         used * stride);
-                UC::Metrics::UpdateStats(NAME_TO_METRIC_ID("dramstore_reply_buffer_capacity_bytes"),
-                                         buffers_.GetTotalSize());
-                nextMetricsAt = metricsNow + 1.0;
-            }
+            RecordCapacityMetrics(activeLeaseSnapshot.size());
             bool progress = false;
             for (const auto index : activeLeaseSnapshot) {
                 std::optional<ReplyObserved> observed;
