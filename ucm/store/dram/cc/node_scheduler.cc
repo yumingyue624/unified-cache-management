@@ -33,6 +33,7 @@
 #include "logger/logger.h"
 #include "metrics_api.h"
 #include "node_actor.h"
+#include "time/now_time.h"
 #include "trans/device.h"
 
 namespace UC::Dram {
@@ -54,7 +55,7 @@ struct NodeScheduler::Runner {
     std::mutex mutex;
     std::condition_variable wake;
     std::thread thread;
-    TimePoint nextMetricsAt{TimePoint::min()};
+    double nextMetricsAt{0.0};
 };
 
 NodeScheduler::NodeScheduler(NodeSchedulerConfig config, NodeDependencies dependencies)
@@ -141,9 +142,9 @@ void NodeScheduler::Publish(NodeId nodeId, NodeEvent event)
 void NodeScheduler::RecordQueueMetrics(Runner& runner)
 {
     if (&runner != runners_.front().get()) { return; }
-    const auto now = Clock::now();
+    const auto now = NowTime::Now();
     if (now < runner.nextMetricsAt) { return; }
-    runner.nextMetricsAt = now + std::chrono::seconds(1);
+    runner.nextMetricsAt = now + 1.0;
 
     std::size_t requests = 0, events = 0;
     for (const auto& runner : runners_) {
