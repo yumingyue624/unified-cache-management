@@ -66,6 +66,7 @@ Status TaskManager::Start()
 {
     std::lock_guard lock(workMutex_);
     accepting_ = true;
+    nextMetricsAt_ = TimePoint::min();
     try {
         worker_ = std::thread([this] { Run(); });
         return Status::OK();
@@ -359,6 +360,10 @@ void TaskManager::ProcessCompletion(RequestCompleted event)
 
 void TaskManager::RecordCapacityMetrics()
 {
+    const auto now = Clock::now();
+    if (now < nextMetricsAt_) { return; }
+    nextMetricsAt_ = now + std::chrono::seconds(1);
+
     std::size_t submissions, completions;
     {
         std::lock_guard lock(workMutex_);
@@ -381,12 +386,8 @@ void TaskManager::Run() noexcept
 {
     try {
         // One writer per Gauge: cross-thread metric buffers do not preserve update order.
-        auto nextMetricsAt = Clock::now();
         for (;;) {
-            if (Clock::now() >= nextMetricsAt) {
-                RecordCapacityMetrics();
-                nextMetricsAt = Clock::now() + std::chrono::seconds(1);
-            }
+            RecordCapacityMetrics();
             std::optional<Submission> submission;
             std::optional<RequestCompleted> completion;
 
@@ -395,7 +396,7 @@ void TaskManager::Run() noexcept
                 const auto workReady = [this] {
                     return !accepting_ || !completions_.Empty() || !submissions_.Empty();
                 };
-                workReady_.wait_until(lock, nextMetricsAt, workReady);
+                workReady_.wait_until(lock, nextMetricsAt_, workReady);
 
                 if (!accepting_) { return; }
                 if (completions_.Empty() && submissions_.Empty()) { continue; }

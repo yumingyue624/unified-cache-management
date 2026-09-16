@@ -87,11 +87,13 @@ private:
         std::condition_variable wake;
         BoundedQueue<TransportCommand> queue;
         std::thread thread;
+        std::chrono::steady_clock::time_point nextMetricsAt{
+            std::chrono::steady_clock::time_point::min()};
     };
 
     void Execute(TransportCommand command) noexcept;
     void Run(Worker& worker) noexcept;
-    void RecordCapacityMetrics();
+    void RecordCapacityMetrics(Worker& worker);
 
     Options options_;
     std::size_t commandQueueCapacity_{0};
