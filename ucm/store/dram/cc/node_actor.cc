@@ -305,7 +305,7 @@ void NodeActor::StartRequest(Request request)
                                                    active.request.entries.size());
     if (!acquired) {
         UC::Metrics::UpdateStats(
-            DRAMSTORE_OP_METRIC(active.request.op, "request_prepare_duration_ms"),
+            DRAMSTORE_OP_METRIC(active.request.op, "request_setup_duration_ms"),
             (NowTime::Now() - prepareStarted) * 1e3);
         UC_WARN(
             "DramStore reply slot acquisition failed, task_id={} request_id={} op={} "
@@ -323,7 +323,7 @@ void NodeActor::StartRequest(Request request)
                                 active.request.entries, payload);
     if (status.Failure()) {
         UC::Metrics::UpdateStats(
-            DRAMSTORE_OP_METRIC(active.request.op, "request_prepare_duration_ms"),
+            DRAMSTORE_OP_METRIC(active.request.op, "request_setup_duration_ms"),
             (NowTime::Now() - prepareStarted) * 1e3);
         UC_ERROR(
             "DramStore request encoding failed, task_id={} request_id={} op={} "
@@ -338,7 +338,7 @@ void NodeActor::StartRequest(Request request)
     const auto payloadSize = payload.size();
     const auto transportQueuedAt = NowTime::Now();
     UC::Metrics::UpdateStats(
-        DRAMSTORE_OP_METRIC(active.request.op, "request_prepare_duration_ms"),
+        DRAMSTORE_OP_METRIC(active.request.op, "request_setup_duration_ms"),
         (transportQueuedAt - prepareStarted) * 1e3);
     TransportCommand command{
         Transmit{active.token, active.request.op, std::move(payload), transportQueuedAt}

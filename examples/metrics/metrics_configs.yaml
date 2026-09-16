@@ -392,7 +392,7 @@ histogram:
   - name: "dramstore_lookup_request_pending_duration_ms"
     documentation: "DramStore lookup request NodeActor pending duration (ms)"
     buckets: [0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000]
-  - name: "dramstore_lookup_request_prepare_duration_ms"
+  - name: "dramstore_lookup_request_setup_duration_ms"
     documentation: "DramStore lookup request reply-slot and encoding duration (ms)"
     buckets: [0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500]
   - name: "dramstore_lookup_request_transport_queue_duration_ms"
@@ -427,7 +427,7 @@ histogram:
   - name: "dramstore_dump_request_pending_duration_ms"
     documentation: "DramStore dump request NodeActor pending duration (ms)"
     buckets: [0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000]
-  - name: "dramstore_dump_request_prepare_duration_ms"
+  - name: "dramstore_dump_request_setup_duration_ms"
     documentation: "DramStore dump request reply-slot and encoding duration (ms)"
     buckets: [0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500]
   - name: "dramstore_dump_request_transport_queue_duration_ms"
@@ -462,7 +462,7 @@ histogram:
   - name: "dramstore_load_request_pending_duration_ms"
     documentation: "DramStore load request NodeActor pending duration (ms)"
     buckets: [0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000]
-  - name: "dramstore_load_request_prepare_duration_ms"
+  - name: "dramstore_load_request_setup_duration_ms"
     documentation: "DramStore load request reply-slot and encoding duration (ms)"
     buckets: [0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500]
   - name: "dramstore_load_request_transport_queue_duration_ms"
