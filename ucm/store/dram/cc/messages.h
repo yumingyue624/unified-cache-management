@@ -46,7 +46,7 @@ struct Transmit {
     RequestToken token;
     OpType op{OpType::LOOKUP};
     std::vector<std::uint8_t> payload;
-    std::chrono::steady_clock::time_point metricsQueuedAt{};
+    double metricsQueuedAt{0.0};
 };
 
 struct Connect {

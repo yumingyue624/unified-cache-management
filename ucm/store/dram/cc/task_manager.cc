@@ -29,12 +29,12 @@
 #include "logger/logger.h"
 #include "metrics_api.h"
 #include "router/router.h"
+#include "time/now_time.h"
 
 namespace UC::Dram {
 namespace {
 
-void RecordTaskCompletionMetrics(OpType op, const Status& status,
-                                 std::chrono::steady_clock::time_point started)
+void RecordTaskCompletionMetrics(OpType op, const Status& status, double started)
 {
     if (status.Success()) {
         UC::Metrics::UpdateStats(DRAMSTORE_OP_METRIC(op, "tasks_succeeded_total"), 1.0);
@@ -44,10 +44,8 @@ void RecordTaskCompletionMetrics(OpType op, const Status& status,
     if (status == Status::Timeout()) {
         UC::Metrics::UpdateStats(DRAMSTORE_OP_METRIC(op, "task_timeouts_total"), 1.0);
     }
-    UC::Metrics::UpdateStats(
-        DRAMSTORE_OP_METRIC(op, "duration_ms"),
-        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started)
-            .count());
+    UC::Metrics::UpdateStats(DRAMSTORE_OP_METRIC(op, "duration_ms"),
+                             (NowTime::Now() - started) * 1e3);
 }
 
 }  // namespace
@@ -105,8 +103,8 @@ Expected<TaskId> TaskManager::EnqueueTask(OpType op, TaskInput input)
     const auto timeout = op == OpType::LOOKUP ? config_.timeouts.lookup
                          : op == OpType::DUMP ? config_.timeouts.dump
                                               : config_.timeouts.load;
-    const auto metricsStarted = Clock::now();
-    const auto deadline = metricsStarted + timeout;
+    const auto metricsStarted = NowTime::Now();
+    const auto deadline = Clock::now() + timeout;
 
     TaskId taskId = 0;
     {
@@ -248,7 +246,7 @@ std::vector<Request> TaskManager::BuildRequests(OpType op, std::vector<IoEntry> 
                 request.entries.push_back(std::move(entries[indexes[offset]]));
             }
             request.deadline = deadline;
-            request.metricsStarted = Clock::now();
+            request.metricsStarted = NowTime::Now();
             requests.push_back(std::move(request));
         }
     }
@@ -258,9 +256,7 @@ std::vector<Request> TaskManager::BuildRequests(OpType op, std::vector<IoEntry> 
 void TaskManager::ProcessSubmission(Submission submission)
 {
     UC::Metrics::UpdateStats(DRAMSTORE_OP_METRIC(submission.op, "task_queue_duration_ms"),
-                             std::chrono::duration<double, std::milli>(
-                                 std::chrono::steady_clock::now() - submission.metricsStarted)
-                                 .count());
+                             (NowTime::Now() - submission.metricsStarted) * 1e3);
     if (submission.deadline <= Clock::now()) {
         UC_WARN("DramStore task expired before processing, task_id={} op={}", submission.taskId,
                 static_cast<unsigned>(submission.op));
@@ -287,11 +283,8 @@ void TaskManager::ProcessSubmission(Submission submission)
         return;
     }
     auto requests = BuildRequests(submission.op, std::move(entries), submission.deadline);
-    UC::Metrics::UpdateStats(
-        DRAMSTORE_OP_METRIC(submission.op, "task_to_request_duration_ms"),
-        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
-                                                  submission.metricsStarted)
-            .count());
+    UC::Metrics::UpdateStats(DRAMSTORE_OP_METRIC(submission.op, "task_to_request_duration_ms"),
+                             (NowTime::Now() - submission.metricsStarted) * 1e3);
     usedIoEntries_ += entryCount;
 
     ActiveTask task;

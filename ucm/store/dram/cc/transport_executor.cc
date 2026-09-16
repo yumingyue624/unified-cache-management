@@ -28,6 +28,7 @@
 #include <optional>
 #include <type_traits>
 #include "metrics_api.h"
+#include "time/now_time.h"
 
 namespace UC::Dram {
 namespace {
@@ -67,13 +68,11 @@ void TransportExecutor::Execute(TransportCommand command) noexcept
                 NodeEvent event;
                 if constexpr (std::is_same_v<Command, Transmit>) {
                     nodeId = value.token.nodeId;
-                    const auto transmitStarted = std::chrono::steady_clock::now();
+                    const auto transmitStarted = NowTime::Now();
                     auto completed = options_.backend->Transmit(value);
                     UC::Metrics::UpdateStats(
                         DRAMSTORE_OP_METRIC(value.op, "request_transport_send_duration_ms"),
-                        std::chrono::duration<double, std::milli>(
-                            std::chrono::steady_clock::now() - transmitStarted)
-                            .count());
+                        (NowTime::Now() - transmitStarted) * 1e3);
                     event = NodeEvent{std::move(completed)};
                 } else if constexpr (std::is_same_v<Command, Connect>) {
                     nodeId = value.nodeId;
@@ -143,9 +142,7 @@ void TransportExecutor::Run(Worker& worker) noexcept
         if (auto* transmit = std::get_if<Transmit>(&*command)) {
             UC::Metrics::UpdateStats(
                 DRAMSTORE_OP_METRIC(transmit->op, "request_transport_queue_duration_ms"),
-                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
-                                                          transmit->metricsQueuedAt)
-                    .count());
+                (NowTime::Now() - transmit->metricsQueuedAt) * 1e3);
         }
         {
             std::lock_guard lock(admissionMutex_);

@@ -94,7 +94,7 @@ private:
         TimePoint deadline;
         TaskInput input;
         std::promise<TaskResult> promise;
-        TimePoint metricsStarted{};
+        double metricsStarted{0.0};
     };
 
     struct ActiveTask {
@@ -104,7 +104,7 @@ private:
         std::optional<Status> failure;
         std::vector<std::uint8_t> lookupResults;
         std::promise<TaskResult> promise;
-        TimePoint metricsStarted{};
+        double metricsStarted{0.0};
     };
 
     TaskId AllocateTaskIdLocked() noexcept;

@@ -28,6 +28,7 @@
 #include <utility>
 #include "logger/logger.h"
 #include "metrics_api.h"
+#include "time/now_time.h"
 
 namespace UC::Dram {
 namespace {
@@ -62,8 +63,7 @@ void FillTransferEntries(const std::vector<IoEntry>& entries,
     }
 }
 
-void RecordRequestCompletionMetrics(OpType op, const Status& status,
-                                    std::chrono::steady_clock::time_point started)
+void RecordRequestCompletionMetrics(OpType op, const Status& status, double started)
 {
     UC::Metrics::UpdateStats(DRAMSTORE_OP_METRIC(op, "requests_completed_total"), 1.0);
     if (status.Failure()) {
@@ -74,8 +74,7 @@ void RecordRequestCompletionMetrics(OpType op, const Status& status,
     }
     UC::Metrics::UpdateStats(
         DRAMSTORE_OP_METRIC(op, "request_duration_ms"),
-        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started)
-            .count());
+        (NowTime::Now() - started) * 1e3);
 }
 
 }  // namespace
@@ -248,9 +247,8 @@ void NodeActor::ExpirePendingRequests(TimePoint now)
         }
         auto request = std::move(*it);
         it = pendingRequests_.erase(it);
-        UC::Metrics::UpdateStats(
-            DRAMSTORE_OP_METRIC(request.op, "request_pending_duration_ms"),
-            std::chrono::duration<double, std::milli>(now - request.metricsPendingStarted).count());
+        UC::Metrics::UpdateStats(DRAMSTORE_OP_METRIC(request.op, "request_pending_duration_ms"),
+                                 (NowTime::Now() - request.metricsPendingStarted) * 1e3);
         if (expiredCount == 0) {
             firstTaskId = request.taskId;
             firstRequestId = request.requestId;
@@ -288,11 +286,9 @@ void NodeActor::FlushCompletions()
 
 void NodeActor::StartRequest(Request request)
 {
-    const auto prepareStarted = std::chrono::steady_clock::now();
-    UC::Metrics::UpdateStats(
-        DRAMSTORE_OP_METRIC(request.op, "request_pending_duration_ms"),
-        std::chrono::duration<double, std::milli>(prepareStarted - request.metricsPendingStarted)
-            .count());
+    const auto prepareStarted = NowTime::Now();
+    UC::Metrics::UpdateStats(DRAMSTORE_OP_METRIC(request.op, "request_pending_duration_ms"),
+                             (prepareStarted - request.metricsPendingStarted) * 1e3);
     const auto requestId = request.requestId;
     RequestRecord record{std::move(request)};
     record.token = RequestToken{config_.endpoint.nodeId, kDefaultLaneId, epoch_, requestId};
@@ -310,9 +306,7 @@ void NodeActor::StartRequest(Request request)
     if (!acquired) {
         UC::Metrics::UpdateStats(
             DRAMSTORE_OP_METRIC(active.request.op, "request_prepare_duration_ms"),
-            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
-                                                      prepareStarted)
-                .count());
+            (NowTime::Now() - prepareStarted) * 1e3);
         UC_WARN(
             "DramStore reply slot acquisition failed, task_id={} request_id={} op={} "
             "node_id={} epoch={} entries={} status={}",
@@ -330,9 +324,7 @@ void NodeActor::StartRequest(Request request)
     if (status.Failure()) {
         UC::Metrics::UpdateStats(
             DRAMSTORE_OP_METRIC(active.request.op, "request_prepare_duration_ms"),
-            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() -
-                                                      prepareStarted)
-                .count());
+            (NowTime::Now() - prepareStarted) * 1e3);
         UC_ERROR(
             "DramStore request encoding failed, task_id={} request_id={} op={} "
             "node_id={} epoch={} entries={} status={}",
@@ -344,10 +336,10 @@ void NodeActor::StartRequest(Request request)
     }
 
     const auto payloadSize = payload.size();
-    const auto transportQueuedAt = std::chrono::steady_clock::now();
+    const auto transportQueuedAt = NowTime::Now();
     UC::Metrics::UpdateStats(
         DRAMSTORE_OP_METRIC(active.request.op, "request_prepare_duration_ms"),
-        std::chrono::duration<double, std::milli>(transportQueuedAt - prepareStarted).count());
+        (transportQueuedAt - prepareStarted) * 1e3);
     TransportCommand command{
         Transmit{active.token, active.request.op, std::move(payload), transportQueuedAt}
     };
@@ -373,10 +365,11 @@ void NodeActor::StartRequest(Request request)
 
 void NodeActor::Handle(Request request, TimePoint now)
 {
+    const auto metricsNow = NowTime::Now();
     UC::Metrics::UpdateStats(
         DRAMSTORE_OP_METRIC(request.op, "request_queue_duration_ms"),
-        std::chrono::duration<double, std::milli>(now - request.metricsStarted).count());
-    request.metricsPendingStarted = now;
+        (metricsNow - request.metricsStarted) * 1e3);
+    request.metricsPendingStarted = metricsNow;
     if (request.deadline <= now) {
         UC_WARN(
             "DramStore request expired before node admission, task_id={} request_id={} op={} "
@@ -485,10 +478,10 @@ void NodeActor::Handle(ReplyObserved event, TimePoint now)
     }
     // ReplyObserved and TransmitCompleted are published by different threads. A fast reply may
     // therefore be handled first, in which case the remote phase has no valid start time yet.
-    if (found->second.remoteStarted != TimePoint{}) {
+    if (found->second.remoteStarted != 0.0) {
         UC::Metrics::UpdateStats(
             DRAMSTORE_OP_METRIC(found->second.request.op, "request_remote_duration_ms"),
-            std::chrono::duration<double, std::milli>(now - found->second.remoteStarted).count());
+            (NowTime::Now() - found->second.remoteStarted) * 1e3);
     }
     if (found->second.failure == Status::Timeout() || found->second.request.deadline <= now) {
         UC_WARN(
@@ -534,7 +527,7 @@ void NodeActor::Handle(ReplyObserved event, TimePoint now)
     found->second.Complete(std::move(status), std::move(entryResults));
 }
 
-void NodeActor::Handle(TransmitCompleted event, TimePoint now)
+void NodeActor::Handle(TransmitCompleted event, TimePoint)
 {
     const auto found = activeRequests_.find(event.token.requestId);
     if (found == activeRequests_.end() || found->second.state != RequestState::TRANSMITTING ||
@@ -548,7 +541,7 @@ void NodeActor::Handle(TransmitCompleted event, TimePoint now)
     }
     if (event.status.Success()) {
         found->second.state = RequestState::INFLIGHT;
-        found->second.remoteStarted = now;
+        found->second.remoteStarted = NowTime::Now();
         return;
     }
     UC_WARN(

@@ -100,9 +100,9 @@ struct Request {
     OpType op{OpType::LOOKUP};
     std::vector<IoEntry> entries;
     std::chrono::steady_clock::time_point deadline;
-    // Client observation only; never serialized into a KV request.
-    std::chrono::steady_clock::time_point metricsStarted{};
-    std::chrono::steady_clock::time_point metricsPendingStarted{};
+    // NowTime seconds for client metrics only; never serialized into a KV request.
+    double metricsStarted{0.0};
+    double metricsPendingStarted{0.0};
 };
 
 struct RequestToken {

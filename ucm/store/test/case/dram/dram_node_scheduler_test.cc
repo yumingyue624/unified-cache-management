@@ -33,6 +33,7 @@
 #include <vector>
 #include "node_actor.h"
 #include "node_scheduler.h"
+#include "time/now_time.h"
 
 namespace UC::Dram {
 namespace {
@@ -101,7 +102,7 @@ Request MakeRequest(
     request.nodeId = nodeId;
     request.entries.assign(entryCount, Entry(entryValue));
     request.deadline = deadline;
-    request.metricsStarted = std::chrono::steady_clock::now();
+    request.metricsStarted = NowTime::Now();
     return request;
 }
 
@@ -117,7 +118,7 @@ void ConnectActor(NodeActor& actor, NodeActor::TimePoint now)
 
 void SubmitToActor(NodeActor& actor, Request request, NodeActor::TimePoint now)
 {
-    request.metricsStarted = now;
+    request.metricsStarted = NowTime::Now();
     actor.Handle(std::move(request), now);
 }
 

@@ -34,6 +34,7 @@
 #include "node_actor.h"
 #include "router/router.h"
 #include "task_manager.h"
+#include "time/now_time.h"
 
 namespace UC::Dram {
 namespace {
@@ -128,7 +129,7 @@ TEST_F(UCDramMetricsTest, NodeActorRecordsCompletedFailedAndStaleRequest)
     request.nodeId = 1;
     request.op = OpType::DUMP;
     request.deadline = now + 1h;
-    request.metricsStarted = now;
+    request.metricsStarted = NowTime::Now();
     for (std::uint8_t index = 0; index < 2; ++index) {
         IoEntry entry;
         entry.blockId[0] = static_cast<std::byte>(index + 1);
@@ -170,6 +171,8 @@ TEST_F(UCDramMetricsTest, NodeActorRecordsCompletedFailedAndStaleRequest)
     EXPECT_EQ(HistogramCount(histograms.at("dramstore_dump_request_pending_duration_ms")), 1);
     EXPECT_EQ(HistogramCount(histograms.at("dramstore_dump_request_prepare_duration_ms")), 1);
     EXPECT_EQ(HistogramCount(histograms.at("dramstore_dump_request_remote_duration_ms")), 1);
+    // Scheduler timestamps may precede actual dispatch; metrics use their own clock samples.
+    for (const auto& [name, histogram] : histograms) { EXPECT_GE(histogram.sum, 0.0) << name; }
 }
 
 TEST_F(UCDramMetricsTest, RequestTimeoutsCountOnceAtAdmissionAndWhilePending)
@@ -193,7 +196,7 @@ TEST_F(UCDramMetricsTest, RequestTimeoutsCountOnceAtAdmissionAndWhilePending)
             request.requestId = id;
             request.nodeId = 1;
             request.op = op;
-            request.metricsStarted = now;
+            request.metricsStarted = NowTime::Now();
             request.deadline = id == 1 ? now : now + 1ms;
             actor.Handle(std::move(request), now);
         }
