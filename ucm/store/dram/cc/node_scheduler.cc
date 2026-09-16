@@ -54,6 +54,7 @@ struct NodeScheduler::Runner {
     std::mutex mutex;
     std::condition_variable wake;
     std::thread thread;
+    TimePoint nextMetricsAt{TimePoint::min()};
 };
 
 NodeScheduler::NodeScheduler(NodeSchedulerConfig config, NodeDependencies dependencies)
@@ -137,8 +138,13 @@ void NodeScheduler::Publish(NodeId nodeId, NodeEvent event)
     runner.wake.notify_one();
 }
 
-void NodeScheduler::RecordQueueMetrics()
+void NodeScheduler::RecordQueueMetrics(Runner& runner)
 {
+    if (&runner != runners_.front().get()) { return; }
+    const auto now = Clock::now();
+    if (now < runner.nextMetricsAt) { return; }
+    runner.nextMetricsAt = now + std::chrono::seconds(1);
+
     std::size_t requests = 0, events = 0;
     for (const auto& runner : runners_) {
         std::lock_guard lock(runner->mutex);
@@ -165,13 +171,8 @@ void NodeScheduler::RunActors(Runner& runner) noexcept
         }
 
         auto nextWakeup = TimePoint::min();
-        // Only the first runner samples aggregate queues when normal scheduler work wakes it.
-        auto nextMetricsAt = &runner == runners_.front().get() ? Clock::now() : TimePoint::max();
         for (;;) {
-            if (Clock::now() >= nextMetricsAt) {
-                RecordQueueMetrics();
-                nextMetricsAt = Clock::now() + std::chrono::seconds(1);
-            }
+            RecordQueueMetrics(runner);
             {
                 std::unique_lock lock(runner.mutex);
                 const auto ready = [this, &runner] {
