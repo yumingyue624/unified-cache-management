@@ -78,7 +78,7 @@ protected:
             }
         }
         Metrics::CreateStats("dramstore_stale_replies_total", "counter");
-        Metrics::CreateStats("dramstore_reply_slot_exhausted_total", "counter");
+        Metrics::CreateStats("dramstore_reply_slot_nospace_total", "counter");
         for (const auto* name : {"dramstore_task_queue_size", "dramstore_task_queue_capacity",
                                  "dramstore_completion_queue_size",
                                  "dramstore_completion_queue_capacity", "dramstore_tasks_active",
@@ -176,7 +176,7 @@ TEST_F(UCDramMetricsTest, NodeActorRecordsCompletedFailedAndStaleRequest)
     for (const auto& [name, histogram] : histograms) { EXPECT_GE(histogram.sum, 0.0) << name; }
 }
 
-TEST_F(UCDramMetricsTest, ReplySlotExhaustionExcludesOtherAcquisitionFailures)
+TEST_F(UCDramMetricsTest, ReplySlotNoSpaceExcludesOtherAcquisitionFailures)
 {
     const std::array<Status, 3> errors = {
         Status(Status::NoSpace().Underlying(), "dram_reply_slots: no free slots"),
@@ -221,11 +221,11 @@ TEST_F(UCDramMetricsTest, ReplySlotExhaustionExcludesOtherAcquisitionFailures)
     EXPECT_EQ(completed, errors.size());
     const auto stats = Metrics::GetAllStatsAndClear();
     const auto& counters = std::get<0>(stats);
-    EXPECT_EQ(counters.at("dramstore_reply_slot_exhausted_total"), 1);
+    EXPECT_EQ(counters.at("dramstore_reply_slot_nospace_total"), 1);
     EXPECT_EQ(counters.at("dramstore_dump_requests_failed_total"), 3);
-    const auto& histogram = std::get<2>(stats).at("dramstore_dump_request_setup_duration_ms");
-    EXPECT_EQ(HistogramCount(histogram), 3);
-    EXPECT_GE(histogram.sum, 0.0);
+    const auto& histograms = std::get<2>(stats);
+    const auto setup = histograms.find("dramstore_dump_request_setup_duration_ms");
+    if (setup != histograms.end()) { EXPECT_EQ(HistogramCount(setup->second), 0); }
 }
 
 TEST_F(UCDramMetricsTest, RequestTimeoutsCountOnceAtAdmissionAndWhilePending)

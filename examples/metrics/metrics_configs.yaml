@@ -87,7 +87,7 @@ counter:
     documentation: "DramStore fence failures"
   - name: "dramstore_fence_timeout_triggers_total"
     documentation: "DramStore node fencing episodes triggered by request timeouts; excludes fence retries"
-  - name: "dramstore_reply_slot_exhausted_total"
+  - name: "dramstore_reply_slot_nospace_total"
     documentation: "DramStore reply slot acquisition failures due to exhausted capacity"
   - name: "dramstore_stale_replies_total"
     documentation: "DramStore stale replies"
@@ -395,7 +395,7 @@ histogram:
     documentation: "DramStore lookup request NodeActor pending duration (ms)"
     buckets: [0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000]
   - name: "dramstore_lookup_request_setup_duration_ms"
-    documentation: "DramStore lookup request reply-slot and encoding duration (ms)"
+    documentation: "DramStore lookup request successful setup duration including reply-slot allocation and encoding (ms)"
     buckets: [0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500]
   - name: "dramstore_lookup_request_transport_queue_duration_ms"
     documentation: "DramStore lookup request TransportExecutor queue duration (ms)"
@@ -430,7 +430,7 @@ histogram:
     documentation: "DramStore dump request NodeActor pending duration (ms)"
     buckets: [0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000]
   - name: "dramstore_dump_request_setup_duration_ms"
-    documentation: "DramStore dump request reply-slot and encoding duration (ms)"
+    documentation: "DramStore dump request successful setup duration including reply-slot allocation and encoding (ms)"
     buckets: [0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500]
   - name: "dramstore_dump_request_transport_queue_duration_ms"
     documentation: "DramStore dump request TransportExecutor queue duration (ms)"
@@ -465,7 +465,7 @@ histogram:
     documentation: "DramStore load request NodeActor pending duration (ms)"
     buckets: [0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000]
   - name: "dramstore_load_request_setup_duration_ms"
-    documentation: "DramStore load request reply-slot and encoding duration (ms)"
+    documentation: "DramStore load request successful setup duration including reply-slot allocation and encoding (ms)"
     buckets: [0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500]
   - name: "dramstore_load_request_transport_queue_duration_ms"
     documentation: "DramStore load request TransportExecutor queue duration (ms)"

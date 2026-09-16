@@ -305,12 +305,9 @@ void NodeActor::StartRequest(Request request)
                                                    active.request.entries.size());
     if (!acquired) {
         if (acquired.Error() == Status::NoSpace()) {
-            UC::Metrics::UpdateStats(NAME_TO_METRIC_ID("dramstore_reply_slot_exhausted_total"),
+            UC::Metrics::UpdateStats(NAME_TO_METRIC_ID("dramstore_reply_slot_nospace_total"),
                                      1.0);
         }
-        UC::Metrics::UpdateStats(
-            DRAMSTORE_OP_METRIC(active.request.op, "request_setup_duration_ms"),
-            (NowTime::Now() - prepareStarted) * 1e3);
         UC_WARN(
             "DramStore reply slot acquisition failed, task_id={} request_id={} op={} "
             "node_id={} epoch={} entries={} status={}",
@@ -326,9 +323,6 @@ void NodeActor::StartRequest(Request request)
     auto status = EncodeRequest(active.replySlot, active.request.requestId, active.request.op,
                                 active.request.entries, payload);
     if (status.Failure()) {
-        UC::Metrics::UpdateStats(
-            DRAMSTORE_OP_METRIC(active.request.op, "request_setup_duration_ms"),
-            (NowTime::Now() - prepareStarted) * 1e3);
         UC_ERROR(
             "DramStore request encoding failed, task_id={} request_id={} op={} "
             "node_id={} epoch={} entries={} status={}",
