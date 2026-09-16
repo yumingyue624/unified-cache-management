@@ -315,54 +315,34 @@ TEST_F(UCDramMetricsTest, TaskManagerSettlesAcceptedTaskOnceAndRecordsRejectedSu
     EXPECT_EQ(HistogramCount(histograms.at("dramstore_lookup_task_to_request_duration_ms")), 1);
 }
 
-TEST_F(UCDramMetricsTest, TaskCapacityGaugesRefreshWhileWaitingAndAfterCompletion)
+TEST_F(UCDramMetricsTest, TaskCapacityGaugesPublishInitialSnapshot)
 {
-    std::promise<Request> dispatched;
-    auto requestFuture = dispatched.get_future();
     TaskManagerConfig config{
         {64},
         16, 8, {10s, 10s, 10s}
     };
-    TaskManager manager(config, {std::make_shared<SingleRouter>(), [&](Request& request) {
-                                     dispatched.set_value(std::move(request));
+    TaskManager manager(config, {std::make_shared<SingleRouter>(), [](Request&) {
                                      return Status::OK();
                                  }});
     ASSERT_TRUE(manager.Start().Success());
-    Detail::BlockId key{};
-    auto submitted = manager.SubmitLookup(&key, 1);
-    ASSERT_TRUE(submitted);
-    ASSERT_EQ(requestFuture.wait_for(2s), std::future_status::ready);
-    const auto request = requestFuture.get();
 
-    const auto waitForActive = [](double expected) {
-        const auto deadline = std::chrono::steady_clock::now() + 3s;
-        std::unordered_map<std::string, double> gauges;
-        while (std::chrono::steady_clock::now() < deadline) {
-            const auto stats = Metrics::GetAllStatsAndClear();
-            for (const auto& [name, value] : std::get<1>(stats)) { gauges[name] = value; }
-            const auto found = gauges.find("dramstore_tasks_active");
-            const auto entries = gauges.find("dramstore_io_entries_used");
-            if (gauges.size() == 7 && found != gauges.end() && found->second == expected &&
-                entries != gauges.end() && entries->second == expected) {
-                EXPECT_EQ(gauges.at("dramstore_io_entries_used"), expected);
-                EXPECT_EQ(gauges.at("dramstore_io_entries_capacity"), 16);
-                EXPECT_EQ(gauges.at("dramstore_task_queue_size"), 0);
-                EXPECT_EQ(gauges.at("dramstore_task_queue_capacity"), 16);
-                EXPECT_EQ(gauges.at("dramstore_completion_queue_size"), 0);
-                EXPECT_EQ(gauges.at("dramstore_completion_queue_capacity"), 16);
-                return true;
-            }
-            std::this_thread::sleep_for(10ms);
-        }
-        return false;
-    };
-    ASSERT_TRUE(waitForActive(1));
-    std::vector<RequestCompleted> events{
-        {request.taskId, request.requestId, 1, Status::OK(), {{0, true, 0}}}
-    };
-    manager.Publish(events);
-    ASSERT_TRUE(manager.WaitLookup(submitted.Value()));
-    EXPECT_TRUE(waitForActive(0));
+    const auto deadline = std::chrono::steady_clock::now() + 2s;
+    std::unordered_map<std::string, double> gauges;
+    while (gauges.size() != 7 && std::chrono::steady_clock::now() < deadline) {
+        const auto stats = Metrics::GetAllStatsAndClear();
+        for (const auto& [name, value] : std::get<1>(stats)) { gauges[name] = value; }
+        std::this_thread::yield();
+    }
+    manager.Shutdown();
+
+    ASSERT_EQ(gauges.size(), 7);
+    EXPECT_EQ(gauges.at("dramstore_tasks_active"), 0);
+    EXPECT_EQ(gauges.at("dramstore_io_entries_used"), 0);
+    EXPECT_EQ(gauges.at("dramstore_io_entries_capacity"), 16);
+    EXPECT_EQ(gauges.at("dramstore_task_queue_size"), 0);
+    EXPECT_EQ(gauges.at("dramstore_task_queue_capacity"), 16);
+    EXPECT_EQ(gauges.at("dramstore_completion_queue_size"), 0);
+    EXPECT_EQ(gauges.at("dramstore_completion_queue_capacity"), 16);
 }
 
 }  // namespace

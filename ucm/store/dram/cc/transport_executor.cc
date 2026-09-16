@@ -99,9 +99,9 @@ void TransportExecutor::Execute(TransportCommand command) noexcept
 void TransportExecutor::RecordCapacityMetrics(Worker& worker)
 {
     if (&worker != workers_.front().get()) { return; }
-    const auto now = std::chrono::steady_clock::now();
+    const auto now = NowTime::Now();
     if (now < worker.nextMetricsAt) { return; }
-    worker.nextMetricsAt = now + std::chrono::seconds(1);
+    worker.nextMetricsAt = now + 1.0;
 
     std::size_t commands, fences;
     {
@@ -119,8 +119,6 @@ void TransportExecutor::RecordCapacityMetrics(Worker& worker)
 
 void TransportExecutor::Run(Worker& worker) noexcept
 {
-    // Worker zero reports aggregate admission occupancy for all transport workers.
-    const bool reportsMetrics = &worker == workers_.front().get();
     for (;;) {
         RecordCapacityMetrics(worker);
         std::optional<TransportCommand> command;
@@ -129,11 +127,7 @@ void TransportExecutor::Run(Worker& worker) noexcept
             const auto ready = [this, &worker] {
                 return !worker.queue.Empty() || !acceptingCommands_.load(std::memory_order_acquire);
             };
-            if (reportsMetrics) {
-                worker.wake.wait_until(lock, worker.nextMetricsAt, ready);
-            } else {
-                worker.wake.wait(lock, ready);
-            }
+            worker.wake.wait(lock, ready);
             if (worker.queue.Empty() && !acceptingCommands_.load(std::memory_order_acquire)) {
                 return;
             }

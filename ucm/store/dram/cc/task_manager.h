@@ -136,7 +136,7 @@ private:
     BoundedQueue<Submission> submissions_;
     BoundedQueue<RequestCompleted> completions_;
 
-    TimePoint nextMetricsAt_{TimePoint::min()};
+    double nextMetricsAt_{0.0};
     std::thread worker_;
 
     // Worker-only execution state.

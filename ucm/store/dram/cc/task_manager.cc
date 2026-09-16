@@ -66,7 +66,7 @@ Status TaskManager::Start()
 {
     std::lock_guard lock(workMutex_);
     accepting_ = true;
-    nextMetricsAt_ = TimePoint::min();
+    nextMetricsAt_ = 0.0;
     try {
         worker_ = std::thread([this] { Run(); });
         return Status::OK();
@@ -360,9 +360,9 @@ void TaskManager::ProcessCompletion(RequestCompleted event)
 
 void TaskManager::RecordCapacityMetrics()
 {
-    const auto now = Clock::now();
+    const auto now = NowTime::Now();
     if (now < nextMetricsAt_) { return; }
-    nextMetricsAt_ = now + std::chrono::seconds(1);
+    nextMetricsAt_ = now + 1.0;
 
     std::size_t submissions, completions;
     {
@@ -396,10 +396,9 @@ void TaskManager::Run() noexcept
                 const auto workReady = [this] {
                     return !accepting_ || !completions_.Empty() || !submissions_.Empty();
                 };
-                workReady_.wait_until(lock, nextMetricsAt_, workReady);
+                workReady_.wait(lock, workReady);
 
                 if (!accepting_) { return; }
-                if (completions_.Empty() && submissions_.Empty()) { continue; }
                 if (!completions_.Empty()) {
                     completion.emplace(completions_.Pop());
                 } else {

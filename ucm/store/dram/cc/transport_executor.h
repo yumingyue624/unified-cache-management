@@ -87,8 +87,7 @@ private:
         std::condition_variable wake;
         BoundedQueue<TransportCommand> queue;
         std::thread thread;
-        std::chrono::steady_clock::time_point nextMetricsAt{
-            std::chrono::steady_clock::time_point::min()};
+        double nextMetricsAt{0.0};
     };
 
     void Execute(TransportCommand command) noexcept;
