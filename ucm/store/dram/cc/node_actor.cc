@@ -212,7 +212,7 @@ void NodeActor::FinalizeRequests(TimePoint now)
     }
 
     if (needsFence) {
-        UC::Metrics::UpdateStats(NAME_TO_METRIC_ID("dramstore_timeout_fence_total"), 1.0);
+        UC::Metrics::UpdateStats(NAME_TO_METRIC_ID("dramstore_fence_timeout_triggers_total"), 1.0);
         std::size_t affectedCount = 0;
         state_ = NodeState::FENCING;
         for (auto& entry : activeRequests_) {

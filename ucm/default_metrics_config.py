@@ -888,7 +888,7 @@ _DRAM_METRICS_CONFIG = {'counter': [{'name': 'dramstore_lookup_tasks_submitted_t
               'documentation': 'DramStore fence attempts'},
              {'name': 'dramstore_fence_failures_total',
               'documentation': 'DramStore fence failures'},
-             {'name': 'dramstore_timeout_fence_total',
+             {'name': 'dramstore_fence_timeout_triggers_total',
               'documentation': 'DramStore node fencing episodes triggered by request timeouts; excludes fence retries'},
              {'name': 'dramstore_stale_replies_total',
               'documentation': 'DramStore stale replies'},
