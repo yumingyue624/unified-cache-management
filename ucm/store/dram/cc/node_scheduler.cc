@@ -165,16 +165,14 @@ void NodeScheduler::RunActors(Runner& runner) noexcept
         }
 
         auto nextWakeup = TimePoint::min();
-        const bool reportsMetrics = &runner == runners_.front().get();
-        auto nextMetricsAt = Clock::now();
+        // Only the first runner samples aggregate queues; other runners have no metrics timer.
+        auto nextMetricsAt = &runner == runners_.front().get() ? Clock::now() : TimePoint::max();
         for (;;) {
-            if (reportsMetrics) {
-                if (Clock::now() >= nextMetricsAt) {
-                    RecordQueueMetrics();
-                    nextMetricsAt = Clock::now() + std::chrono::seconds(1);
-                }
-                nextWakeup = std::min(nextWakeup, nextMetricsAt);
+            if (Clock::now() >= nextMetricsAt) {
+                RecordQueueMetrics();
+                nextMetricsAt = Clock::now() + std::chrono::seconds(1);
             }
+            nextWakeup = std::min(nextWakeup, nextMetricsAt);
             {
                 std::unique_lock lock(runner.mutex);
                 const auto ready = [this, &runner] {
