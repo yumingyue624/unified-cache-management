@@ -104,14 +104,6 @@ class FileResourceMetricsReporter:
                 self._handle_error("collect", error)
             self._stop_event.wait(self.interval_sec)
 
-    def _collect_once(self) -> None:
-        raise NotImplementedError
-
-    def _handle_error(self, action: str, error: Exception) -> None:
-        logger.warning(
-            f"Failed to {action} {self.reporter_name} resource metrics: {error}"
-        )
-
     def _try_become_leader(self) -> bool:
         if self._lock_file is not None:
             return True
@@ -148,6 +140,9 @@ class FileResourceMetricsReporter:
         self._lock_file.close()
         self._lock_file = None
 
+    def _collect_once(self) -> None:
+        raise NotImplementedError
+
     def _read_latest_complete_line(self) -> str:
         with open(self.log_path, "rb") as log_file:
             log_file.seek(0, os.SEEK_END)
@@ -183,3 +178,8 @@ class FileResourceMetricsReporter:
         with open(temporary_path, "w", encoding="utf-8") as state_file:
             json.dump(state, state_file)
         os.replace(temporary_path, self.state_path)
+
+    def _handle_error(self, action: str, error: Exception) -> None:
+        logger.warning(
+            f"Failed to {action} {self.reporter_name} resource metrics: {error}"
+        )
