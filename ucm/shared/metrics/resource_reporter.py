@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any
 
 from ucm.logger import init_logger
+from ucm.shared.metrics import ucmmetrics
 
 logger = init_logger(__name__)
 
@@ -41,16 +42,23 @@ MAX_RECORD_BYTES = 1024 * 1024
 def counter_deltas(
     current: dict[str, int | float], previous: dict[str, int | float] | None
 ) -> dict[str, int | float]:
+    counter_zero = 0
     if previous is None:
-        return {name: 0 for name in current}
+        return {name: counter_zero for name in current}
     return {
-        name: value - previous.get(name, 0) if value >= previous.get(name, 0) else value
+        name: (
+            value - previous.get(name, counter_zero)
+            if value >= previous.get(name, counter_zero)
+            else value
+        )
         for name, value in current.items()
     }
 
 
 class FileResourceMetricsReporter:
     """Poll a snapshot log from one elected process on each host."""
+
+    error_metric_name: str | None = None
 
     def __init__(
         self,
@@ -66,14 +74,15 @@ class FileResourceMetricsReporter:
         shared_dir = Path(shared_memory_dir)
         if not shared_dir.is_dir():
             shared_dir = Path(tempfile.gettempdir())
-        digest = hashlib.sha256(identity.encode()).hexdigest()[:24]
-        self.lock_path = shared_dir / f"ucm_{reporter_name}_metrics_{digest}.lock"
-        self.state_path = shared_dir / f"ucm_{reporter_name}_metrics_{digest}.json"
-        self._lock_file = None
+        identity = hashlib.sha256(identity.encode()).hexdigest()[:24]
+        reporter_key = reporter_name.lower()
+        self.lock_path = shared_dir / f"ucm_{reporter_key}_metrics_{identity}.lock"
+        self.state_path = shared_dir / f"ucm_{reporter_key}_metrics_{identity}.json"
         self._stop_event = threading.Event()
+        self._lock_file = None
         self._thread = threading.Thread(
             target=self._run,
-            name=f"{reporter_name}-resource-reporter",
+            name=f"{reporter_key}-resource-reporter",
             daemon=True,
         )
         atexit.register(self.stop)
@@ -94,14 +103,22 @@ class FileResourceMetricsReporter:
             if not self._try_become_leader():
                 return
         except Exception as error:
-            self._handle_error("elect", error)
+            logger.warning(
+                f"Failed to elect {self.reporter_name} resource reporter: {error}"
+            )
+            if self.error_metric_name is not None:
+                ucmmetrics.update_stats({self.error_metric_name: 1.0})
             return
 
         while not self._stop_event.is_set():
             try:
                 self._collect_once()
             except Exception as error:
-                self._handle_error("collect", error)
+                logger.warning(
+                    f"Failed to collect {self.reporter_name} resource metrics: {error}"
+                )
+                if self.error_metric_name is not None:
+                    ucmmetrics.update_stats({self.error_metric_name: 1.0})
             self._stop_event.wait(self.interval_sec)
 
     def _try_become_leader(self) -> bool:
@@ -178,8 +195,3 @@ class FileResourceMetricsReporter:
         with open(temporary_path, "w", encoding="utf-8") as state_file:
             json.dump(state, state_file)
         os.replace(temporary_path, self.state_path)
-
-    def _handle_error(self, action: str, error: Exception) -> None:
-        logger.warning(
-            f"Failed to {action} {self.reporter_name} resource metrics: {error}"
-        )

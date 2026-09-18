@@ -182,7 +182,7 @@ class DramPoolResourceReporter(FileResourceMetricsReporter):
     ):
         super().__init__(
             log_path=log_path,
-            reporter_name="drampool",
+            reporter_name="DramPool",
             identity=str(Path(log_path).resolve()),
             interval_sec=interval_sec,
             shared_memory_dir=shared_memory_dir,

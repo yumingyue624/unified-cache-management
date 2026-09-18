@@ -101,6 +101,8 @@ def _parse_timestamp(value: Any) -> float:
 
 
 class YuanRongResourceReporter(FileResourceMetricsReporter):
+    error_metric_name = "yuanrong_resource_log_read_errors_total"
+
     def __init__(
         self,
         log_path: str,
@@ -110,15 +112,11 @@ class YuanRongResourceReporter(FileResourceMetricsReporter):
     ):
         super().__init__(
             log_path=log_path,
-            reporter_name="yuanrong",
+            reporter_name="YuanRong",
             identity=f"{endpoint}|{Path(log_path).resolve()}",
             interval_sec=interval_sec,
             shared_memory_dir=shared_memory_dir,
         )
-
-    def _handle_error(self, action: str, error: Exception) -> None:
-        super()._handle_error(action, error)
-        ucmmetrics.update_stats({"yuanrong_resource_log_read_errors_total": 1.0})
 
     def _read_previous_counters(self) -> dict[str, float] | None:
         try:
