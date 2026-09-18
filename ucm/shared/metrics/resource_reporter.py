@@ -85,27 +85,24 @@ class FileResourceMetricsReporter:
         self._stop_event.set()
         if self._thread.is_alive() and threading.current_thread() is not self._thread:
             self._thread.join(timeout=min(self.interval_sec + 1.0, 5.0))
-        if not self._thread.is_alive():
-            self._release_leadership()
+        self._release_leadership()
 
     def _run(self) -> None:
+        if self._stop_event.is_set():
+            return
         try:
-            if self._stop_event.is_set():
+            if not self._try_become_leader():
                 return
+        except Exception as error:
+            self._handle_error("elect", error)
+            return
+
+        while not self._stop_event.is_set():
             try:
-                if not self._try_become_leader():
-                    return
+                self._collect_once()
             except Exception as error:
-                self._handle_error("elect", error)
-                return
-            while not self._stop_event.is_set():
-                try:
-                    self._collect_once()
-                except Exception as error:
-                    self._handle_error("collect", error)
-                self._stop_event.wait(self.interval_sec)
-        finally:
-            self._release_leadership()
+                self._handle_error("collect", error)
+            self._stop_event.wait(self.interval_sec)
 
     def _collect_once(self) -> None:
         raise NotImplementedError
@@ -127,15 +124,12 @@ class FileResourceMetricsReporter:
             self._stop_event.set()
             return False
 
-        lock_file = self.lock_path.open("a+")
+        lock_file = open(self.lock_path, "a+")
         try:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             lock_file.close()
             return False
-        except Exception:
-            lock_file.close()
-            raise
         self._lock_file = lock_file
         logger.info(
             f"Became {self.reporter_name} resource metrics reporter for {self.log_path}"
@@ -155,41 +149,37 @@ class FileResourceMetricsReporter:
         self._lock_file = None
 
     def _read_latest_complete_line(self) -> str:
-        with self.log_path.open("rb") as stream:
-            stream.seek(0, os.SEEK_END)
-            end = stream.tell()
-            start = max(0, end - 2 * MAX_RECORD_BYTES)
-            stream.seek(start)
-            lines = stream.read(end - start).split(b"\n")
-        lines.pop()
-        if start:
-            lines = lines[1:]
-        for line in reversed(lines):
-            if not line.strip():
-                continue
-            if len(line) > MAX_RECORD_BYTES:
-                raise ValueError("Resource snapshot exceeds 1 MiB")
-            return line.decode("utf-8")
-        raise ValueError("Resource log has no complete record")
+        with open(self.log_path, "rb") as log_file:
+            log_file.seek(0, os.SEEK_END)
+            end = log_file.tell()
+            if end == 0:
+                raise ValueError("Resource log is empty")
+            position = end
+            data = b""
+            while position > 0:
+                chunk_size = min(position, 64 * 1024)
+                position -= chunk_size
+                log_file.seek(position)
+                data = log_file.read(chunk_size) + data
+                ends_with_newline = data.endswith((b"\n", b"\r"))
+                complete = data.splitlines()
+                if not ends_with_newline and complete:
+                    complete.pop()
+                if complete:
+                    for candidate in reversed(complete):
+                        if candidate.strip():
+                            return candidate.decode("utf-8")
+            raise ValueError("Resource log has no complete JSON record")
 
     def _read_state_json(self) -> dict[str, Any] | None:
         try:
-            with self.state_path.open("rb") as stream:
-                data = stream.read(MAX_RECORD_BYTES + 1)
-            if len(data) > MAX_RECORD_BYTES:
-                raise ValueError("Resource reporter state exceeds 1 MiB")
-            state = json.loads(data)
-            if not isinstance(state, dict):
-                raise ValueError("Resource reporter state must be an object")
-            return state
+            with open(self.state_path, "r", encoding="utf-8") as state_file:
+                return json.load(state_file)
         except FileNotFoundError:
             return None
 
     def _write_state_json(self, state: dict[str, Any]) -> None:
-        temporary = self.state_path.with_suffix(f".{os.getpid()}.tmp")
-        try:
-            with temporary.open("w", encoding="utf-8") as stream:
-                json.dump(state, stream, allow_nan=False, separators=(",", ":"))
-            os.replace(temporary, self.state_path)
-        finally:
-            temporary.unlink(missing_ok=True)
+        temporary_path = self.state_path.with_suffix(f".{os.getpid()}.tmp")
+        with open(temporary_path, "w", encoding="utf-8") as state_file:
+            json.dump(state, state_file)
+        os.replace(temporary_path, self.state_path)
