@@ -197,7 +197,7 @@ def make_reporter(tmp_path, monkeypatch):
     reader = reporter.DramPoolResourceReporter(
         str(tmp_path / "metrics.log"), shared_memory_dir=str(tmp_path)
     )
-    reader._state_path = tmp_path / "state.json"
+    reader.state_path = tmp_path / "state.json"
     monkeypatch.setattr(reader, "_try_become_leader", lambda: True)
     return reader
 
@@ -419,7 +419,7 @@ def test_reporter_thread_elects_once_and_loser_exits(tmp_path, monkeypatch):
         readers[0].start()
         wait_until(lambda: readers[0]._lock_file is not None)
         write_record(readers[0], record())
-        wait_until(lambda: readers[0]._state_path and readers[0]._state_path.exists())
+        wait_until(lambda: readers[0].state_path and readers[0].state_path.exists())
         readers[1].start()
         readers[1]._thread.join(timeout=5)
         assert not readers[1]._thread.is_alive()

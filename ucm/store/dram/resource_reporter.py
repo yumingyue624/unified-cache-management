@@ -22,13 +22,8 @@
 # SOFTWARE.
 #
 
-import atexit
-import hashlib
 import json
 import math
-import os
-import tempfile
-import threading
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -36,10 +31,14 @@ from typing import Any
 
 from ucm.logger import init_logger
 from ucm.shared.metrics import ucmmetrics
+from ucm.shared.metrics.resource_reporter import (
+    MAX_RECORD_BYTES,
+    FileResourceMetricsReporter,
+    counter_deltas,
+)
 
 logger = init_logger(__name__)
 UINT64_MAX = (1 << 64) - 1
-MAX_RECORD_BYTES = 1024 * 1024
 _REPORTER: "DramPoolResourceReporter | None" = None
 
 
@@ -130,10 +129,10 @@ def snapshot_deltas(
     current: DramPoolResourceSnapshot, previous: DramPoolResourceSnapshot | None
 ):
     """Compute metric deltas, treating decreases as source resets."""
-    counters, histograms = {}, {}
-    for name, value in current.counters.items():
-        old = previous.counters.get(name, 0) if previous is not None else None
-        counters[name] = 0 if old is None else value - old if value >= old else value
+    counters = counter_deltas(
+        current.counters, previous.counters if previous is not None else None
+    )
+    histograms = {}
     for name, value in current.histograms.items():
         old = previous.histograms.get(name) if previous is not None else None
         if previous is None:
@@ -174,123 +173,33 @@ def _snapshot_record(snapshot: DramPoolResourceSnapshot) -> dict:
     }
 
 
-class DramPoolResourceReporter:
+class DramPoolResourceReporter(FileResourceMetricsReporter):
     def __init__(
         self,
         log_path: str,
         interval_sec: float = 15.0,
         shared_memory_dir: str = "/dev/shm",
     ):
-        self.log_path = Path(log_path)
-        self.interval_sec = max(float(interval_sec), 1.0)
-        self.shared_dir = Path(shared_memory_dir)
-        if not self.shared_dir.is_dir():
-            self.shared_dir = Path(tempfile.gettempdir())
-        self._lock_file = None
-        self._lock_path: Path | None = None
-        self._state_path: Path | None = None
-        self._stop_event = threading.Event()
-        self._thread = threading.Thread(
-            target=self._run, name="drampool-resource-reporter", daemon=True
+        super().__init__(
+            log_path=log_path,
+            reporter_name="drampool",
+            identity=str(Path(log_path).resolve()),
+            interval_sec=interval_sec,
+            shared_memory_dir=shared_memory_dir,
         )
-        atexit.register(self.stop)
-
-    def start(self):
-        self._thread.start()
-
-    def stop(self):
-        self._stop_event.set()
-        if self._thread.is_alive() and threading.current_thread() is not self._thread:
-            self._thread.join(timeout=min(self.interval_sec + 1.0, 5.0))
-        if not self._thread.is_alive():
-            self._release_leadership()
-
-    def _release_leadership(self):
-        if self._lock_file is None:
-            return
-        try:
-            import fcntl
-
-            fcntl.flock(self._lock_file.fileno(), fcntl.LOCK_UN)
-        except Exception:
-            pass
-        self._lock_file.close()
-        self._lock_file = None
-
-    def _read_latest_complete_line(self):
-        with self.log_path.open("rb") as stream:
-            stream.seek(0, os.SEEK_END)
-            end = stream.tell()
-            # Two maximum-sized records allow skipping a partial final record.
-            start = max(0, end - 2 * MAX_RECORD_BYTES)
-            stream.seek(start)
-            lines = stream.read(end - start).split(b"\n")
-        lines.pop()  # EOF fragment, including an empty fragment after a newline.
-        if start:
-            lines = lines[1:]  # May begin in the middle of a record.
-        for line in reversed(lines):
-            if not line.strip():
-                continue
-            if len(line) > MAX_RECORD_BYTES:
-                raise ValueError("Snapshot exceeds 1 MiB")
-            return line.decode("utf-8")
-        raise ValueError("DramPool resource log has no complete record")
-
-    def _try_become_leader(self):
-        try:
-            import fcntl
-        except ImportError:
-            logger.warning(
-                "DramPool resource reporter requires fcntl for host election"
-            )
-            self._stop_event.set()
-            return False
-
-        identity = hashlib.sha256(str(self.log_path.resolve()).encode()).hexdigest()[
-            :24
-        ]
-        self._lock_path = self.shared_dir / f"ucm_drampool_metrics_{identity}.lock"
-        self._state_path = self.shared_dir / f"ucm_drampool_metrics_{identity}.json"
-        lock_file = self._lock_path.open("a+")
-        try:
-            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            lock_file.close()
-            return False
-        except Exception:
-            lock_file.close()
-            raise
-        self._lock_file = lock_file
-        logger.info(f"Became DramPool resource metrics reporter for {self.log_path}")
-        return True
 
     def _read_state(self):
         try:
-            with self._state_path.open("rb") as stream:
-                data = stream.read(MAX_RECORD_BYTES + 1)
-            if len(data) > MAX_RECORD_BYTES:
-                raise ValueError("Oversized reporter state")
-            state = json.loads(data)
+            state = self._read_state_json()
+            if state is None:
+                return None
             return parse_drampool_resource_snapshot(json.dumps(state["snapshot"]))
-        except FileNotFoundError:
-            return None
         except Exception as error:
             logger.warning(f"Ignoring invalid DramPool reporter state: {error}")
             return None
 
     def _write_state(self, snapshot):
-        temporary = self._state_path.with_suffix(f".{os.getpid()}.tmp")
-        try:
-            with temporary.open("w", encoding="utf-8") as stream:
-                json.dump(
-                    {"snapshot": _snapshot_record(snapshot)},
-                    stream,
-                    allow_nan=False,
-                    separators=(",", ":"),
-                )
-            os.replace(temporary, self._state_path)
-        finally:
-            temporary.unlink(missing_ok=True)
+        self._write_state_json({"snapshot": _snapshot_record(snapshot)})
 
     def _report_snapshot(self, snapshot, previous):
         counters, gauges, histograms = snapshot_deltas(snapshot, previous)
@@ -309,27 +218,6 @@ class DramPoolResourceReporter:
         snapshot = parse_drampool_resource_snapshot(self._read_latest_complete_line())
         previous = self._read_state()
         self._report_snapshot(snapshot, previous)
-
-    def _run(self):
-        try:
-            if self._stop_event.is_set():
-                return
-            try:
-                if not self._try_become_leader():
-                    return
-            except Exception as error:
-                logger.warning(f"Failed to elect DramPool resource reporter: {error}")
-                return
-            while not self._stop_event.is_set():
-                try:
-                    self._collect_once()
-                except Exception as error:
-                    logger.warning(
-                        f"Failed to collect DramPool resource metrics: {error}"
-                    )
-                self._stop_event.wait(self.interval_sec)
-        finally:
-            self._release_leadership()
 
 
 def start_drampool_resource_reporter(config: dict) -> DramPoolResourceReporter | None:
