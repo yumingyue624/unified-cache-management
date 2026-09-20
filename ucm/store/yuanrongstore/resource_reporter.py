@@ -129,7 +129,8 @@ class YuanRongResourceReporter(FileResourceMetricsReporter):
             return None
 
     def _collect_once(self) -> None:
-        snapshot = parse_yuanrong_resource_snapshot(self._read_latest_complete_line())
+        line = self._read_latest_complete_line()
+        snapshot = parse_yuanrong_resource_snapshot(line)
         previous = self._read_previous_counters()
         updates = snapshot.gauges | counter_deltas(snapshot.counters, previous)
         ucmmetrics.update_stats(updates)
