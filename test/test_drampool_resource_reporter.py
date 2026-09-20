@@ -397,6 +397,19 @@ def test_reporter_role_and_enable_guards(overrides):
     )
 
 
+def test_reporter_failure_updates_drampool_error_counter(tmp_path, monkeypatch):
+    reader = make_reporter(tmp_path, monkeypatch)
+
+    def fail_election():
+        raise OSError("lock unavailable")
+
+    monkeypatch.setattr(reader, "_try_become_leader", fail_election)
+    reader._run()
+
+    counters, _, _ = native.get_all_stats_and_clear()
+    assert counters["drampool_resource_log_read_errors_total"] == 1
+
+
 @pytest.mark.skipif(os.name != "posix", reason="reporter lifecycle uses POSIX flock")
 def test_reporter_thread_elects_once_and_loser_exits(tmp_path, monkeypatch):
     readers = [

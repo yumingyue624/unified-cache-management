@@ -101,8 +101,6 @@ def _parse_timestamp(value: Any) -> float:
 
 
 class YuanRongResourceReporter(FileResourceMetricsReporter):
-    error_metric_name = "yuanrong_resource_log_read_errors_total"
-
     def __init__(
         self,
         log_path: str,

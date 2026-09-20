@@ -58,8 +58,6 @@ def counter_deltas(
 class FileResourceMetricsReporter:
     """Poll a snapshot log from one elected process on each host."""
 
-    error_metric_name: str | None = None
-
     def __init__(
         self,
         log_path: str,
@@ -70,19 +68,21 @@ class FileResourceMetricsReporter:
     ):
         self.log_path = Path(log_path)
         self.reporter_name = reporter_name
+        self.reporter_key = reporter_name.lower()
         self.interval_sec = max(float(interval_sec), 1.0)
         shared_dir = Path(shared_memory_dir)
         if not shared_dir.is_dir():
             shared_dir = Path(tempfile.gettempdir())
         identity = hashlib.sha256(identity.encode()).hexdigest()[:24]
-        reporter_key = reporter_name.lower()
-        self.lock_path = shared_dir / f"ucm_{reporter_key}_metrics_{identity}.lock"
-        self.state_path = shared_dir / f"ucm_{reporter_key}_metrics_{identity}.json"
+        self.lock_path = shared_dir / f"ucm_{self.reporter_key}_metrics_{identity}.lock"
+        self.state_path = (
+            shared_dir / f"ucm_{self.reporter_key}_metrics_{identity}.json"
+        )
         self._stop_event = threading.Event()
         self._lock_file = None
         self._thread = threading.Thread(
             target=self._run,
-            name=f"{reporter_key}-resource-reporter",
+            name=f"{self.reporter_key}-resource-reporter",
             daemon=True,
         )
         atexit.register(self.stop)
@@ -106,8 +106,9 @@ class FileResourceMetricsReporter:
             logger.warning(
                 f"Failed to elect {self.reporter_name} resource reporter: {error}"
             )
-            if self.error_metric_name is not None:
-                ucmmetrics.update_stats({self.error_metric_name: 1.0})
+            ucmmetrics.update_stats(
+                {f"{self.reporter_key}_resource_log_read_errors_total": 1.0}
+            )
             return
 
         while not self._stop_event.is_set():
@@ -117,8 +118,9 @@ class FileResourceMetricsReporter:
                 logger.warning(
                     f"Failed to collect {self.reporter_name} resource metrics: {error}"
                 )
-                if self.error_metric_name is not None:
-                    ucmmetrics.update_stats({self.error_metric_name: 1.0})
+                ucmmetrics.update_stats(
+                    {f"{self.reporter_key}_resource_log_read_errors_total": 1.0}
+                )
             self._stop_event.wait(self.interval_sec)
 
     def _try_become_leader(self) -> bool:
