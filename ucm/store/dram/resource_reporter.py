@@ -61,7 +61,6 @@ class HistogramSnapshot:
     upper_bounds: tuple[float, ...]
     bucket_counts: tuple[int, ...]
     sum: float
-    unit: str
 
     @property
     def count(self) -> int:
@@ -109,14 +108,11 @@ def parse_drampool_resource_snapshot(line: str) -> DramPoolResourceSnapshot:
             counts = tuple(_count(v) for v in value["bucket_counts"])
             count = _count(value["count"])
             total = float(_number(value["sum"]))
-            # This importer currently accepts duration histograms in microseconds.
-            if value["unit"] != "us" or not name.endswith("_us"):
-                raise ValueError(f"Unsupported histogram unit for {name}")
             if len(counts) != len(bounds) + 1 or sum(counts) != count:
                 raise ValueError(f"Histogram count/shape mismatch for {name}")
             if count == 0 and total != 0:
                 raise ValueError(f"Nonzero sum for empty histogram {name}")
-            destination[name] = HistogramSnapshot(bounds, counts, total, "us")
+            destination[name] = HistogramSnapshot(bounds, counts, total)
     return DramPoolResourceSnapshot(
         float(_number(timestamp)),
         counters,
@@ -140,7 +136,7 @@ def snapshot_deltas(
         elif old is None:
             counts, total = list(value.bucket_counts), value.sum
         else:
-            if old.upper_bounds != value.upper_bounds or old.unit != value.unit:
+            if old.upper_bounds != value.upper_bounds:
                 raise ValueError(f"Histogram schema changed: {name}")
             counts = [a - b for a, b in zip(value.bucket_counts, old.bucket_counts)]
             total = value.sum - old.sum
@@ -166,7 +162,6 @@ def _snapshot_record(snapshot: DramPoolResourceSnapshot) -> dict:
                 "bucket_counts": h.bucket_counts,
                 "count": h.count,
                 "sum": h.sum,
-                "unit": h.unit,
             }
             for name, h in snapshot.histograms.items()
         },

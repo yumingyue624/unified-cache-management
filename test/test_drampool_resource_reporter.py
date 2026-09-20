@@ -86,7 +86,7 @@ import ucm.shared.metrics
 ucm.shared.metrics.ucmmetrics = native
 from ucm.store.dram import resource_reporter as reporter
 
-NAME = "drampool_load_duration_us"
+NAME = "drampool_load_duration_ms"
 COUNTER = "drampool_load_requests_total"
 GAUGE = "drampool_used_bytes"
 
@@ -111,7 +111,7 @@ def record(tick=41, counts=None, total=12000, counter=36):
                 "bucket_counts": counts,
                 "count": sum(counts),
                 "sum": total,
-                "unit": "us",
+                "unit": "ms",
             }
         },
     }
@@ -173,7 +173,6 @@ def test_baseline_restart_and_large_integer_counter():
         ("bucket_counts", [2**64, 20, 5, 1]),
         ("count", 37),
         ("upper_bounds", [100, 100, 1000]),
-        ("unit", "seconds"),
         ("sum", float("nan")),
         ("sum", -1),
     ],
@@ -316,7 +315,7 @@ def test_real_prometheus_export(monkeypatch):
                 "name": NAME,
                 "buckets": [100, 500, 1000],
                 "vllm_connector_name": "drampool_load_duration_seconds",
-                "vllm_connector_value_scale": 1e-6,
+                "vllm_connector_value_scale": 1e-3,
             }
         ],
     }
@@ -343,7 +342,7 @@ def test_real_prometheus_export(monkeypatch):
     buckets = [s for s in samples if s.name.endswith("_bucket")]
     assert [s.value for s in buckets] == [2, 5, 6, 6]
     assert next(s.value for s in samples if s.name.endswith("_sum")) == pytest.approx(
-        0.0019
+        1.9
     )
     assert next(s.value for s in samples if s.name.endswith("_count")) == 6
 
