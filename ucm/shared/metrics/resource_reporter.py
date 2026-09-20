@@ -167,7 +167,7 @@ class FileResourceMetricsReporter:
             log_file.seek(0, os.SEEK_END)
             end = log_file.tell()
             if end == 0:
-                raise ValueError("Resource log is empty")
+                raise ValueError(f"{self.reporter_name} resource log is empty")
             position = end
             data = b""
             while position > 0:
@@ -183,7 +183,9 @@ class FileResourceMetricsReporter:
                     for candidate in reversed(complete):
                         if candidate.strip():
                             return candidate.decode("utf-8")
-            raise ValueError("Resource log has no complete JSON record")
+            raise ValueError(
+                f"{self.reporter_name} resource log has no complete JSON record"
+            )
 
     def _read_previous_state(self) -> dict[str, Any] | None:
         try:
