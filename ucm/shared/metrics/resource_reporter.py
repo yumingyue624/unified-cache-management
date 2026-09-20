@@ -185,14 +185,19 @@ class FileResourceMetricsReporter:
                             return candidate.decode("utf-8")
             raise ValueError("Resource log has no complete JSON record")
 
-    def _read_state_json(self) -> dict[str, Any] | None:
+    def _read_previous_state(self) -> dict[str, Any] | None:
         try:
             with open(self.state_path, "r", encoding="utf-8") as state_file:
                 return json.load(state_file)
         except FileNotFoundError:
             return None
+        except (OSError, ValueError, TypeError) as error:
+            logger.warning(
+                f"Ignoring invalid {self.reporter_name} reporter state: {error}"
+            )
+            return None
 
-    def _write_state_json(self, state: dict[str, Any]) -> None:
+    def _write_previous_state(self, state: dict[str, Any]) -> None:
         temporary_path = self.state_path.with_suffix(f".{os.getpid()}.tmp")
         with open(temporary_path, "w", encoding="utf-8") as state_file:
             json.dump(state, state_file)

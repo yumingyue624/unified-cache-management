@@ -118,7 +118,7 @@ class YuanRongResourceReporter(FileResourceMetricsReporter):
 
     def _read_previous_counters(self) -> dict[str, float] | None:
         try:
-            state = self._read_state_json()
+            state = self._read_previous_state()
             if state is None:
                 return None
             return {
@@ -133,7 +133,7 @@ class YuanRongResourceReporter(FileResourceMetricsReporter):
         previous = self._read_previous_counters()
         updates = snapshot.gauges | counter_deltas(snapshot.counters, previous)
         ucmmetrics.update_stats(updates)
-        self._write_state_json({"version": 1, "counters": snapshot.counters})
+        self._write_previous_state({"version": 1, "counters": snapshot.counters})
 
 
 def start_yuanrong_resource_reporter(

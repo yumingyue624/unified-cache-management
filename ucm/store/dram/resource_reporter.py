@@ -185,7 +185,7 @@ class DramPoolResourceReporter(FileResourceMetricsReporter):
 
     def _read_state(self):
         try:
-            state = self._read_state_json()
+            state = self._read_previous_state()
             if state is None:
                 return None
             return parse_drampool_resource_snapshot(json.dumps(state["snapshot"]))
@@ -194,7 +194,7 @@ class DramPoolResourceReporter(FileResourceMetricsReporter):
             return None
 
     def _write_state(self, snapshot):
-        self._write_state_json({"snapshot": _snapshot_record(snapshot)})
+        self._write_previous_state({"snapshot": _snapshot_record(snapshot)})
 
     def _report_snapshot(self, snapshot, previous):
         counters, gauges, histograms = snapshot_deltas(snapshot, previous)
