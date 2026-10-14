@@ -115,7 +115,7 @@ vllm serve <model-path> \
 
 Replace the model and configuration paths and adjust inference options for your deployment.
 
-### Metrics (optional)
+### Metrics
 
 DramStore operation metrics and DramPool metrics are exposed through vLLM's `/metrics` endpoint. Enable DramPool snapshot export and configure the DramStore-side reader as follows.
 

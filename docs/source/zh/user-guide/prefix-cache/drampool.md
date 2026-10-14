@@ -115,7 +115,7 @@ vllm serve <model-path> \
 
 按实际部署替换模型和配置路径，并调整推理参数。
 
-### Metrics（可选）
+### Metrics
 
 DramStore 操作指标和 DramPool 指标通过 vLLM 的 `/metrics` 暴露。按以下配置开启 DramPool 快照导出，并在 DramStore 侧读取快照。
 
