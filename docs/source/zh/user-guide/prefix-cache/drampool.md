@@ -77,21 +77,41 @@ curl --fail http://192.168.1.10:9100/health
 
 ### Metrics（可选）
 
-在推理侧 UCM YAML 中配置以下**顶层**参数，放在 `ucm_connector_config` 外：
+DramStore 操作指标已在 `develop` 中实现，没有独立的 DramStore metrics 开关。DramPool 快照导出需使用 [PR #1394](https://github.com/ModelEngine-Group/unified-cache-management/pull/1394) 的实现或包含该实现的版本。
+
+**DramPool 端：**在 `--config` 指定的运行 YAML 中增加以下顶层配置：
 
 ```yaml
-enable_metrics: true
-# 可选的指标启用清单；省略时使用内置指标。
-metrics_config_path: /absolute/path/to/examples/metrics/metrics_configs.yaml
+metrics:
+  enabled: true
+  output_dir: /var/log/ucm/drampool
+  interval_ms: 10000
 ```
 
-UCM metrics 默认开启，设置 `enable_metrics: false` 可关闭。自定义指标文件须对推理进程可读。发送推理请求后检查：
+服务每 10 秒原子替换 `output_dir` 下的 `drampool_metrics.json`。省略 `metrics.enabled` 或设为 `false` 时，关闭快照采集和导出；PR 的示例 YAML 显式开启。`output_dir` 为空时使用 `logger.dir`，开启时 `interval_ms` 必须大于 0。
+
+**DramStore 端：**将以下配置合并到推理侧 `Dram` 管线的 `ucm_connector_config` 中：
+
+```yaml
+ucm_connectors:
+  - ucm_connector_name: "UcmPipelineStore"
+    ucm_connector_config:
+      store_pipeline: "Dram"
+      # 保留其它 DramStore 连接配置。
+      drampool_resource_metrics_enable: true
+      drampool_resource_log_path: /var/log/ucm/drampool/drampool_metrics.json
+      drampool_resource_metrics_interval_sec: 15
+```
+
+这三个参数控制客户端读取 DramPool 快照，不控制 DramStore 自身的操作指标。配置非空路径后默认启用读取，设置 `drampool_resource_metrics_enable: false` 可关闭；读取周期默认 15 秒，仅在 scheduler 进程（`device_id < 0`）运行。快照须对该进程可见且可读；池端与推理端位于不同容器或主机时，需将输出目录挂载到读取端，路径以推理进程的文件系统为准。
+
+发送推理请求后，通过 vLLM 检查 DramStore 和导入的 DramPool 指标：
 
 ```bash
-curl http://<vllm-ip>:<vllm-port>/metrics | grep '^ucm:'
+curl http://<vllm-ip>:<vllm-port>/metrics | grep -E '^ucm:(dramstore_|drampool_)'
 ```
 
-这些参数通过 vLLM 导出 UCM connector 指标。当前版本尚未导出 DramPool 服务端指标，`health.port` 仅提供 `/health`。可使用 Prometheus 和 Grafana，采集间隔至少为 5 秒；配置参见 [UCM Metrics Observability](../../../user-guide/metrics/metrics.md)。vLLM 在推理过程中收集 connector 统计时，UCM 指标才会更新。
+DramPool 导出文件快照，不提供 HTTP `/metrics`，`health.port` 仅提供 `/health`。可使用 [Dram 大盘](https://github.com/ModelEngine-Group/unified-cache-management/blob/develop/examples/metrics/grafana_dram.json) 查看两端指标。vLLM 在推理过程中收集 connector 统计时，指标才会更新；Prometheus 和 Grafana 配置参见 [UCM Metrics Observability](../../../user-guide/metrics/metrics.md)。
 
 ## 性能
 

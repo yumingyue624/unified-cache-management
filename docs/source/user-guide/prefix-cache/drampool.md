@@ -77,21 +77,41 @@ Configure the inference-side `UcmPipelineStore` with `store_pipeline: "Dram"`. I
 
 ### Metrics (optional)
 
-In the inference-side UCM YAML, set the following **top-level** options, outside `ucm_connector_config`:
+DramStore operation metrics are implemented on `develop`; there is no separate DramStore metrics switch. DramPool snapshot export requires [PR #1394](https://github.com/ModelEngine-Group/unified-cache-management/pull/1394) or a version containing that implementation.
+
+**DramPool:** add the following top-level section to the runtime YAML passed through `--config`:
 
 ```yaml
-enable_metrics: true
-# Optional metric enable-list; omit to use the built-in metrics.
-metrics_config_path: /absolute/path/to/examples/metrics/metrics_configs.yaml
+metrics:
+  enabled: true
+  output_dir: /var/log/ucm/drampool
+  interval_ms: 10000
 ```
 
-UCM metrics are enabled by default; set `enable_metrics: false` to disable them. A custom metrics file must be readable by the inference process. Send an inference request, then check:
+The daemon atomically replaces `drampool_metrics.json` in `output_dir` every 10 seconds. Snapshot collection and export are disabled when `metrics.enabled` is omitted or `false`; the PR's example YAML explicitly enables them. An empty `output_dir` uses `logger.dir`, and `interval_ms` must be positive when enabled.
+
+**DramStore:** merge the following into the inference-side `ucm_connector_config` for the `Dram` pipeline:
+
+```yaml
+ucm_connectors:
+  - ucm_connector_name: "UcmPipelineStore"
+    ucm_connector_config:
+      store_pipeline: "Dram"
+      # Keep the other DramStore connection settings.
+      drampool_resource_metrics_enable: true
+      drampool_resource_log_path: /var/log/ucm/drampool/drampool_metrics.json
+      drampool_resource_metrics_interval_sec: 15
+```
+
+These three options control the client-side reader of DramPool snapshots, not DramStore's own operation metrics. Setting a nonempty path enables the reader by default; set `drampool_resource_metrics_enable: false` to disable it. The read interval defaults to 15 seconds, and the reader runs only in the scheduler process (`device_id < 0`). The snapshot must be visible and readable from that process; mount the output directory into it if the pool and inference run in different containers or hosts. The path refers to the inference process's filesystem.
+
+Send an inference request, then verify DramStore and imported DramPool metrics through vLLM:
 
 ```bash
-curl http://<vllm-ip>:<vllm-port>/metrics | grep '^ucm:'
+curl http://<vllm-ip>:<vllm-port>/metrics | grep -E '^ucm:(dramstore_|drampool_)'
 ```
 
-These options expose UCM connector metrics through vLLM. This version does not export DramPool server metrics, and `health.port` exposes only `/health`. Use Prometheus and Grafana with a scrape interval of at least 5 seconds; see [UCM Metrics Observability](../metrics/metrics.md) for configuration. UCM metrics refresh when vLLM collects connector statistics during inference.
+DramPool exports a file snapshot rather than an HTTP `/metrics` endpoint; `health.port` serves only `/health`. Use [the Dram dashboard](https://github.com/ModelEngine-Group/unified-cache-management/blob/develop/examples/metrics/grafana_dram.json) to inspect both components. Metrics refresh through vLLM's connector-statistics collection during inference; see [UCM Metrics Observability](../metrics/metrics.md) for Prometheus and Grafana setup.
 
 ## Performance
 
