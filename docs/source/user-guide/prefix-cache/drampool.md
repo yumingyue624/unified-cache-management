@@ -181,4 +181,3 @@ TTFT speedup is calculated as **(Baseline TTFT / Scenario TTFT − 1) × 100%**,
 |           32 000 |          128 |             32 |          178751.1 |          149170.5 |           **+19.8%** |           96544.9 |           **+85.1%** |
 
 Across these runs, TTFT speedup is **3.3%–119.2%** for `hit - 50` and **5.4%–392.5%** for `hit - 90`. At input length 4,000 and concurrency 32, `hit - 90` has higher TTFT than `hit - 50`.
-
