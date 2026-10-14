@@ -108,7 +108,18 @@ TTFT speedup is calculated as **(Baseline TTFT / Scenario TTFT − 1) × 100%**,
 |            4 000 |           64 |             16 |            1789.4 |            1731.8 |            **+3.3%** |            1697.7 |            **+5.4%** |
 |            4 000 |          128 |             32 |            2491.3 |            2076.5 |           **+20.0%** |            2151.3 |           **+15.8%** |
 |            8 000 |            4 |              1 |            1716.2 |            1111.7 |           **+54.4%** |             671.7 |          **+155.5%** |
+|            8 000 |           16 |              4 |            2105.9 |            1707.8 |           **+23.3%** |             986.0 |          **+113.6%** |
+|            8 000 |           64 |             16 |            3919.6 |            2774.0 |           **+41.3%** |            1768.6 |          **+121.6%** |
+|            8 000 |          128 |             32 |            5939.1 |            3243.9 |           **+83.1%** |            2383.2 |          **+149.2%** |
+|           16 000 |            4 |              1 |            3949.0 |            2321.5 |           **+70.1%** |             801.9 |          **+392.5%** |
+|           16 000 |           16 |              4 |            5422.5 |            3318.2 |           **+63.4%** |            1242.9 |          **+336.3%** |
+|           16 000 |           64 |             16 |            8579.4 |            4977.5 |           **+72.4%** |            2264.1 |          **+278.9%** |
+|           16 000 |          128 |             32 |           65085.5 |           29686.6 |          **+119.2%** |           18672.3 |          **+248.6%** |
+|           32 000 |            4 |              1 |            9781.7 |            6070.6 |           **+61.1%** |            2055.6 |          **+375.9%** |
+|           32 000 |           16 |              4 |           12574.2 |            8200.6 |           **+53.3%** |            2686.5 |          **+368.1%** |
+|           32 000 |           64 |             16 |           46070.9 |           37792.1 |           **+21.9%** |           22434.8 |          **+105.4%** |
+|           32 000 |          128 |             32 |          178751.1 |          149170.5 |           **+19.8%** |           96544.9 |           **+85.1%** |
 
-Across these runs, TTFT speedup is **3.3%–54.4%** for `hit - 50` and **5.4%–155.5%** for `hit - 90`. At input length 4,000 and concurrency 32, `hit - 90` has higher TTFT than `hit - 50`.
+Across these runs, TTFT speedup is **3.3%–119.2%** for `hit - 50` and **5.4%–392.5%** for `hit - 90`. At input length 4,000 and concurrency 32, `hit - 90` has higher TTFT than `hit - 50`.
 
 The workbook does not specify the TTFT unit, model, device count, software versions, baseline configuration or hit-ratio methodology. TTFT values retain the source unit; the speedup calculation is independent of that unit. Results describe these test runs only.
