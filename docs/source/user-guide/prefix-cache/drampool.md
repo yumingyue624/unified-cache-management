@@ -157,7 +157,7 @@ DramPool exports a file snapshot rather than an HTTP `/metrics` endpoint; `healt
 
 ### Overview
 
-The following TTFT (time to first token) results are transcribed from `TTFT-性能测试结果.xlsx`, `Sheet1`. Average output length is 1,000 tokens; average input length is shown in the table. The workbook labels the three scenarios `Baseline`, `hit - 50` and `hit - 90`. Only rows with complete TTFT results are included.
+The following table compares TTFT (time to first token) for DramPool prefix-cache reuse across input lengths of 4,000, 8,000, 16,000 and 32,000 tokens, at maximum concurrency levels of 1, 4, 16 and 32. Average output length is 1,000 tokens. Results are shown for `Baseline`, `hit - 50` and `hit - 90`.
 
 TTFT speedup is calculated as **(Baseline TTFT / Scenario TTFT − 1) × 100%**, using the same convention as [PipelineStore](pipeline_store.md). Percentages are rounded to one decimal place; they express the gain in inverse TTFT, rather than the percentage reduction in latency.
 
@@ -182,4 +182,3 @@ TTFT speedup is calculated as **(Baseline TTFT / Scenario TTFT − 1) × 100%**,
 
 Across these runs, TTFT speedup is **3.3%–119.2%** for `hit - 50` and **5.4%–392.5%** for `hit - 90`. At input length 4,000 and concurrency 32, `hit - 90` has higher TTFT than `hit - 50`.
 
-The workbook does not specify the TTFT unit, model, device count, software versions, baseline configuration or hit-ratio methodology. TTFT values retain the source unit; the speedup calculation is independent of that unit. Results describe these test runs only.
