@@ -79,7 +79,7 @@ Send `SIGINT` or `SIGTERM` to stop DramPool gracefully.
 
 ### Configure DramStore and start inference
 
-Save the following as an inference-side UCM YAML file, for example `/etc/ucm/dramstore.yaml`:
+Copy [examples/ucm_config_dramstore.yaml from PR #1394](https://github.com/ModelEngine-Group/unified-cache-management/blob/900b5e62/examples/ucm_config_dramstore.yaml) as the inference-side configuration, for example `/etc/ucm/dramstore.yaml`. The PR's sample still uses the older address fields; replace its connection section with the upstream `develop` configuration below and remove the legacy separate control/transport address settings. Keep other parameters as needed:
 
 ```yaml
 ucm_connectors:

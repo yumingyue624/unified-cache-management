@@ -79,7 +79,7 @@ curl --fail http://192.168.1.10:9100/health
 
 ### 配置 DramStore 并启动推理
 
-将以下内容保存为推理侧 UCM YAML 文件，例如 `/etc/ucm/dramstore.yaml`：
+复制 [PR #1394 中的 examples/ucm_config_dramstore.yaml](https://github.com/ModelEngine-Group/unified-cache-management/blob/900b5e62/examples/ucm_config_dramstore.yaml) 作为推理侧配置，例如 `/etc/ucm/dramstore.yaml`。该 PR 的样例仍使用旧地址字段，复制后用以下 upstream `develop` 配置替换连接部分，移除旧的控制地址与传输地址分开配置的字段，其它参数按需要保留：
 
 ```yaml
 ucm_connectors:
