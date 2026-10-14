@@ -29,8 +29,6 @@ pip install -v -e . --no-build-isolation
 
 两者均包含在 UCM 的昇腾构建中，无需分别执行编译命令。推理节点随 UCM 部署客户端库，池端节点运行服务端程序。
 
-若 HIXL 单独安装，编译前将 `HIXL_ROOT` 设置为其安装目录，启动前将其库目录加入 `LD_LIBRARY_PATH`。确认编译日志包含 `P2P HIXL transport backend is enabled`。后续昇腾型号应使用对应硬件的平台设置。
-
 ### 配置与启动
 
 复制 [examples/drampool.yaml](../../../../../examples/drampool.yaml) 作为运行配置。将 `transport.device_ids` 设置为可用设备 ID，并在 `transport.endpoints` 中配置 DramPool 和所有 DramStore 客户端的控制地址（`two_sided`）及传输地址（`one_sided`）。DramPool 的 `two_sided` 地址必须与 `--addr` 一致。

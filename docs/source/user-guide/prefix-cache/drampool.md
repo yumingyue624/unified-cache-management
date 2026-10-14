@@ -29,8 +29,6 @@ With this editable installation, the outputs are:
 
 Both targets are part of UCM's Ascend build and require no separate build command. Deploy the client library with UCM on inference nodes and run the server executable on pool nodes.
 
-If HIXL is installed separately, set `HIXL_ROOT` to its installation directory before building and add its library directory to `LD_LIBRARY_PATH` before starting the service. Confirm that the build reports `P2P HIXL transport backend is enabled`. Use the platform setting appropriate to your hardware for later Ascend generations.
-
 ### Configure and start
 
 Copy [examples/drampool.yaml](../../../../examples/drampool.yaml) to a runtime configuration file. Set `transport.device_ids` to available device IDs. Configure `transport.endpoints` with the control (`two_sided`) and transport (`one_sided`) addresses of DramPool and all DramStore clients; the DramPool `two_sided` address must match `--addr`.
