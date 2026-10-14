@@ -119,7 +119,7 @@ Replace the model and configuration paths and adjust inference options for your 
 
 DramStore operation metrics and DramPool metrics are exposed through vLLM's `/metrics` endpoint. Enable DramPool snapshot export and configure the DramStore-side reader as follows.
 
-**DramPool:** add the following top-level section to the runtime YAML passed through `--config`:
+**DramPool:** adjust the `metrics` section in the copied `examples/drampool.yaml` for your deployment:
 
 ```yaml
 metrics:

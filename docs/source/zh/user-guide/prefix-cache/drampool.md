@@ -119,7 +119,7 @@ vllm serve <model-path> \
 
 DramStore 操作指标和 DramPool 指标通过 vLLM 的 `/metrics` 暴露。按以下配置开启 DramPool 快照导出，并在 DramStore 侧读取快照。
 
-**DramPool 端：**在 `--config` 指定的运行 YAML 中增加以下顶层配置：
+**DramPool 端：**按实际部署修改已复制的 `examples/drampool.yaml` 中的 `metrics` 配置：
 
 ```yaml
 metrics:
