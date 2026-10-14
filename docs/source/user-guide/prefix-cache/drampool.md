@@ -1,6 +1,6 @@
 # DramPool
 
-[English](drampool.md) | [中文](drampool_zh.md)
+[English](drampool.md) | [中文](../../zh/user-guide/prefix-cache/drampool.md)
 
 DramPool pools host DRAM for KV cache reuse across inference instances. DramStore is the UCM client that reads and writes KV blocks in the pool through HIXL. Cached blocks have a finite lifetime; restarting DramPool clears its in-memory cache.
 

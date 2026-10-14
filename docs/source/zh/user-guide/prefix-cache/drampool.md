@@ -1,6 +1,6 @@
 # DramPool
 
-[English](drampool.md) | [中文](drampool_zh.md)
+[English](../../../user-guide/prefix-cache/drampool.md) | [中文](drampool.md)
 
 DramPool 将主机 DRAM 组成 KV 缓存池，供多个推理实例复用。DramStore 是 UCM 的客户端，通过 HIXL 读写池中的 KV 块。缓存块有有效期，重启 DramPool 会清空内存缓存。
 
@@ -8,7 +8,7 @@ DramPool 将主机 DRAM 组成 KV 缓存池，供多个推理实例复用。Dram
 
 - 昇腾 A3 及以上硬件，CANN **9.1.0 及以上**，以及兼容的驱动和 HIXL 库。
 - Linux 环境，DramPool 与推理节点之间具备 RDMA 网络，主机可用内存足以容纳配置的缓存池和运行时缓冲区。
-- 已安装 UCM 和兼容的 vLLM-Ascend。推理侧集成步骤参见 [Quickstart-vLLM-Ascend](../../getting-started/quickstart_vllm_ascend.md)。
+- 已安装 UCM 和兼容的 vLLM-Ascend。推理侧集成步骤参见 [Quickstart-vLLM-Ascend](../../../getting-started/quickstart_vllm_ascend.md)。
 
 ## 启动 DramPool
 
@@ -26,7 +26,7 @@ pip install -v -e . --no-build-isolation
 
 ### 配置与启动
 
-复制 [examples/drampool.yaml](../../../../examples/drampool.yaml) 作为运行配置。将 `transport.device_ids` 设置为可用设备 ID，并在 `transport.endpoints` 中配置 DramPool 和所有 DramStore 客户端的控制地址（`two_sided`）及传输地址（`one_sided`）。DramPool 的 `two_sided` 地址必须与 `--addr` 一致。
+复制 [examples/drampool.yaml](../../../../../examples/drampool.yaml) 作为运行配置。将 `transport.device_ids` 设置为可用设备 ID，并在 `transport.endpoints` 中配置 DramPool 和所有 DramStore 客户端的控制地址（`two_sided`）及传输地址（`one_sided`）。DramPool 的 `two_sided` 地址必须与 `--addr` 一致。
 
 例如，DramPool 对应的配置为：
 
@@ -91,7 +91,7 @@ UCM metrics 默认开启，设置 `enable_metrics: false` 可关闭。自定义�
 curl http://<vllm-ip>:<vllm-port>/metrics | grep '^ucm:'
 ```
 
-这些参数通过 vLLM 导出 UCM connector 指标。当前版本尚未导出 DramPool 服务端指标，`health.port` 仅提供 `/health`。可使用 Prometheus 和 Grafana，采集间隔至少为 5 秒；配置参见 [UCM Metrics Observability](../metrics/metrics.md)。vLLM 在推理过程中收集 connector 统计时，UCM 指标才会更新。
+这些参数通过 vLLM 导出 UCM connector 指标。当前版本尚未导出 DramPool 服务端指标，`health.port` 仅提供 `/health`。可使用 Prometheus 和 Grafana，采集间隔至少为 5 秒；配置参见 [UCM Metrics Observability](../../../user-guide/metrics/metrics.md)。vLLM 在推理过程中收集 connector 统计时，UCM 指标才会更新。
 
 ## 性能
 
@@ -99,7 +99,7 @@ curl http://<vllm-ip>:<vllm-port>/metrics | grep '^ucm:'
 
 以下 TTFT（首 token 延迟）结果来自 `TTFT-性能测试结果.xlsx` 的 `Sheet1`。平均输出长度为 1,000 tokens，平均输入长度见表格。原表的三个场景为“基线”、“hit - 50”和“hit - 90”，仅列出 TTFT 数据完整的测试行。
 
-TTFT 加速百分比按 **（基线 TTFT / 对应场景 TTFT − 1）× 100%** 计算，与 [PipelineStore](pipeline_store.md) 的口径一致，保留一位小数。该值表示 TTFT 倒数的提升，不是延迟下降百分比。
+TTFT 加速百分比按 **（基线 TTFT / 对应场景 TTFT − 1）× 100%** 计算，与 [PipelineStore](../../../user-guide/prefix-cache/pipeline_store.md) 的口径一致，保留一位小数。该值表示 TTFT 倒数的提升，不是延迟下降百分比。
 
 | **输入长度** | **请求数** | **最大并发数** | **基线 TTFT** | **hit - 50 TTFT** | **TTFT 加速 (%)** | **hit - 90 TTFT** | **TTFT 加速 (%)** |
 | -----------: | ---------: | -------------: | ------------: | ----------------: | ----------------: | ----------------: | ----------------: |
