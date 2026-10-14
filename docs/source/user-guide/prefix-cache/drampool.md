@@ -4,8 +4,6 @@
 
 DramPool pools host DRAM for KV cache reuse across inference instances. DramStore is the UCM client that reads and writes KV blocks in the pool through HIXL. Cached blocks expire after a configured lifetime; restarting DramPool clears its in-memory cache.
 
-The startup configuration below follows the upstream `develop` interface.
-
 ## Prerequisites
 
 - Ascend A3 or later hardware, with CANN **9.1.0 or later** and compatible drivers and HIXL libraries.
@@ -79,7 +77,7 @@ Send `SIGINT` or `SIGTERM` to stop DramPool gracefully.
 
 ### Configure DramStore and start inference
 
-Copy [examples/ucm_config_dramstore.yaml from PR #1394](https://github.com/ModelEngine-Group/unified-cache-management/blob/900b5e62/examples/ucm_config_dramstore.yaml) as the inference-side configuration, for example `/etc/ucm/dramstore.yaml`. The PR's sample still uses the older address fields; replace its connection section with the upstream `develop` configuration below and remove the legacy separate control/transport address settings. Keep other parameters as needed:
+Copy [examples/ucm_config_dramstore.yaml](https://github.com/ModelEngine-Group/unified-cache-management/blob/develop/examples/ucm_config_dramstore.yaml) as the inference-side configuration, for example `/etc/ucm/dramstore.yaml`. Set the local service address and DramPool addresses for your deployment:
 
 ```yaml
 ucm_connectors:
@@ -119,7 +117,7 @@ Replace the model and configuration paths and adjust inference options for your 
 
 ### Metrics (optional)
 
-DramStore operation metrics are implemented on `develop`; there is no separate DramStore metrics switch. DramPool snapshot export requires [PR #1394](https://github.com/ModelEngine-Group/unified-cache-management/pull/1394) or a version containing that implementation.
+DramStore operation metrics and DramPool metrics are exposed through vLLM's `/metrics` endpoint. Enable DramPool snapshot export and configure the DramStore-side reader as follows.
 
 **DramPool:** add the following top-level section to the runtime YAML passed through `--config`:
 
@@ -130,7 +128,7 @@ metrics:
   interval_ms: 10000
 ```
 
-The daemon atomically replaces `drampool_metrics.json` in `output_dir` every 10 seconds. Snapshot collection and export are disabled when `metrics.enabled` is omitted or `false`; the PR's example YAML explicitly enables them. An empty `output_dir` uses `logger.dir`, and `interval_ms` must be positive when enabled.
+The daemon atomically replaces `drampool_metrics.json` in `output_dir` every 10 seconds. Set `metrics.enabled: false` to disable snapshot collection and export. The example YAML enables export; omitting `metrics.enabled` defaults to `false`. An empty `output_dir` uses `logger.dir`, and `interval_ms` must be positive when enabled.
 
 **DramStore:** merge the following into the inference-side `ucm_connector_config` for the `Dram` pipeline:
 

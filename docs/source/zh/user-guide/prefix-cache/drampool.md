@@ -4,8 +4,6 @@
 
 DramPool 将主机 DRAM 组成 KV 缓存池，供多个推理实例复用。DramStore 是 UCM 的客户端，通过 HIXL 读写池中的 KV 块。缓存块设有过期时间，重启 DramPool 会清空内存缓存。
 
-以下启动配置以 upstream 的 `develop` 接口为准。
-
 ## 环境要求
 
 - 昇腾 A3 及以上硬件，CANN **9.1.0 及以上**，以及兼容的驱动和 HIXL 库。
@@ -79,7 +77,7 @@ curl --fail http://192.168.1.10:9100/health
 
 ### 配置 DramStore 并启动推理
 
-复制 [PR #1394 中的 examples/ucm_config_dramstore.yaml](https://github.com/ModelEngine-Group/unified-cache-management/blob/900b5e62/examples/ucm_config_dramstore.yaml) 作为推理侧配置，例如 `/etc/ucm/dramstore.yaml`。该 PR 的样例仍使用旧地址字段，复制后用以下 upstream `develop` 配置替换连接部分，移除旧的控制地址与传输地址分开配置的字段，其它参数按需要保留：
+复制 [examples/ucm_config_dramstore.yaml](https://github.com/ModelEngine-Group/unified-cache-management/blob/develop/examples/ucm_config_dramstore.yaml) 作为推理侧配置，例如 `/etc/ucm/dramstore.yaml`，按实际部署设置本地服务地址和 DramPool 地址：
 
 ```yaml
 ucm_connectors:
@@ -119,7 +117,7 @@ vllm serve <model-path> \
 
 ### Metrics（可选）
 
-DramStore 操作指标已在 `develop` 中实现，没有独立的 DramStore metrics 开关。DramPool 快照导出需使用 [PR #1394](https://github.com/ModelEngine-Group/unified-cache-management/pull/1394) 的实现或包含该实现的版本。
+DramStore 操作指标和 DramPool 指标通过 vLLM 的 `/metrics` 暴露。按以下配置开启 DramPool 快照导出，并在 DramStore 侧读取快照。
 
 **DramPool 端：**在 `--config` 指定的运行 YAML 中增加以下顶层配置：
 
@@ -130,7 +128,7 @@ metrics:
   interval_ms: 10000
 ```
 
-服务每 10 秒原子替换 `output_dir` 下的 `drampool_metrics.json`。省略 `metrics.enabled` 或设为 `false` 时，关闭快照采集和导出；PR 的示例 YAML 显式开启。`output_dir` 为空时使用 `logger.dir`，开启时 `interval_ms` 必须大于 0。
+服务每 10 秒原子替换 `output_dir` 下的 `drampool_metrics.json`。设置 `metrics.enabled: false` 可关闭快照采集和导出。示例 YAML 已开启导出，省略 `metrics.enabled` 时默认为 `false`。`output_dir` 为空时使用 `logger.dir`，开启时 `interval_ms` 必须大于 0。
 
 **DramStore 端：**将以下配置合并到推理侧 `Dram` 管线的 `ucm_connector_config` 中：
 
