@@ -2,7 +2,7 @@
 
 [English](../../../user-guide/prefix-cache/drampool.md) | [中文](drampool.md)
 
-DramPool 将主机 DRAM 组成 KV 缓存池，供多个推理实例复用。DramStore 是 UCM 的客户端，通过 HIXL 读写池中的 KV 块。缓存块有有效期，重启 DramPool 会清空内存缓存。
+DramPool 将主机 DRAM 组成 KV 缓存池，供多个推理实例复用。DramStore 是 UCM 的客户端，通过 HIXL 读写池中的 KV 块。缓存块设有过期时间，重启 DramPool 会清空内存缓存。
 
 ## 环境要求
 
