@@ -14,13 +14,20 @@ DramPool pools host DRAM for KV cache reuse across inference instances. DramStor
 
 ### Build
 
-From the UCM repository root, load the CANN environment and build UCM for A3:
+From the UCM repository root, load the CANN environment and build UCM for A3. This command also builds and installs DramStore and DramPool:
 
 ```bash
 source /usr/local/Ascend/ascend-toolkit/set_env.sh
 export PLATFORM=ascend-a3
 pip install -v -e . --no-build-isolation
 ```
+
+With this editable installation, the outputs are:
+
+- `ucm/store/dram/libdramstore.so`: the DramStore client library, loaded by `UcmPipelineStore` when `store_pipeline: "Dram"` is selected.
+- `bin/drampool`: the standalone DramPool server executable.
+
+Both targets are part of UCM's Ascend build and require no separate build command. Deploy the client library with UCM on inference nodes and run the server executable on pool nodes.
 
 If HIXL is installed separately, set `HIXL_ROOT` to its installation directory before building and add its library directory to `LD_LIBRARY_PATH` before starting the service. Confirm that the build reports `P2P HIXL transport backend is enabled`. Use the platform setting appropriate to your hardware for later Ascend generations.
 

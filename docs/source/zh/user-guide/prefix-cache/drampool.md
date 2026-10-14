@@ -14,13 +14,20 @@ DramPool 将主机 DRAM 组成 KV 缓存池，供多个推理实例复用。Dram
 
 ### 编译
 
-在 UCM 仓库根目录加载 CANN 环境，并按 A3 平台编译：
+在 UCM 仓库根目录加载 CANN 环境，并按 A3 平台编译 UCM。此命令会同时编译并安装 DramStore 和 DramPool：
 
 ```bash
 source /usr/local/Ascend/ascend-toolkit/set_env.sh
 export PLATFORM=ascend-a3
 pip install -v -e . --no-build-isolation
 ```
+
+使用上述 editable 安装方式时，产物位于：
+
+- `ucm/store/dram/libdramstore.so`：DramStore 客户端库，选择 `store_pipeline: "Dram"` 时由 `UcmPipelineStore` 加载。
+- `bin/drampool`：独立运行的 DramPool 服务端程序。
+
+两者均包含在 UCM 的昇腾构建中，无需分别执行编译命令。推理节点随 UCM 部署客户端库，池端节点运行服务端程序。
 
 若 HIXL 单独安装，编译前将 `HIXL_ROOT` 设置为其安装目录，启动前将其库目录加入 `LD_LIBRARY_PATH`。确认编译日志包含 `P2P HIXL transport backend is enabled`。后续昇腾型号应使用对应硬件的平台设置。
 
