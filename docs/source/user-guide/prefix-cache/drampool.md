@@ -4,6 +4,8 @@
 
 DramPool pools host DRAM for KV cache reuse across inference instances. DramStore is the UCM client that reads and writes KV blocks in the pool through HIXL. Cached blocks expire after a configured lifetime; restarting DramPool clears its in-memory cache.
 
+The startup configuration below follows the upstream `develop` interface.
+
 ## Prerequisites
 
 - Ascend A3 or later hardware, with CANN **9.1.0 or later** and compatible drivers and HIXL libraries.
@@ -31,20 +33,17 @@ Both targets are part of UCM's Ascend build and require no separate build comman
 
 ### Configure and start
 
-Copy [examples/drampool.yaml](../../../../examples/drampool.yaml) to a runtime configuration file. Set `transport.device_ids` to available device IDs. Configure `transport.endpoints` with the control (`two_sided`) and transport (`one_sided`) addresses of DramPool and all DramStore clients; the DramPool `two_sided` address must match `--addr`.
+Copy [examples/drampool.yaml](https://github.com/ModelEngine-Group/unified-cache-management/blob/develop/examples/drampool.yaml) to a runtime configuration file. Set `transport.device_ids` to available device IDs. The service address is supplied through `--addr`; the pool does not require a client endpoint list.
 
 For example, the DramPool entry can be configured as:
 
 ```yaml
 transport:
   device_ids: [0]
+  manager_max_threads: 4
   hixl:
     listen_port: 26666
-    enable_cs: false
-  endpoints:
-    - two_sided: "192.168.1.10:9000"
-      one_sided: "192.168.1.10:4501"
-    # Add DramStore client endpoints here.
+    enable_hixl_cs: false
 health:
   port: 9100
 ```
@@ -54,18 +53,16 @@ Merge these settings into the copied file, then start the executable from the re
 ```bash
 ./bin/drampool \
   --addr 192.168.1.10:9000 \
-  --nics mlx5_0 \
   --pool-size-gb 64 \
   --kvcache-block-sizes 1048576 \
   --config /absolute/path/to/drampool.yaml
 ```
 
-Replace the IP addresses, RDMA NIC name, capacity and block size with your deployment values. Allow traffic between the configured control and transport endpoints and the HIXL communication port.
+Replace the IP address, capacity and block size with your deployment values. Ensure connectivity between DramPool and DramStore service addresses and HIXL communication ports.
 
 | Parameter | Description |
 | --- | --- |
 | `--addr` | DramPool control address, reachable by every DramStore client. |
-| `--nics` | RDMA NIC names used for pinned-memory registration. |
 | `--pool-size-gb` | Host memory contributed by this process, in GiB. Leave memory for the OS and runtime buffers. |
 | `--kvcache-block-sizes` | Supported KV block sizes in **bytes**, matching the blocks sent by DramStore; this is not vLLM's token `block_size`. Multiple sizes are space-separated. |
 | `--kvcache-block-proportions` | Optional relative capacity shares, one per block size; equal shares by default. |
@@ -78,7 +75,47 @@ Wait for `DramPool service ready` in the logs. With `health.port` enabled, check
 curl --fail http://192.168.1.10:9100/health
 ```
 
-Configure the inference-side `UcmPipelineStore` with `store_pipeline: "Dram"`. Its `node_control_endpoints` and `node_transport_manager_ids` must match the pool addresses, and its local endpoints must appear in the pool's routing configuration. Start inference only after the pool is ready. Send `SIGINT` or `SIGTERM` to stop DramPool gracefully.
+Send `SIGINT` or `SIGTERM` to stop DramPool gracefully.
+
+### Configure DramStore and start inference
+
+Save the following as an inference-side UCM YAML file, for example `/etc/ucm/dramstore.yaml`:
+
+```yaml
+ucm_connectors:
+  - ucm_connector_name: "UcmPipelineStore"
+    ucm_connector_config:
+      store_pipeline: "Dram"
+      local_addr: "192.168.1.20:9001"
+      peer_addrs: ["192.168.1.10:9000"]
+      hixl_listen_port: 36666
+      enable_hixl_cs: false
+      router_type: "ring_hash"
+
+enable_event_sync: true
+use_layerwise: true
+```
+
+| Parameter | Description |
+| --- | --- |
+| `local_addr` | DramStore's local service IP and base port. Use the inference node's IP and a distinct base port for each inference instance. |
+| `peer_addrs` | DramPool service addresses, matching each pool's `--addr`. Multiple pools can be listed. |
+| `hixl_listen_port` | Local HIXL base port, default `36666`. Actual ports are offset by physical device ID and scheduler/worker role; reserve a non-overlapping range for each instance. |
+| `enable_hixl_cs` | Whether to enable HIXL CS, default `false`. |
+| `router_type` | Routing strategy, default `ring_hash`. |
+
+The connector supplies `device_id`, `tensor_size_list` and KV buffer addresses at runtime; do not fill them manually. Configure DramPool's supported block sizes to match the tensor sizes sent by DramStore. The `1048576` bytes in the pool command is an example, not a model-independent value. Keep `enable_event_sync: true` so dumping waits for the compute-stream event before remote access to KV memory.
+
+After DramPool is ready and vLLM-Ascend integration is configured, start a single-device inference instance:
+
+```bash
+vllm serve <model-path> \
+  --tensor-parallel-size 1 \
+  --block-size 128 \
+  --kv-transfer-config '{"kv_connector":"UCMConnector","kv_role":"kv_both","kv_connector_module_path":"ucm.integration.vllm.ucm_connector","kv_connector_extra_config":{"UCM_CONFIG_FILE":"/etc/ucm/dramstore.yaml"}}'
+```
+
+Replace the model and configuration paths and adjust inference options for your deployment.
 
 ### Metrics (optional)
 

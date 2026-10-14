@@ -4,6 +4,8 @@
 
 DramPool 将主机 DRAM 组成 KV 缓存池，供多个推理实例复用。DramStore 是 UCM 的客户端，通过 HIXL 读写池中的 KV 块。缓存块设有过期时间，重启 DramPool 会清空内存缓存。
 
+以下启动配置以 upstream 的 `develop` 接口为准。
+
 ## 环境要求
 
 - 昇腾 A3 及以上硬件，CANN **9.1.0 及以上**，以及兼容的驱动和 HIXL 库。
@@ -31,20 +33,17 @@ pip install -v -e . --no-build-isolation
 
 ### 配置与启动
 
-复制 [examples/drampool.yaml](../../../../../examples/drampool.yaml) 作为运行配置。将 `transport.device_ids` 设置为可用设备 ID，并在 `transport.endpoints` 中配置 DramPool 和所有 DramStore 客户端的控制地址（`two_sided`）及传输地址（`one_sided`）。DramPool 的 `two_sided` 地址必须与 `--addr` 一致。
+复制 [examples/drampool.yaml](https://github.com/ModelEngine-Group/unified-cache-management/blob/develop/examples/drampool.yaml) 作为运行配置。将 `transport.device_ids` 设置为可用设备 ID，服务地址通过 `--addr` 指定，池端无需配置客户端地址列表。
 
 例如，DramPool 对应的配置为：
 
 ```yaml
 transport:
   device_ids: [0]
+  manager_max_threads: 4
   hixl:
     listen_port: 26666
-    enable_cs: false
-  endpoints:
-    - two_sided: "192.168.1.10:9000"
-      one_sided: "192.168.1.10:4501"
-    # 在此补充 DramStore 客户端地址。
+    enable_hixl_cs: false
 health:
   port: 9100
 ```
@@ -54,18 +53,16 @@ health:
 ```bash
 ./bin/drampool \
   --addr 192.168.1.10:9000 \
-  --nics mlx5_0 \
   --pool-size-gb 64 \
   --kvcache-block-sizes 1048576 \
   --config /absolute/path/to/drampool.yaml
 ```
 
-按实际部署替换 IP、RDMA 网卡名、容量和块大小，并确保控制地址、传输地址及 HIXL 通信端口之间的网络连通。
+按实际部署替换 IP、容量和块大小，并确保 DramPool 与 DramStore 服务地址及 HIXL 通信端口之间的网络连通。
 
 | 参数 | 说明 |
 | --- | --- |
 | `--addr` | DramPool 控制地址，所有 DramStore 客户端均需能够访问。 |
-| `--nics` | 用于锁页内存注册的 RDMA 网卡名。 |
 | `--pool-size-gb` | 当前进程贡献的主机内存容量，单位为 GiB；需为操作系统和运行时缓冲区预留内存。 |
 | `--kvcache-block-sizes` | 支持的 KV 块大小，单位为**字节**，须与 DramStore 发送的块匹配；与 vLLM 按 token 计的 `block_size` 含义不同。多个值以空格分隔。 |
 | `--kvcache-block-proportions` | 可选，各块大小对应的容量权重；默认等分，每种块大小需对应一个权重。 |
@@ -78,7 +75,47 @@ health:
 curl --fail http://192.168.1.10:9100/health
 ```
 
-推理侧使用 `UcmPipelineStore`，设置 `store_pipeline: "Dram"`。`node_control_endpoints` 和 `node_transport_manager_ids` 须与池端地址一致，客户端本地地址也须加入池端路由配置。先启动 DramPool，确认就绪后再启动推理；向 DramPool 发送 `SIGINT` 或 `SIGTERM` 可正常退出。
+向 DramPool 发送 `SIGINT` 或 `SIGTERM` 可正常退出。
+
+### 配置 DramStore 并启动推理
+
+将以下内容保存为推理侧 UCM YAML 文件，例如 `/etc/ucm/dramstore.yaml`：
+
+```yaml
+ucm_connectors:
+  - ucm_connector_name: "UcmPipelineStore"
+    ucm_connector_config:
+      store_pipeline: "Dram"
+      local_addr: "192.168.1.20:9001"
+      peer_addrs: ["192.168.1.10:9000"]
+      hixl_listen_port: 36666
+      enable_hixl_cs: false
+      router_type: "ring_hash"
+
+enable_event_sync: true
+use_layerwise: true
+```
+
+| 参数 | 说明 |
+| --- | --- |
+| `local_addr` | DramStore 本地服务 IP 和基准端口；使用推理节点 IP，同一节点的每个推理实例应使用不同的基准端口。 |
+| `peer_addrs` | DramPool 服务地址，与各池端的 `--addr` 一致；可列出多个池端。 |
+| `hixl_listen_port` | 本地 HIXL 基准端口，默认 `36666`。实际端口根据物理设备 ID 和 scheduler/worker 角色偏移，各实例应预留互不重叠的端口范围。 |
+| `enable_hixl_cs` | 是否启用 HIXL CS，默认 `false`。 |
+| `router_type` | 路由策略，默认 `ring_hash`。 |
+
+`device_id`、`tensor_size_list` 和 KV 缓冲区地址由 connector 在运行时提供，无需手工填写。DramPool 支持的块大小应匹配 DramStore 发送的张量大小；池端命令中的 `1048576` 字节仅为示例，不是所有模型通用的值。保持 `enable_event_sync: true`，使 dump 在远程访问 KV 内存前等待计算流事件。
+
+DramPool 就绪且完成 vLLM-Ascend 集成后，可启动单卡推理实例：
+
+```bash
+vllm serve <model-path> \
+  --tensor-parallel-size 1 \
+  --block-size 128 \
+  --kv-transfer-config '{"kv_connector":"UCMConnector","kv_role":"kv_both","kv_connector_module_path":"ucm.integration.vllm.ucm_connector","kv_connector_extra_config":{"UCM_CONFIG_FILE":"/etc/ucm/dramstore.yaml"}}'
+```
+
+按实际部署替换模型和配置路径，并调整推理参数。
 
 ### Metrics（可选）
 
