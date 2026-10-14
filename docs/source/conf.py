@@ -33,7 +33,10 @@ myst_enable_extensions = ["colon_fence", "substitution"]
 
 # templates_path = ['_templates']
 # Repository-only guides must not be published or indexed by Read the Docs.
-exclude_patterns = ["user-guide/prefix-cache/drampool.md"]
+exclude_patterns = [
+    "user-guide/prefix-cache/drampool.md",
+    "user-guide/prefix-cache/drampool_zh.md",
+]
 
 
 # -- Options for HTML output -------------------------------------------------

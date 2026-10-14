@@ -1,5 +1,7 @@
 # DramPool
 
+[English](drampool.md) | [中文](drampool_zh.md)
+
 DramPool pools host DRAM for KV cache reuse across inference instances. DramStore is the UCM client that reads and writes KV blocks in the pool through HIXL. Cached blocks have a finite lifetime; restarting DramPool clears its in-memory cache.
 
 ## Prerequisites
@@ -93,13 +95,20 @@ These options expose UCM connector metrics through vLLM. This version does not e
 
 ## Performance
 
-The following TTFT (time to first token) results are transcribed from `TTFT-性能测试结果.xlsx`, `Sheet1`. Average input and output lengths are 4,000 and 1,000 tokens. The workbook labels the three scenarios `Baseline`, `hit - 50` and `hit - 90` and records request frequency as `0`.
+### Overview
 
-| Total requests | Maximum concurrency | Baseline TTFT | hit - 50 TTFT | hit - 90 TTFT |
-| ---: | ---: | ---: | ---: | ---: |
-| 4 | 1 | 893.8 | 702.5 | 639.2 |
-| 16 | 4 | 1092.5 | 1020.0 | 922.1 |
-| 64 | 16 | 1789.4 | 1731.8 | 1697.7 |
-| 128 | 32 | 2491.3 | 2076.5 | 2151.3 |
+The following TTFT (time to first token) results are transcribed from `TTFT-性能测试结果.xlsx`, `Sheet1`. Average output length is 1,000 tokens; average input length is shown in the table. The workbook labels the three scenarios `Baseline`, `hit - 50` and `hit - 90`. Only rows with complete TTFT results are included.
 
-The workbook does not specify the TTFT unit, model, device count, software versions, baseline configuration or hit-ratio methodology. Values are reported as supplied and describe these test runs only. Both hit scenarios have lower TTFT than the baseline in all four runs; `hit - 90` is slower than `hit - 50` at concurrency 32.
+TTFT speedup is calculated as **(Baseline TTFT / Scenario TTFT − 1) × 100%**, using the same convention as [PipelineStore](pipeline_store.md). Percentages are rounded to one decimal place; they express the gain in inverse TTFT, rather than the percentage reduction in latency.
+
+| **Input length** | **Requests** | **Concurrent** | **Baseline TTFT** | **hit - 50 TTFT** | **TTFT Speedup (%)** | **hit - 90 TTFT** | **TTFT Speedup (%)** |
+| ---------------: | -----------: | -------------: | ----------------: | ----------------: | -------------------: | ----------------: | -------------------: |
+|            4 000 |            4 |              1 |             893.8 |             702.5 |           **+27.2%** |             639.2 |           **+39.8%** |
+|            4 000 |           16 |              4 |            1092.5 |            1020.0 |            **+7.1%** |             922.1 |           **+18.5%** |
+|            4 000 |           64 |             16 |            1789.4 |            1731.8 |            **+3.3%** |            1697.7 |            **+5.4%** |
+|            4 000 |          128 |             32 |            2491.3 |            2076.5 |           **+20.0%** |            2151.3 |           **+15.8%** |
+|            8 000 |            4 |              1 |            1716.2 |            1111.7 |           **+54.4%** |             671.7 |          **+155.5%** |
+
+Across these runs, TTFT speedup is **3.3%–54.4%** for `hit - 50` and **5.4%–155.5%** for `hit - 90`. At input length 4,000 and concurrency 32, `hit - 90` has higher TTFT than `hit - 50`.
+
+The workbook does not specify the TTFT unit, model, device count, software versions, baseline configuration or hit-ratio methodology. TTFT values retain the source unit; the speedup calculation is independent of that unit. Results describe these test runs only.
