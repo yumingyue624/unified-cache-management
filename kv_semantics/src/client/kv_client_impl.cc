@@ -44,64 +44,6 @@ namespace kv {
 
 namespace {
 
-Status ResolveVllmAscendKey(const KeyResolutionConfig& config, std::string_view key,
-                            std::string_view& identity, std::uint64_t& baseOffset)
-{
-    identity = key;
-    baseOffset = 0;
-    // LayerPoolKey ends with @chunk_hash@layer. Preserve every other field.
-    const auto layerSeparator = key.rfind('@');
-    const auto hashSeparator = layerSeparator != std::string_view::npos && layerSeparator != 0
-                                   ? key.rfind('@', layerSeparator - 1)
-                                   : std::string_view::npos;
-    if (hashSeparator != std::string_view::npos && hashSeparator != 0) {
-        const auto hash = key.substr(hashSeparator + 1, layerSeparator - hashSeparator - 1);
-        const auto layerText = key.substr(layerSeparator + 1);
-        const bool numeric =
-            !layerText.empty() && std::all_of(layerText.begin(), layerText.end(),
-                                              [](char c) { return c >= '0' && c <= '9'; });
-        if (!hash.empty() && hash.find(':') == std::string_view::npos && !layerText.empty() &&
-            (numeric || layerText.front() == '-' || layerText.front() == '+')) {
-            std::uint64_t layer = 0;
-            const auto [end, error] =
-                std::from_chars(layerText.data(), layerText.data() + layerText.size(), layer);
-            if (error != std::errc{} || end != layerText.data() + layerText.size() ||
-                layer >= config.layerCount) {
-                return Status::Error(StatusCode::INVALID_ARGUMENT,
-                                     "invalid layer in key: " + std::string(key));
-            }
-            identity = key.substr(0, layerSeparator);
-            baseOffset = layer * config.layerSlotBytes;
-        }
-    }
-    return Status::OK();
-}
-
-Status ResolveObjectKey(const KeyResolutionConfig& config, std::string_view key,
-                        std::string_view namespace_id, ResolvedKey& result)
-{
-    auto identity = key;
-    std::uint64_t baseOffset = 0;
-    if (config.engine == InferenceEngine::VLLM_ASCEND) {
-        auto status = ResolveVllmAscendKey(config, key, identity, baseOffset);
-        if (!status.ok()) { return status; }
-    }
-    // Match Mooncake TenantId::MakeScopedKey, including the NUL separator.
-    std::string scoped(namespace_id);
-    scoped.push_back('\0');
-    scoped.append(identity.data(), identity.size());
-    auto hash = static_cast<std::uint64_t>(std::hash<std::string_view>{}(scoped));
-    ResolvedKey resolved;
-    // Serialize eight bytes in big-endian order, independent of native byte order.
-    for (auto it = resolved.key.rbegin(); it != resolved.key.rend(); ++it) {
-        *it = static_cast<std::byte>(hash & 0xff);
-        hash >>= 8;
-    }
-    resolved.base_offset = baseOffset;
-    result = resolved;
-    return Status::OK();
-}
-
 struct SubmitMetrics {
     metrics::CachedMetric* requests;
     metrics::CachedMetric* entries;
@@ -248,7 +190,59 @@ Status KvClientImpl::Init(const KvClientConfig& config)
 Status KvClientImpl::ResolveKey(std::string_view key, std::string_view namespace_id,
                                 ResolvedKey& result) const
 {
-    return ResolveObjectKey(config_.keyResolution, key, namespace_id, result);
+    auto identity = key;
+    std::uint64_t baseOffset = 0;
+    if (config_.keyResolution.engine == InferenceEngine::VLLM_ASCEND) {
+        auto status = ResolveVllmAscendKey(key, identity, baseOffset);
+        if (!status.ok()) { return status; }
+    }
+    // Match Mooncake TenantId::MakeScopedKey, including the NUL separator.
+    std::string scoped(namespace_id);
+    scoped.push_back('\0');
+    scoped.append(identity.data(), identity.size());
+    auto hash = static_cast<std::uint64_t>(std::hash<std::string_view>{}(scoped));
+    ResolvedKey resolved;
+    // Serialize eight bytes in big-endian order, independent of native byte order.
+    for (auto it = resolved.key.rbegin(); it != resolved.key.rend(); ++it) {
+        *it = static_cast<std::byte>(hash & 0xff);
+        hash >>= 8;
+    }
+    resolved.base_offset = baseOffset;
+    result = resolved;
+    return Status::OK();
+}
+
+Status KvClientImpl::ResolveVllmAscendKey(std::string_view key, std::string_view& identity,
+                                          std::uint64_t& baseOffset) const
+{
+    identity = key;
+    baseOffset = 0;
+    // LayerPoolKey ends with @chunk_hash@layer. Preserve every other field.
+    const auto layerSeparator = key.rfind('@');
+    const auto hashSeparator = layerSeparator != std::string_view::npos && layerSeparator != 0
+                                   ? key.rfind('@', layerSeparator - 1)
+                                   : std::string_view::npos;
+    if (hashSeparator != std::string_view::npos && hashSeparator != 0) {
+        const auto hash = key.substr(hashSeparator + 1, layerSeparator - hashSeparator - 1);
+        const auto layerText = key.substr(layerSeparator + 1);
+        const bool numeric =
+            !layerText.empty() && std::all_of(layerText.begin(), layerText.end(),
+                                              [](char c) { return c >= '0' && c <= '9'; });
+        if (!hash.empty() && hash.find(':') == std::string_view::npos && !layerText.empty() &&
+            (numeric || layerText.front() == '-' || layerText.front() == '+')) {
+            std::uint64_t layer = 0;
+            const auto [end, error] =
+                std::from_chars(layerText.data(), layerText.data() + layerText.size(), layer);
+            if (error != std::errc{} || end != layerText.data() + layerText.size() ||
+                layer >= config_.keyResolution.layerCount) {
+                return Status::Error(StatusCode::INVALID_ARGUMENT,
+                                     "invalid layer in key: " + std::string(key));
+            }
+            identity = key.substr(0, layerSeparator);
+            baseOffset = layer * config_.keyResolution.layerSlotBytes;
+        }
+    }
+    return Status::OK();
 }
 
 Status KvClientImpl::Shutdown()
