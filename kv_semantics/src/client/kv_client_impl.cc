@@ -202,9 +202,9 @@ Status KvClientImpl::ResolveKey(std::string_view key, std::string_view namespace
     scoped.append(identity.data(), identity.size());
     auto hash = static_cast<std::uint64_t>(std::hash<std::string_view>{}(scoped));
     ResolvedKey resolved;
-    // Serialize eight bytes in big-endian order, independent of native byte order.
-    for (auto it = resolved.key.rbegin(); it != resolved.key.rend(); ++it) {
-        *it = static_cast<std::byte>(hash & 0xff);
+    // Serialize eight bytes in little-endian order, independent of native byte order.
+    for (auto& byte : resolved.key) {
+        byte = static_cast<std::byte>(hash & 0xff);
         hash >>= 8;
     }
     resolved.base_offset = baseOffset;
