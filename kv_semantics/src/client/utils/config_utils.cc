@@ -26,10 +26,10 @@
 #include <cctype>
 #include <charconv>
 #include <fstream>
+#include <limits>
 #include <unordered_map>
 #include <utility>
 #include <vector>
-#include "key_utils.h"
 #include "parser_common.h"
 #include "status_utils.h"
 
@@ -124,6 +124,21 @@ NodeEndpoint ParseClientViewEndpoint(const std::string& value)
     return endpoint;
 }
 
+Status ValidateKeyResolutionConfig(const KeyResolutionConfig& config)
+{
+    if (config.engine != InferenceEngine::VLLM_ASCEND) { return Status::OK(); }
+    if (config.layerCount == 0 || config.layerSlotBytes == 0) {
+        return Status::Error(StatusCode::INVALID_ARGUMENT,
+                             "vllm_ascend requires positive layer_count and layer_slot_bytes");
+    }
+    // KVBuffer carries a uint32 object offset.
+    constexpr auto maxObjectBytes = std::uint64_t{std::numeric_limits<std::uint32_t>::max()} + 1;
+    if (config.layerCount > maxObjectBytes / config.layerSlotBytes) {
+        return Status::Error(StatusCode::INVALID_ARGUMENT, "layer layout exceeds uint32 offsets");
+    }
+    return Status::OK();
+}
+
 Status LoadKvClientConfig(const std::string& configPath, KvClientConfig& config)
 {
     std::ifstream configFile{configPath};
@@ -163,11 +178,8 @@ Status LoadKvClientConfig(const std::string& configPath, KvClientConfig& config)
                 config.keyResolution.engine = InferenceEngine::VLLM_ASCEND;
             } else if (value == "sglang") {
                 config.keyResolution.engine = InferenceEngine::SGLANG;
-            } else if (value == "generic") {
-                config.keyResolution.engine = InferenceEngine::GENERIC;
             } else {
-                return ASU_LOG_ERROR_STATUS(StatusCode::INVALID_ARGUMENT,
-                                            "unsupported inference.engine: " + value);
+                config.keyResolution.engine = InferenceEngine::GENERIC;
             }
         } else if (key == "aggregation.layer_count" || key == "aggregation.layer_slot_bytes") {
             std::uint64_t size = 0;

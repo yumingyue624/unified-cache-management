@@ -41,7 +41,21 @@ option(BUILD_KV_CLIENT_PROVIDER_AICPU "Build KV AICPU trans provider" OFF)
 option(BUILD_KV_CLIENT_PROVIDER_FAKE "Build KV fake trans provider" ON)
 option(BUILD_KV_CLIENT_PROVIDER_AIV "Build KV AIV trans provider (requires external libumc.a)" OFF)
 
-include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/vendor/dep-xxhash.cmake)
+# XXH_INLINE_ALL is used privately by the key mapper; no shared library is needed.
+find_path(KV_CLIENT_XXHASH_INCLUDE_DIR NAMES xxhash.h)
+if(NOT KV_CLIENT_XXHASH_INCLUDE_DIR)
+    if(NOT DOWNLOAD_DEPENDENCE)
+        message(FATAL_ERROR "Set KV_CLIENT_XXHASH_INCLUDE_DIR to the directory containing xxhash.h")
+    endif()
+    include(FetchContent)
+    FetchContent_Declare(kv_client_xxhash
+        GIT_REPOSITORY https://github.com/Cyan4973/xxHash.git
+        GIT_TAG v0.8.3
+        GIT_SHALLOW TRUE
+    )
+    FetchContent_MakeAvailable(kv_client_xxhash)
+    set(KV_CLIENT_XXHASH_INCLUDE_DIR ${kv_client_xxhash_SOURCE_DIR})
+endif()
 
 add_subdirectory(metrics)
 add_subdirectory(src)
