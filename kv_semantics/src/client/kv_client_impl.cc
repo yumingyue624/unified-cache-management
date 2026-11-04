@@ -36,6 +36,7 @@
 #include "router/config.h"
 #include "router/router.h"
 #include "utils/config_utils.h"
+#include "utils/key_utils.h"
 
 namespace kv {
 
@@ -132,6 +133,8 @@ Status KvClientImpl::Init(const KvClientConfig& config)
         return Status::Error(StatusCode::INVALID_ARGUMENT, "sharedProviderMode must be 0 or 1");
     }
 
+    auto keyStatus = ValidateKeyResolutionConfig(config.keyResolution);
+    if (!keyStatus.ok()) { return keyStatus; }
     config_ = config;
     viewServer_ = viewServerFactory_(config);
     if (viewServer_ == nullptr) {
@@ -180,6 +183,12 @@ Status KvClientImpl::Init(const KvClientConfig& config)
     snapshot_ = std::move(nextSnapshot);
     initialized_ = true;
     return Status::OK();
+}
+
+Status KvClientImpl::ResolveKey(std::string_view key, std::string_view namespace_id,
+                                ResolvedKey& result) const
+{
+    return ResolveObjectKey(config_.keyResolution, key, namespace_id, result);
 }
 
 Status KvClientImpl::Shutdown()

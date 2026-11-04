@@ -25,6 +25,7 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 #include "kv_types.h"
 
@@ -36,6 +37,11 @@ public:
 
     virtual Status Init(const KvClientConfig& config) = 0;
     virtual Status Init(const std::string& configPath) = 0;
+
+    // Synchronous local mapping; thread-safe after Init. result is valid on success.
+    // The default implementation hashes the complete namespace-scoped key.
+    virtual Status ResolveKey(std::string_view key, std::string_view namespace_id,
+                              ResolvedKey& result) const;
     virtual Status Shutdown() = 0;
 
     virtual Status QueryAsync(const std::vector<CacheKey>& keys, TaskId& taskId) = 0;

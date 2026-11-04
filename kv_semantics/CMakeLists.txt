@@ -41,6 +41,8 @@ option(BUILD_KV_CLIENT_PROVIDER_AICPU "Build KV AICPU trans provider" OFF)
 option(BUILD_KV_CLIENT_PROVIDER_FAKE "Build KV fake trans provider" ON)
 option(BUILD_KV_CLIENT_PROVIDER_AIV "Build KV AIV trans provider (requires external libumc.a)" OFF)
 
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/vendor/dep-xxhash.cmake)
+
 add_subdirectory(metrics)
 add_subdirectory(src)
 

@@ -24,10 +24,12 @@
 #include "config_utils.h"
 #include <algorithm>
 #include <cctype>
+#include <charconv>
 #include <fstream>
 #include <unordered_map>
 #include <utility>
 #include <vector>
+#include "key_utils.h"
 #include "parser_common.h"
 #include "status_utils.h"
 
@@ -156,6 +158,30 @@ Status LoadKvClientConfig(const std::string& configPath, KvClientConfig& config)
             const auto waitTimeoutMs = ParseConfigUint64(value);
             config.defaultWaitTimeoutMs = waitTimeoutMs;
             config.timeoutMs = waitTimeoutMs;
+        } else if (key == "inference.engine") {
+            if (value == "vllm_ascend") {
+                config.keyResolution.engine = InferenceEngine::VLLM_ASCEND;
+            } else if (value == "sglang") {
+                config.keyResolution.engine = InferenceEngine::SGLANG;
+            } else if (value == "generic") {
+                config.keyResolution.engine = InferenceEngine::GENERIC;
+            } else {
+                return ASU_LOG_ERROR_STATUS(StatusCode::INVALID_ARGUMENT,
+                                            "unsupported inference.engine: " + value);
+            }
+        } else if (key == "aggregation.layer_count" || key == "aggregation.layer_slot_bytes") {
+            std::uint64_t size = 0;
+            const auto [end, error] =
+                std::from_chars(value.data(), value.data() + value.size(), size);
+            if (error != std::errc{} || end != value.data() + value.size() || size == 0) {
+                return ASU_LOG_ERROR_STATUS(StatusCode::INVALID_ARGUMENT,
+                                            "expected a positive integer for " + key);
+            }
+            if (key == "aggregation.layer_count") {
+                config.keyResolution.layerCount = size;
+            } else {
+                config.keyResolution.layerSlotBytes = size;
+            }
         } else if (key == "asuSharedProvider" || key == "asu_shared_provider") {
             config.sharedProviderMode = static_cast<SharedProviderMode>(ParseConfigUint64(value));
         } else if (key == "router.type" || key == "routerType" || key == "hashTable.type" ||
@@ -209,6 +235,9 @@ Status LoadKvClientConfig(const std::string& configPath, KvClientConfig& config)
             }
         }
     }
+
+    const auto keyStatus = ValidateKeyResolutionConfig(config.keyResolution);
+    if (!keyStatus.ok()) { return keyStatus; }
 
     for (auto& transportConfig : config.transportConfigs) {
         transportConfig.timeoutMs = config.timeoutMs;
