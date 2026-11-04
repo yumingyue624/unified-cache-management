@@ -25,7 +25,7 @@
 #include <algorithm>
 #include <charconv>
 #include <chrono>
-#include <cstring>
+#include <functional>
 #include <iterator>
 #include <limits>
 #include <string_view>
@@ -39,9 +39,6 @@
 #include "router/config.h"
 #include "router/router.h"
 #include "utils/config_utils.h"
-
-#define XXH_INLINE_ALL
-#include <xxhash.h>
 
 namespace kv {
 
@@ -83,12 +80,13 @@ Status ResolveObjectKey(const KeyResolutionConfig& config, std::string_view key,
     std::string scoped(namespace_id);
     scoped.push_back('\0');
     scoped.append(identity.data(), identity.size());
-    const auto hash = XXH64(scoped.data(), scoped.size(), 0);
-    XXH64_canonical_t canonical;
-    XXH64_canonicalFromHash(&canonical, hash);
-    static_assert(kCacheKeySizeBytes == sizeof(canonical.digest));
+    auto hash = static_cast<std::uint64_t>(std::hash<std::string_view>{}(scoped));
     ResolvedKey resolved;
-    std::memcpy(resolved.key.data(), canonical.digest, resolved.key.size());
+    // Serialize eight bytes in big-endian order, independent of native byte order.
+    for (auto it = resolved.key.rbegin(); it != resolved.key.rend(); ++it) {
+        *it = static_cast<std::byte>(hash & 0xff);
+        hash >>= 8;
+    }
     resolved.base_offset = baseOffset;
     result = resolved;
     return Status::OK();
