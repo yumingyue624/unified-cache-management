@@ -245,12 +245,6 @@ Status KvClientImpl::Init(const KvClientConfig& config)
     return Status::OK();
 }
 
-Status KvClient::ResolveKey(std::string_view key, std::string_view namespace_id,
-                            ResolvedKey& result) const
-{
-    return ResolveObjectKey(KeyResolutionConfig{}, key, namespace_id, result);
-}
-
 Status KvClientImpl::ResolveKey(std::string_view key, std::string_view namespace_id,
                                 ResolvedKey& result) const
 {
