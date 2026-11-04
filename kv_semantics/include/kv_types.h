@@ -39,6 +39,11 @@ using NodeId = std::uint64_t;
 constexpr std::size_t kCacheKeySizeBytes = 8;
 using CacheKey = std::array<std::byte, kCacheKeySizeBytes>;
 
+struct ResolvedKey {
+    CacheKey key{};
+    std::uint64_t base_offset{0};  // Byte offset inside the storage object.
+};
+
 // KV protocol requires 512B alignment for device buffers and offsets.
 constexpr std::uint32_t kAlignmentBytes = 512;
 
@@ -205,6 +210,15 @@ struct TransportConfig {
 
 enum class SharedProviderMode : std::uint8_t { INDEPENDENT = 0, SHARED = 1 };
 
+enum class InferenceEngine : std::uint8_t { GENERIC = 0, VLLM_ASCEND = 1, SGLANG = 2 };
+
+struct KeyResolutionConfig {
+    InferenceEngine engine{InferenceEngine::GENERIC};
+    // Required only for VLLM_ASCEND; layerSlotBytes is the per-layer byte stride.
+    std::uint64_t layerCount{0};
+    std::uint64_t layerSlotBytes{0};
+};
+
 struct KvClientConfig {
     std::string clientId;
     std::vector<std::string> viewServiceAddrs;
@@ -215,6 +229,7 @@ struct KvClientConfig {
     std::uint64_t defaultWaitTimeoutMs{100};
     std::uint64_t timeoutMs{100};
     SharedProviderMode sharedProviderMode{SharedProviderMode::INDEPENDENT};
+    KeyResolutionConfig keyResolution;
     std::unordered_map<std::string, std::string> attrs;
 };
 

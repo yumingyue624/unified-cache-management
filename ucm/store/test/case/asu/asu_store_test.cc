@@ -79,6 +79,12 @@ class FakeKvClient final : public kv::KvClient {
 public:
     explicit FakeKvClient(std::shared_ptr<FakeKvClientState> state) : state_(std::move(state)) {}
 
+    kv::Status ResolveKey(std::string_view, std::string_view, kv::ResolvedKey&) const override
+    {
+        return kv::Status::Error(kv::StatusCode::UNSUPPORTED,
+                                 "key resolution is not used by ASU store tests");
+    }
+
     kv::Status Init(const kv::KvClientConfig& config) override
     {
         (void)config;

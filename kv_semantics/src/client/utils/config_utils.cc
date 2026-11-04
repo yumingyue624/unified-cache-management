@@ -24,7 +24,9 @@
 #include "config_utils.h"
 #include <algorithm>
 #include <cctype>
+#include <charconv>
 #include <fstream>
+#include <limits>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -122,6 +124,21 @@ NodeEndpoint ParseClientViewEndpoint(const std::string& value)
     return endpoint;
 }
 
+Status ValidateKeyResolutionConfig(const KeyResolutionConfig& config)
+{
+    if (config.engine != InferenceEngine::VLLM_ASCEND) { return Status::OK(); }
+    if (config.layerCount == 0 || config.layerSlotBytes == 0) {
+        return Status::Error(StatusCode::INVALID_ARGUMENT,
+                             "vllm_ascend requires positive layer_count and layer_slot_bytes");
+    }
+    // KVBuffer carries a uint32 object offset.
+    constexpr auto maxObjectBytes = std::uint64_t{std::numeric_limits<std::uint32_t>::max()} + 1;
+    if (config.layerCount > maxObjectBytes / config.layerSlotBytes) {
+        return Status::Error(StatusCode::INVALID_ARGUMENT, "layer layout exceeds uint32 offsets");
+    }
+    return Status::OK();
+}
+
 Status LoadKvClientConfig(const std::string& configPath, KvClientConfig& config)
 {
     std::ifstream configFile{configPath};
@@ -156,6 +173,27 @@ Status LoadKvClientConfig(const std::string& configPath, KvClientConfig& config)
             const auto waitTimeoutMs = ParseConfigUint64(value);
             config.defaultWaitTimeoutMs = waitTimeoutMs;
             config.timeoutMs = waitTimeoutMs;
+        } else if (key == "inference.engine") {
+            if (value == "vllm_ascend") {
+                config.keyResolution.engine = InferenceEngine::VLLM_ASCEND;
+            } else if (value == "sglang") {
+                config.keyResolution.engine = InferenceEngine::SGLANG;
+            } else {
+                config.keyResolution.engine = InferenceEngine::GENERIC;
+            }
+        } else if (key == "aggregation.layer_count" || key == "aggregation.layer_slot_bytes") {
+            std::uint64_t size = 0;
+            const auto [end, error] =
+                std::from_chars(value.data(), value.data() + value.size(), size);
+            if (error != std::errc{} || end != value.data() + value.size() || size == 0) {
+                return ASU_LOG_ERROR_STATUS(StatusCode::INVALID_ARGUMENT,
+                                            "expected a positive integer for " + key);
+            }
+            if (key == "aggregation.layer_count") {
+                config.keyResolution.layerCount = size;
+            } else {
+                config.keyResolution.layerSlotBytes = size;
+            }
         } else if (key == "asuSharedProvider" || key == "asu_shared_provider") {
             config.sharedProviderMode = static_cast<SharedProviderMode>(ParseConfigUint64(value));
         } else if (key == "router.type" || key == "routerType" || key == "hashTable.type" ||
@@ -209,6 +247,9 @@ Status LoadKvClientConfig(const std::string& configPath, KvClientConfig& config)
             }
         }
     }
+
+    const auto keyStatus = ValidateKeyResolutionConfig(config.keyResolution);
+    if (!keyStatus.ok()) { return keyStatus; }
 
     for (auto& transportConfig : config.transportConfigs) {
         transportConfig.timeoutMs = config.timeoutMs;

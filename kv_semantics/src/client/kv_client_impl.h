@@ -78,6 +78,10 @@ public:
     // Gracefully drains tracked client tasks and releases resources.
     Status Shutdown() override;
 
+    // Maps a logical key and namespace to the configured object layout.
+    Status ResolveKey(std::string_view key, std::string_view namespace_id,
+                      ResolvedKey& result) const override;
+
     // Submits query operations to routed transports.
     Status QueryAsync(const std::vector<CacheKey>& keys, TaskId& taskId) override;
     // Submits load operations to routed transports.
@@ -107,6 +111,10 @@ public:
     Status UnregisterRegions(const std::vector<MRHandle>& handles) override;
 
 private:
+    // Separates the layer suffix from the object identity and computes its byte offset.
+    Status ResolveVllmAscendKey(std::string_view key, std::string_view& identity,
+                                std::uint64_t& baseOffset) const;
+
     struct ProviderMemoryState {
         std::shared_ptr<TransProvider> provider;
         std::unordered_map<MRHandle, MRHandle> regionHandles;
