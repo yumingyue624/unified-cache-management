@@ -76,7 +76,7 @@ KvOpcode RequestOpcode(const std::uint32_t* request)
 
 CacheKey ReadKey(const std::uint32_t* data)
 {
-    CacheKey key{};
+    CacheKey key(kCacheKeySizeBytes, '\0');
     std::memcpy(key.data(), data, kCacheKeySizeBytes);
     return key;
 }
@@ -85,7 +85,7 @@ std::uint64_t KeyHash(const CacheKey& key)
 {
     std::uint64_t hash = 1469598103934665603ULL;
     for (auto byte : key) {
-        const auto ch = std::to_integer<unsigned char>(byte);
+        const auto ch = static_cast<unsigned char>(byte);
         hash ^= ch;
         hash *= 1099511628211ULL;
     }

@@ -93,7 +93,7 @@ std::uint64_t HashAsuKey(const Detail::BlockId& block)
 kv::CacheKey MakeAsuKey(const Detail::BlockId& block)
 {
     const auto hash = HashAsuKey(block);
-    kv::CacheKey key{};
+    kv::CacheKey key(kv::kCacheKeySizeBytes, '\0');
     std::memcpy(key.data(), &hash, key.size());
     return key;
 }

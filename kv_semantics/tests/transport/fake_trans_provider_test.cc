@@ -23,7 +23,7 @@ std::string FakeBackendKeyFileName(const CacheKey& key)
 {
     std::uint64_t hash = 1469598103934665603ULL;
     for (auto byte : key) {
-        hash ^= std::to_integer<unsigned char>(byte);
+        hash ^= static_cast<unsigned char>(byte);
         hash *= 1099511628211ULL;
     }
 
@@ -181,10 +181,10 @@ TEST(FakeTransProviderTest, ImmediateCompletionReportsAllQueriedKeysMissing)
     config.completeImmediately = true;
     FakeTransProvider provider(config);
 
-    CacheKey first{};
-    first[0] = std::byte{1};
-    CacheKey second{};
-    second[0] = std::byte{2};
+    CacheKey first(kCacheKeySizeBytes, '\0');
+    first[0] = 1;
+    CacheKey second(kCacheKeySizeBytes, '\0');
+    second[0] = 2;
     for (const bool useSeekControl : {false, true}) {
         const auto request = BuildExistRequest({first, second}, useSeekControl);
         std::vector<std::uint32_t> completion;
@@ -209,12 +209,12 @@ TEST(FakeTransProviderTest, ExistHonorsSeekControl)
     const auto asuPath = storePath / "asu-1";
     std::filesystem::create_directories(asuPath);
 
-    CacheKey first{};
-    first[0] = std::byte{1};
-    CacheKey missing{};
-    missing[0] = std::byte{2};
-    CacheKey third{};
-    third[0] = std::byte{3};
+    CacheKey first(kCacheKeySizeBytes, '\0');
+    first[0] = 1;
+    CacheKey missing(kCacheKeySizeBytes, '\0');
+    missing[0] = 2;
+    CacheKey third(kCacheKeySizeBytes, '\0');
+    third[0] = 3;
     std::ofstream{asuPath / FakeBackendKeyFileName(first)}.put('\0');
     std::ofstream{asuPath / FakeBackendKeyFileName(third)}.put('\0');
 

@@ -37,7 +37,8 @@ using TaskId = std::uint64_t;
 using MRHandle = std::uint64_t;
 using NodeId = std::uint64_t;
 constexpr std::size_t kCacheKeySizeBytes = 8;
-using CacheKey = std::array<std::byte, kCacheKeySizeBytes>;
+// Binary key bytes; the current wire protocol requires exactly 8 bytes.
+using CacheKey = std::string;
 
 // KV protocol requires 512B alignment for device buffers and offsets.
 constexpr std::uint32_t kAlignmentBytes = 512;
