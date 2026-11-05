@@ -17,13 +17,13 @@ constexpr int kExitInvalidArgument = 1;
 
 Status StringToCacheKey(const std::string& value, const std::string& source, kv::CacheKey& key)
 {
-    if (value.size() > key.size()) {
-        return Status::Error(kExitInvalidArgument,
-                             source + " key length exceeds " + std::to_string(key.size()) +
-                                 " bytes: length=" + std::to_string(value.size()) +
-                                 ", key=" + value);
+    if (value.size() > kv::kCacheKeySizeBytes) {
+        return Status::Error(
+            kExitInvalidArgument,
+            source + " key length exceeds " + std::to_string(kv::kCacheKeySizeBytes) +
+                " bytes: length=" + std::to_string(value.size()) + ", key=" + value);
     }
-    key = kv::CacheKey{};
+    key.assign(kv::kCacheKeySizeBytes, '\0');
     if (!value.empty()) { std::memcpy(key.data(), value.data(), value.size()); }
     return Status::Success();
 }

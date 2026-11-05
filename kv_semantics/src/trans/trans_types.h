@@ -33,10 +33,7 @@
 
 namespace kv {
 
-inline std::string_view CacheKeyView(const CacheKey& key)
-{
-    return {reinterpret_cast<const char*>(key.data()), key.size()};
-}
+inline std::string_view CacheKeyView(const CacheKey& key) { return key; }
 
 inline std::string CacheKeyToHex(const CacheKey& key)
 {
@@ -44,7 +41,7 @@ inline std::string CacheKeyToHex(const CacheKey& key)
     std::string text;
     text.reserve(key.size() * 2);
     for (auto byte : key) {
-        const auto value = static_cast<unsigned char>(std::to_integer<unsigned char>(byte));
+        const auto value = static_cast<unsigned char>(byte);
         text.push_back(kHex[value >> 4]);
         text.push_back(kHex[value & 0x0F]);
     }

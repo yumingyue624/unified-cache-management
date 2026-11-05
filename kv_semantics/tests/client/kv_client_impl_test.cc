@@ -27,7 +27,7 @@ namespace kv::test {
 
 static CacheKey MakeCacheKey(std::string_view text)
 {
-    CacheKey key{};
+    CacheKey key(kCacheKeySizeBytes, '\0');
     if (text.size() <= key.size()) {
         if (!text.empty()) { std::memcpy(key.data(), text.data(), text.size()); }
         return key;
@@ -536,7 +536,7 @@ CacheKey FindKeyForAsu(const std::vector<NodeId>& asuIds, NodeId targetAsuId)
     auto router = kv::CreateRouter(nodeIds, kv::HashFunction{}, kv::RouterConfig{});
     for (std::uint32_t index = 1; index < 1000000; ++index) {
         std::uint64_t combined = (static_cast<std::uint64_t>(targetAsuId) << 32) | index;
-        CacheKey cacheKey{};
+        CacheKey cacheKey(kCacheKeySizeBytes, '\0');
         std::memcpy(cacheKey.data(), &combined, sizeof(combined));
         auto routeKey = std::string(CacheKeyView(cacheKey));
         auto routes = router->RouteKeys({routeKey});
