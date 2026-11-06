@@ -33,6 +33,8 @@ bool TryParseAsuInfoKey(const std::string& key, NodeId& nodeId);
 bool TryGetTransportAttrKey(const std::string& key, std::string& attrKey);
 NodeEndpoint ParseClientViewEndpoint(const std::string& value);
 NodeInfo ParseAsuInfo(const std::string& value);
+Status ValidateKeyResolutionConfig(const KeyResolutionConfig& config);
+
 Status LoadKvClientConfig(const std::string& configPath, KvClientConfig& config);
 void ApplyAsuInfoToTransportConfig(const NodeInfo& info, TransportConfig& config);
 

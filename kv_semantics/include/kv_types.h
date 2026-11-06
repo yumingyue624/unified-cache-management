@@ -29,6 +29,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <variant>
 #include <vector>
 
 namespace kv {
@@ -37,8 +38,10 @@ using TaskId = std::uint64_t;
 using MRHandle = std::uint64_t;
 using NodeId = std::uint64_t;
 constexpr std::size_t kCacheKeySizeBytes = 8;
-// Binary key bytes; the current wire protocol requires exactly 8 bytes.
-using CacheKey = std::string;
+using BinaryKey = std::array<std::byte, kCacheKeySizeBytes>;
+// Binary keys are already encoded; strings are logical object keys.
+using CacheKey = std::variant<BinaryKey, std::string>;
+using KeyNamespace = std::variant<std::string, std::uint64_t>;
 
 // KV protocol requires 512B alignment for device buffers and offsets.
 constexpr std::uint32_t kAlignmentBytes = 512;
@@ -206,7 +209,17 @@ struct TransportConfig {
 
 enum class SharedProviderMode : std::uint8_t { INDEPENDENT = 0, SHARED = 1 };
 
+enum class InferenceEngine : std::uint8_t { GENERIC = 0, VLLM_ASCEND = 1, SGLANG = 2 };
+
+struct KeyResolutionConfig {
+    InferenceEngine engine{InferenceEngine::GENERIC};
+    // Both zero disable aggregation; positive values enable VLLM_ASCEND layer grouping.
+    std::uint64_t layerCount{0};
+    std::uint64_t layerSlotBytes{0};
+};
+
 struct KvClientConfig {
+    KeyResolutionConfig keyResolution;
     std::string clientId;
     std::vector<std::string> viewServiceAddrs;
 

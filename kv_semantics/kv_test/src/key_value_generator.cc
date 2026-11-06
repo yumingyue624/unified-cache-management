@@ -23,8 +23,9 @@ Status StringToCacheKey(const std::string& value, const std::string& source, kv:
             source + " key length exceeds " + std::to_string(kv::kCacheKeySizeBytes) +
                 " bytes: length=" + std::to_string(value.size()) + ", key=" + value);
     }
-    key.assign(kv::kCacheKeySizeBytes, '\0');
-    if (!value.empty()) { std::memcpy(key.data(), value.data(), value.size()); }
+    kv::BinaryKey bytes{};
+    if (!value.empty()) { std::memcpy(bytes.data(), value.data(), value.size()); }
+    key = bytes;
     return Status::Success();
 }
 

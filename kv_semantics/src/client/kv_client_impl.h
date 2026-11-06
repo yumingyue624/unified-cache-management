@@ -28,6 +28,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -79,21 +80,21 @@ public:
     Status Shutdown() override;
 
     // Submits query operations to routed transports.
-    Status QueryAsync(const std::vector<CacheKey>& keys, TaskId& taskId) override;
-    // Submits load operations to routed transports.
-    Status LoadAsync(const std::vector<KVBuffer>& entries, TaskId& taskId) override;
-    // Submits store operations to routed transports.
-    Status StoreAsync(const std::vector<KVBuffer>& entries, TaskId& taskId) override;
+    // Namespace is applied before routing. Empty string preserves encoded binary keys.
+    Status QueryAsync(const std::vector<CacheKey>& keys, TaskId& taskId,
+                      const KeyNamespace& namespaceId = {}) override;
+    Status LoadAsync(const std::vector<KVBuffer>& entries, TaskId& taskId,
+                     const KeyNamespace& namespaceId = {}) override;
     Status StoreAsync(const std::vector<KVBuffer>& entries, TaskId& taskId,
-                      std::uintptr_t eventHandle) override;
-    // Submits batch load operations to routed transports.
-    Status BatchLoadAsync(const std::vector<KVBuffer>& entries, TaskId& taskId) override;
-    // Submits batch store operations to routed transports.
-    Status BatchStoreAsync(const std::vector<KVBuffer>& entries, TaskId& taskId) override;
+                      const KeyNamespace& namespaceId = {},
+                      std::uintptr_t eventHandle = 0) override;
+    Status BatchLoadAsync(const std::vector<KVBuffer>& entries, TaskId& taskId,
+                          const KeyNamespace& namespaceId = {}) override;
     Status BatchStoreAsync(const std::vector<KVBuffer>& entries, TaskId& taskId,
-                           std::uintptr_t eventHandle) override;
-    // Submits delete operations to routed transports.
-    Status DeleteAsync(const std::vector<CacheKey>& keys, TaskId& taskId) override;
+                           const KeyNamespace& namespaceId = {},
+                           std::uintptr_t eventHandle = 0) override;
+    Status DeleteAsync(const std::vector<CacheKey>& keys, TaskId& taskId,
+                       const KeyNamespace& namespaceId = {}) override;
 
     // Checks an aggregate task.
     bool Check(TaskId taskId) override;
@@ -107,6 +108,12 @@ public:
     Status UnregisterRegions(const std::vector<MRHandle>& handles) override;
 
 private:
+    // Resolve one input key before it enters routing or transport tasks.
+    Status NormalizeKey(CacheKey& key, const KeyNamespace& namespaceId,
+                        std::uint64_t& baseOffset) const;
+    Status ResolveVllmAscendKey(std::string_view key, std::string_view& identity,
+                                std::uint64_t& baseOffset) const;
+
     struct ProviderMemoryState {
         std::shared_ptr<TransProvider> provider;
         std::unordered_map<MRHandle, MRHandle> regionHandles;
@@ -114,9 +121,10 @@ private:
 
     // Creates and queues one entry-based client task.
     Status SubmitAsync(AsuOpType opType, const std::vector<KVBuffer>& entries, TaskId& taskId,
-                       std::uintptr_t eventHandle = 0);
+                       const KeyNamespace& namespaceId, std::uintptr_t eventHandle = 0);
     // Creates and queues one key-based client task.
-    Status SubmitAsync(AsuOpType opType, const std::vector<CacheKey>& keys, TaskId& taskId);
+    Status SubmitAsync(AsuOpType opType, const std::vector<CacheKey>& keys, TaskId& taskId,
+                       const KeyNamespace& namespaceId);
 
     // Runs queued tasks until shutdown and the queue are both complete.
     void WorkerLoop();
