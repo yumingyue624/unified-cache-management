@@ -46,8 +46,12 @@ namespace {
 struct CacheKeyHasher {
     std::size_t operator()(const kv::CacheKey& key) const
     {
-        return std::hash<std::string_view>{}(
-            std::string_view(reinterpret_cast<const char*>(key.data()), key.size()));
+        return std::visit(
+            [](const auto& bytes) {
+                return std::hash<std::string_view>{}(
+                    std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
+            },
+            key);
     }
 };
 
@@ -102,7 +106,8 @@ public:
         return kv::Status::OK();
     }
 
-    kv::Status QueryAsync(const std::vector<kv::CacheKey>& keys, kv::TaskId& taskId) override
+    kv::Status QueryAsync(const std::vector<kv::CacheKey>& keys, kv::TaskId& taskId,
+                          const kv::KeyNamespace& = {}) override
     {
         if (!initialized_) { return NotInitialized(); }
         if (!state_->queryStatus.ok()) { return state_->queryStatus; }
@@ -126,45 +131,38 @@ public:
         return kv::Status::OK();
     }
 
-    kv::Status LoadAsync(const std::vector<kv::KVBuffer>& entries, kv::TaskId& taskId) override
+    kv::Status LoadAsync(const std::vector<kv::KVBuffer>& entries, kv::TaskId& taskId,
+                         const kv::KeyNamespace& = {}) override
     {
         state_->lastLoadEntries = entries;
         return Submit(entries, taskId);
     }
 
-    kv::Status StoreAsync(const std::vector<kv::KVBuffer>& entries, kv::TaskId& taskId) override
+    kv::Status StoreAsync(const std::vector<kv::KVBuffer>& entries, kv::TaskId& taskId,
+                          const kv::KeyNamespace& = {}, std::uintptr_t eventHandle = 0) override
     {
+        state_->lastStoreEventHandle = eventHandle;
         state_->lastStoreEntries = entries;
         for (const auto& entry : entries) { storedKeys_.emplace(entry.key); }
         return Submit(entries, taskId);
     }
 
-    kv::Status StoreAsync(const std::vector<kv::KVBuffer>& entries, kv::TaskId& taskId,
-                          std::uintptr_t eventHandle) override
-    {
-        state_->lastStoreEventHandle = eventHandle;
-        return StoreAsync(entries, taskId);
-    }
-
-    kv::Status BatchLoadAsync(const std::vector<kv::KVBuffer>& entries, kv::TaskId& taskId) override
+    kv::Status BatchLoadAsync(const std::vector<kv::KVBuffer>& entries, kv::TaskId& taskId,
+                              const kv::KeyNamespace& = {}) override
     {
         return LoadAsync(entries, taskId);
     }
 
-    kv::Status BatchStoreAsync(const std::vector<kv::KVBuffer>& entries,
-                               kv::TaskId& taskId) override
-    {
-        return StoreAsync(entries, taskId);
-    }
-
     kv::Status BatchStoreAsync(const std::vector<kv::KVBuffer>& entries, kv::TaskId& taskId,
-                               std::uintptr_t eventHandle) override
+                               const kv::KeyNamespace& = {},
+                               std::uintptr_t eventHandle = 0) override
     {
         state_->lastStoreEventHandle = eventHandle;
-        return BatchStoreAsync(entries, taskId);
+        return StoreAsync(entries, taskId, {}, eventHandle);
     }
 
-    kv::Status DeleteAsync(const std::vector<kv::CacheKey>& keys, kv::TaskId& taskId) override
+    kv::Status DeleteAsync(const std::vector<kv::CacheKey>& keys, kv::TaskId& taskId,
+                           const kv::KeyNamespace& = {}) override
     {
         for (const auto& key : keys) { storedKeys_.erase(key); }
         return Submit(keys.size(), taskId);

@@ -38,16 +38,24 @@ public:
     virtual Status Init(const std::string& configPath) = 0;
     virtual Status Shutdown() = 0;
 
-    virtual Status QueryAsync(const std::vector<CacheKey>& keys, TaskId& taskId) = 0;
-    virtual Status LoadAsync(const std::vector<KVBuffer>& entries, TaskId& taskId) = 0;
-    virtual Status StoreAsync(const std::vector<KVBuffer>& entries, TaskId& taskId) = 0;
+    // String keys are normalized before routing; binary keys with empty string namespace
+    // retain their bytes. Nonempty namespaces are included in the object key.
+    // String and uint64 namespace values have distinct identities.
+    // Store's eventHandle follows namespaceId to avoid integer argument ambiguity.
+    virtual Status QueryAsync(const std::vector<CacheKey>& keys, TaskId& taskId,
+                              const KeyNamespace& namespaceId = {}) = 0;
+    virtual Status LoadAsync(const std::vector<KVBuffer>& entries, TaskId& taskId,
+                             const KeyNamespace& namespaceId = {}) = 0;
     virtual Status StoreAsync(const std::vector<KVBuffer>& entries, TaskId& taskId,
-                              std::uintptr_t eventHandle) = 0;
-    virtual Status BatchLoadAsync(const std::vector<KVBuffer>& entries, TaskId& taskId) = 0;
-    virtual Status BatchStoreAsync(const std::vector<KVBuffer>& entries, TaskId& taskId) = 0;
+                              const KeyNamespace& namespaceId = {},
+                              std::uintptr_t eventHandle = 0) = 0;
+    virtual Status BatchLoadAsync(const std::vector<KVBuffer>& entries, TaskId& taskId,
+                                  const KeyNamespace& namespaceId = {}) = 0;
     virtual Status BatchStoreAsync(const std::vector<KVBuffer>& entries, TaskId& taskId,
-                                   std::uintptr_t eventHandle) = 0;
-    virtual Status DeleteAsync(const std::vector<CacheKey>& keys, TaskId& taskId) = 0;
+                                   const KeyNamespace& namespaceId = {},
+                                   std::uintptr_t eventHandle = 0) = 0;
+    virtual Status DeleteAsync(const std::vector<CacheKey>& keys, TaskId& taskId,
+                               const KeyNamespace& namespaceId = {}) = 0;
 
     // Returns false only while the task is still in progress. Wait retrieves the final result.
     virtual bool Check(TaskId taskId) = 0;

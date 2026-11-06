@@ -1,5 +1,6 @@
 ﻿#include "kv_client_runner.h"
 #include <algorithm>
+#include <type_traits>
 #include <unordered_set>
 #include "kv_client.h"
 
@@ -44,23 +45,34 @@ Status FinalizeQueryResult(CommandResult& result)
     return result.status;
 }
 
-using EntrySubmitMethod = kv::Status (kv::KvClient::*)(const std::vector<kv::KVBuffer>&,
-                                                       kv::TaskId&);
+template <typename Method>
+kv::Status InvokeEntrySubmit(kv::KvClient& client, Method method,
+                             const std::vector<kv::KVBuffer>& entries, kv::TaskId& taskId)
+{
+    if constexpr (std::is_invocable_v<Method, kv::KvClient&, const std::vector<kv::KVBuffer>&,
+                                      kv::TaskId&, const kv::KeyNamespace&, std::uintptr_t>) {
+        return (client.*method)(entries, taskId, {}, 0);
+    } else {
+        return (client.*method)(entries, taskId, {});
+    }
+}
 
+template <typename EntrySubmitMethod>
 Status SubmitEntriesAsync(kv::KvClient& client, const std::vector<kv::KVBuffer>& entries,
                           EntrySubmitMethod submitMethod, const std::string& operation,
                           kv::TaskId& taskId)
 {
-    auto status = (client.*submitMethod)(entries, taskId);
+    auto status = InvokeEntrySubmit(client, submitMethod, entries, taskId);
     return ToKvTestStatus(status, operation);
 }
 
+template <typename EntrySubmitMethod>
 Status SubmitAndWaitEntries(kv::KvClient& client, const std::vector<kv::KVBuffer>& entries,
                             EntrySubmitMethod submitMethod, std::uint64_t timeoutMs,
                             const std::string& operation, CommandResult& result)
 {
     kv::TaskId taskId{kv::kInvalidTaskId};
-    auto status = (client.*submitMethod)(entries, taskId);
+    auto status = InvokeEntrySubmit(client, submitMethod, entries, taskId);
     if (!status.ok()) {
         result.taskResult = BuildFailedTaskResult(status, entries.size());
         return FinalizeTaskResult(result);
@@ -96,6 +108,7 @@ Status SubmitAndWaitKeys(kv::KvClient& client, const std::vector<kv::CacheKey>& 
     return FinalizeTaskResult(result);
 }
 
+template <typename EntrySubmitMethod>
 Status SubmitEntriesOneByOne(kv::KvClient& client, const std::vector<kv::KVBuffer>& entries,
                              EntrySubmitMethod submitMethod, std::uint64_t timeoutMs,
                              const std::string& operation, CommandResult& result)
@@ -249,8 +262,8 @@ Status KvClientRunner::StoreAsync(const BufferSet& buffers, SubmitMode submitMod
 {
     if (client_ == nullptr) { return Status::Error(kExitInvalidArgument, "asu client is null"); }
     const auto submitMethod = submitMode == SubmitMode::SINGLE_ENTRY_PER_CALL
-                                  ? static_cast<EntrySubmitMethod>(&kv::KvClient::StoreAsync)
-                                  : static_cast<EntrySubmitMethod>(&kv::KvClient::BatchStoreAsync);
+                                  ? &kv::KvClient::StoreAsync
+                                  : &kv::KvClient::BatchStoreAsync;
     return SubmitEntriesAsync(*client_, buffers.entries, submitMethod, "store", taskId);
 }
 

@@ -93,7 +93,7 @@ std::uint64_t HashAsuKey(const Detail::BlockId& block)
 kv::CacheKey MakeAsuKey(const Detail::BlockId& block)
 {
     const auto hash = HashAsuKey(block);
-    kv::CacheKey key{};
+    kv::BinaryKey key{};
     std::memcpy(key.data(), &hash, key.size());
     return key;
 }
@@ -531,7 +531,7 @@ private:
         if (!entries) { return entries.Error(); }
         kv::TaskId taskId = kv::kInvalidTaskId;
         auto status =
-            store ? client_->BatchStoreAsync(entries.Value(), taskId, task.prerequisiteHandle)
+            store ? client_->BatchStoreAsync(entries.Value(), taskId, {}, task.prerequisiteHandle)
                   : client_->BatchLoadAsync(entries.Value(), taskId);
         if (!status.ok()) {
             LogAsuStatus("submit task", status);
