@@ -2324,7 +2324,7 @@ TEST(KvClientImplTest,
     EXPECT_EQ(state->storeCalls, std::vector<NodeId>({20, 10}));
 }
 
-TEST(KvClientImplTest, KeyNormalizationPreservesBinaryAndSeparatesNamespaceTypes)
+TEST(KvClientImplTest, KeyNormalizationPreservesBinaryAndScopesNamespace)
 {
     auto state = std::make_shared<TestState>();
     auto client = CreateKvClient(MakeFactory(state));
@@ -2349,7 +2349,17 @@ TEST(KvClientImplTest, KeyNormalizationPreservesBinaryAndSeparatesNamespaceTypes
     EXPECT_NE(stringNamespaceKey, CacheKey(binary));
     ASSERT_TRUE(client->StoreAsync({input[0]}, task, std::uint64_t{123}).ok());
     ASSERT_TRUE(client->Wait(task, 100, result).ok());
-    EXPECT_NE(stringNamespaceKey, state->submittedEntries[0].key);
+    EXPECT_EQ(stringNamespaceKey, state->submittedEntries[0].key);
+    ASSERT_TRUE(client->StoreAsync({input[1]}, task, std::string("123")).ok());
+    ASSERT_TRUE(client->Wait(task, 100, result).ok());
+    EXPECT_EQ(stringNamespaceKey, state->submittedEntries[0].key);
+
+    ASSERT_TRUE(client->QueryAsync({std::string("c")}, task, std::string("ab")).ok());
+    ASSERT_TRUE(client->Wait(task, 100, result).ok());
+    const auto firstScopedKey = state->submittedKeys[0];
+    ASSERT_TRUE(client->QueryAsync({std::string("bc")}, task, std::string("a")).ok());
+    ASSERT_TRUE(client->Wait(task, 100, result).ok());
+    EXPECT_NE(firstScopedKey, state->submittedKeys[0]);
 }
 
 TEST(KvClientImplTest, LayerNormalizationIsSharedByEveryKeyOperation)

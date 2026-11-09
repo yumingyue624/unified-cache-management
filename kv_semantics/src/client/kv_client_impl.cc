@@ -280,27 +280,18 @@ Status KvClientImpl::NormalizeKey(CacheKey& key, const Namespace& namespaceId,
     baseOffset = 0;
     const auto* text = std::get_if<std::string>(&key);
     const auto* namespaceText = std::get_if<std::string>(&namespaceId);
+    // Binary keys with an empty string namespace are already encoded; preserve their bytes.
     if (!text && namespaceText && namespaceText->empty()) { return Status::OK(); }
     std::string_view identity = text ? std::string_view(*text) : CacheKeyView(key);
     if (text && config_.keyResolution.engine == InferenceEngine::VLLM_ASCEND) {
         auto status = ResolveVllmAscendKey(*text, identity, baseOffset);
         if (!status.ok()) { return status; }
     }
-    // Frame both input types and namespace lengths to avoid ambiguous concatenation.
-    std::string scoped(1, text ? 's' : 'b');
-    scoped.push_back(namespaceText ? 's' : 'u');
-    const std::uint64_t namespaceLength = namespaceText ? namespaceText->size() : 8;
-    for (unsigned i = 0; i < 8; ++i) {
-        scoped.push_back(static_cast<char>((namespaceLength >> (8 * i)) & 0xff));
-    }
-    if (namespaceText) {
-        scoped.append(*namespaceText);
-    } else {
-        const auto value = std::get<std::uint64_t>(namespaceId);
-        for (unsigned i = 0; i < 8; ++i) {
-            scoped.push_back(static_cast<char>((value >> (8 * i)) & 0xff));
-        }
-    }
+    // Match Mooncake's scoped key format: namespace + '\0' + object key.
+    std::string scoped =
+        namespaceText ? *namespaceText : std::to_string(std::get<std::uint64_t>(namespaceId));
+    scoped.reserve(scoped.size() + identity.size() + 1);
+    scoped.push_back('\0');
     scoped.append(identity.data(), identity.size());
     auto hash = static_cast<std::uint64_t>(std::hash<std::string_view>{}(scoped));
     BinaryKey encoded{};
