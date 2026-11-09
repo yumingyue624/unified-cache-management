@@ -2430,6 +2430,31 @@ TEST(KvClientImplTest, LayerNormalizationIsSharedByEveryKeyOperation)
               StatusCode::INVALID_ARGUMENT);
 }
 
+TEST(KvClientImplTest, LayerNormalizationRejectsMalformedLayerSuffixes)
+{
+    auto state = std::make_shared<TestState>();
+    auto client = CreateKvClient(MakeFactory(state));
+    auto config = MakeConfig({10});
+    config.keyResolution = {InferenceEngine::VLLM_ASCEND, 28, 1024};
+    ASSERT_TRUE(client->Init(config).ok());
+    for (const auto* suffix : {"", "+3", "-1", "abc", "3abc", "18446744073709551616"}) {
+        const CacheKey key = std::string("model@hash@") + suffix;
+        const std::vector<KVBuffer> entries{
+            {key, {}, 0}
+        };
+        TaskId task = kInvalidTaskId;
+        EXPECT_EQ(client->StoreAsync(entries, task).code, StatusCode::INVALID_ARGUMENT);
+        EXPECT_EQ(client->LoadAsync(entries, task).code, StatusCode::INVALID_ARGUMENT);
+        EXPECT_EQ(client->QueryAsync({key}, task).code, StatusCode::INVALID_ARGUMENT);
+        EXPECT_EQ(client->DeleteAsync({key}, task).code, StatusCode::INVALID_ARGUMENT);
+        EXPECT_EQ(task, kInvalidTaskId);
+    }
+    TaskId task = kInvalidTaskId;
+    ASSERT_TRUE(client->QueryAsync({std::string("model@pp_rank:0@hash")}, task).ok());
+    TaskResult result;
+    EXPECT_TRUE(client->Wait(task, 100, result).ok());
+}
+
 TEST(KvClientImplTest, LayerAggregationIsOptionalAndEngineSpecific)
 {
     for (auto engine : {InferenceEngine::GENERIC, InferenceEngine::SGLANG}) {

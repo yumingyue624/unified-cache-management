@@ -316,18 +316,17 @@ Status KvClientImpl::ResolveVllmAscendKey(std::string_view key, std::string_view
     if (hashSeparator != std::string_view::npos && hashSeparator != 0) {
         const auto hash = key.substr(hashSeparator + 1, layerSeparator - hashSeparator - 1);
         const auto layerText = key.substr(layerSeparator + 1);
-        const bool numeric =
-            !layerText.empty() && std::all_of(layerText.begin(), layerText.end(),
-                                              [](char c) { return c >= '0' && c <= '9'; });
-        if (!hash.empty() && hash.find(':') == std::string_view::npos && !layerText.empty() &&
-            (numeric || layerText.front() == '-' || layerText.front() == '+')) {
-            auto status = ValidateKeyResolutionConfig(config_.keyResolution);
-            if (!status.ok()) { return status; }
+        if (!hash.empty() && hash.find(':') == std::string_view::npos) {
             std::uint64_t layer = 0;
             const auto [end, error] =
                 std::from_chars(layerText.data(), layerText.data() + layerText.size(), layer);
-            if (error != std::errc{} || end != layerText.data() + layerText.size() ||
-                layer >= config_.keyResolution.layerCount) {
+            if (error != std::errc{} || end != layerText.data() + layerText.size()) {
+                return Status::Error(StatusCode::INVALID_ARGUMENT,
+                                     "invalid layer in key: " + std::string(key));
+            }
+            auto status = ValidateKeyResolutionConfig(config_.keyResolution);
+            if (!status.ok()) { return status; }
+            if (layer >= config_.keyResolution.layerCount) {
                 return Status::Error(StatusCode::INVALID_ARGUMENT,
                                      "invalid layer in key: " + std::string(key));
             }
