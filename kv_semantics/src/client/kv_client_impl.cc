@@ -111,9 +111,6 @@ KvClientImpl::~KvClientImpl() { Shutdown(); }
 
 Status KvClientImpl::Init(const KvClientConfig& config)
 {
-    auto keyConfigStatus = ValidateKeyResolutionConfig(config.keyResolution);
-    if (!keyConfigStatus.ok()) { return keyConfigStatus; }
-
     if (initialized_) {
         return Status::Error(StatusCode::RESOURCE_BUSY, "asu client has already been initialized");
     }
@@ -122,6 +119,13 @@ Status KvClientImpl::Init(const KvClientConfig& config)
         return Status::Error(StatusCode::INVALID_ARGUMENT, "sharedProviderMode must be 0 or 1");
     }
 
+    if (config.keyResolution.engine != InferenceEngine::VLLM_ASCEND &&
+        (config.keyResolution.layerCount != 0 || config.keyResolution.layerSlotBytes != 0)) {
+        KV_WARN(
+            "{} keys do not require layer aggregation; aggregation.layer_count and "
+            "aggregation.layer_slot_bytes are ignored and can be omitted",
+            config.keyResolution.engine == InferenceEngine::SGLANG ? "SGLang" : "Generic");
+    }
     config_ = config;
     viewServer_ = viewServerFactory_(config);
     if (viewServer_ == nullptr) {
@@ -278,8 +282,7 @@ Status KvClientImpl::NormalizeKey(CacheKey& key, const Namespace& namespaceId,
     const auto* namespaceText = std::get_if<std::string>(&namespaceId);
     if (!text && namespaceText && namespaceText->empty()) { return Status::OK(); }
     std::string_view identity = text ? std::string_view(*text) : CacheKeyView(key);
-    if (text && config_.keyResolution.engine == InferenceEngine::VLLM_ASCEND &&
-        config_.keyResolution.layerCount != 0) {
+    if (text && config_.keyResolution.engine == InferenceEngine::VLLM_ASCEND) {
         auto status = ResolveVllmAscendKey(*text, identity, baseOffset);
         if (!status.ok()) { return status; }
     }
@@ -327,6 +330,8 @@ Status KvClientImpl::ResolveVllmAscendKey(std::string_view key, std::string_view
                                               [](char c) { return c >= '0' && c <= '9'; });
         if (!hash.empty() && hash.find(':') == std::string_view::npos && !layerText.empty() &&
             (numeric || layerText.front() == '-' || layerText.front() == '+')) {
+            auto status = ValidateKeyResolutionConfig(config_.keyResolution);
+            if (!status.ok()) { return status; }
             std::uint64_t layer = 0;
             const auto [end, error] =
                 std::from_chars(layerText.data(), layerText.data() + layerText.size(), layer);

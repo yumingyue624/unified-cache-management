@@ -2422,28 +2422,73 @@ TEST(KvClientImplTest, LayerNormalizationIsSharedByEveryKeyOperation)
 
 TEST(KvClientImplTest, LayerAggregationIsOptionalAndEngineSpecific)
 {
-    for (auto engine :
-         {InferenceEngine::GENERIC, InferenceEngine::SGLANG, InferenceEngine::VLLM_ASCEND}) {
+    for (auto engine : {InferenceEngine::GENERIC, InferenceEngine::SGLANG}) {
+        for (const auto& aggregation : {
+                 KeyResolutionConfig{engine, 0,  0   },
+                 KeyResolutionConfig{engine, 28, 0   },
+                 KeyResolutionConfig{engine, 0,  1024},
+                 KeyResolutionConfig{engine, 28, 1024}
+        }) {
+            auto state = std::make_shared<TestState>();
+            auto client = CreateKvClient(MakeFactory(state));
+            auto config = MakeConfig({10});
+            config.keyResolution = aggregation;
+            ASSERT_TRUE(client->Init(config).ok());
+            TaskId task = kInvalidTaskId;
+            TaskResult result;
+            ASSERT_TRUE(client
+                            ->StoreAsync(
+                                {
+                                    {std::string("model@hash@1"), {}, 5},
+                                    {std::string("model@hash@2"), {}, 6}
+            },
+                                task)
+                            .ok());
+            ASSERT_TRUE(client->Wait(task, 100, result).ok());
+            EXPECT_NE(state->submittedEntries[0].key, state->submittedEntries[1].key);
+            EXPECT_EQ(state->submittedEntries[0].offset, 5U);
+            EXPECT_EQ(state->submittedEntries[1].offset, 6U);
+        }
+    }
+}
+
+TEST(KvClientImplTest, LayerwiseKeysRequireAggregationParameters)
+{
+    for (const auto& aggregation : {
+             KeyResolutionConfig{InferenceEngine::VLLM_ASCEND, 0,  0   },
+             KeyResolutionConfig{InferenceEngine::VLLM_ASCEND, 28, 0   },
+             KeyResolutionConfig{InferenceEngine::VLLM_ASCEND, 0,  1024}
+    }) {
         auto state = std::make_shared<TestState>();
         auto client = CreateKvClient(MakeFactory(state));
         auto config = MakeConfig({10});
-        config.keyResolution.engine = engine;
+        config.keyResolution = aggregation;
         ASSERT_TRUE(client->Init(config).ok());
+
         TaskId task = kInvalidTaskId;
         TaskResult result;
-        ASSERT_TRUE(
-            client
-                ->StoreAsync(
-                    {
-                        {std::string("model@hash@1"), {}, 5},
-                        {std::string("model@hash@2"), {}, 6}
+        ASSERT_TRUE(client
+                        ->StoreAsync(
+                            {
+                                {std::string("model@hash"), {}, 5}
         },
-                    task)
-                .ok());
+                            task)
+                        .ok());
         ASSERT_TRUE(client->Wait(task, 100, result).ok());
-        EXPECT_NE(state->submittedEntries[0].key, state->submittedEntries[1].key);
         EXPECT_EQ(state->submittedEntries[0].offset, 5U);
-        EXPECT_EQ(state->submittedEntries[1].offset, 6U);
+
+        const CacheKey layerKey = std::string("model@hash@1");
+        const std::vector<KVBuffer> entries{
+            {layerKey, {}, 5}
+        };
+        const auto status = client->StoreAsync(entries, task);
+        EXPECT_EQ(status.code, StatusCode::INVALID_ARGUMENT);
+        EXPECT_NE(status.message.find("aggregation.layer_count"), std::string::npos);
+        EXPECT_NE(status.message.find("aggregation.layer_slot_bytes"), std::string::npos);
+        EXPECT_EQ(task, kInvalidTaskId);
+        EXPECT_EQ(client->LoadAsync(entries, task).code, StatusCode::INVALID_ARGUMENT);
+        EXPECT_EQ(client->QueryAsync({layerKey}, task).code, StatusCode::INVALID_ARGUMENT);
+        EXPECT_EQ(client->DeleteAsync({layerKey}, task).code, StatusCode::INVALID_ARGUMENT);
     }
 }
 
@@ -2463,6 +2508,22 @@ TEST(KvClientImplTest, KeyAggregationConfigIsParsedAndValidated)
     {
         std::ofstream file(path);
         file << "inference.engine=vllm_ascend\naggregation.layer_count=28\n";
+    }
+    ASSERT_TRUE(KvClientConfig::LoadFromFile(path, config).ok());
+    EXPECT_EQ(config.keyResolution.layerCount, 28U);
+    EXPECT_EQ(config.keyResolution.layerSlotBytes, 0U);
+    {
+        std::ofstream file(path);
+        file << "inference.engine=sglang\naggregation.layer_count=0\n"
+                "aggregation.layer_slot_bytes=0\n";
+    }
+    ASSERT_TRUE(KvClientConfig::LoadFromFile(path, config).ok());
+    EXPECT_EQ(config.keyResolution.engine, InferenceEngine::SGLANG);
+    EXPECT_EQ(config.keyResolution.layerCount, 0U);
+    EXPECT_EQ(config.keyResolution.layerSlotBytes, 0U);
+    {
+        std::ofstream file(path);
+        file << "inference.engine=vllm_ascend\naggregation.layer_count=-1\n";
     }
     EXPECT_EQ(KvClientConfig::LoadFromFile(path, config).code, StatusCode::INVALID_ARGUMENT);
     {

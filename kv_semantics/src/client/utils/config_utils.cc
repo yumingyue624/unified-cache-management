@@ -132,11 +132,10 @@ NodeEndpoint ParseClientViewEndpoint(const std::string& value)
 
 Status ValidateKeyResolutionConfig(const KeyResolutionConfig& config)
 {
-    if (config.layerCount == 0 && config.layerSlotBytes == 0) { return Status::OK(); }
-    if (config.engine != InferenceEngine::VLLM_ASCEND) { return Status::OK(); }
     if (config.layerCount == 0 || config.layerSlotBytes == 0) {
         return Status::Error(StatusCode::INVALID_ARGUMENT,
-                             "vllm_ascend requires positive layer_count and layer_slot_bytes");
+                             "vllm_ascend layerwise keys require positive "
+                             "aggregation.layer_count and aggregation.layer_slot_bytes");
     }
     // KVBuffer carries a uint32 object offset.
     constexpr auto maxObjectBytes = std::uint64_t{std::numeric_limits<std::uint32_t>::max()} + 1;
@@ -192,9 +191,9 @@ Status KvClientConfig::LoadFromFile(const std::string& configPath, KvClientConfi
             std::uint64_t size = 0;
             const auto [end, error] =
                 std::from_chars(value.data(), value.data() + value.size(), size);
-            if (error != std::errc{} || end != value.data() + value.size() || size == 0) {
+            if (error != std::errc{} || end != value.data() + value.size()) {
                 return ASU_LOG_ERROR_STATUS(StatusCode::INVALID_ARGUMENT,
-                                            "expected a positive integer for " + key);
+                                            "expected a non-negative integer for " + key);
             }
             if (key == "aggregation.layer_count") {
                 config.keyResolution.layerCount = size;
@@ -258,9 +257,6 @@ Status KvClientConfig::LoadFromFile(const std::string& configPath, KvClientConfi
             }
         }
     }
-
-    const auto keyStatus = ValidateKeyResolutionConfig(config.keyResolution);
-    if (!keyStatus.ok()) { return keyStatus; }
 
     for (auto& transportConfig : config.transportConfigs) {
         transportConfig.timeoutMs = config.timeoutMs;

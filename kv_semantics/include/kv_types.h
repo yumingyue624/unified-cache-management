@@ -213,7 +213,7 @@ enum class InferenceEngine : std::uint8_t { GENERIC = 0, VLLM_ASCEND = 1, SGLANG
 
 struct KeyResolutionConfig {
     InferenceEngine engine{InferenceEngine::GENERIC};
-    // Both zero disable aggregation; positive values enable VLLM_ASCEND layer grouping.
+    // Required for VLLM_ASCEND layerwise string keys; ignored by other engines.
     std::uint64_t layerCount{0};
     std::uint64_t layerSlotBytes{0};
 };
