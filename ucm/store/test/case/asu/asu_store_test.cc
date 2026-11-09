@@ -99,7 +99,7 @@ public:
     }
 
     kv::Status QueryAsync(const std::vector<kv::CacheKey>& keys, kv::TaskId& taskId,
-                          const kv::KeyNamespace& = {}) override
+                          const kv::Namespace& = {}) override
     {
         if (!initialized_) { return NotInitialized(); }
         if (!state_->queryStatus.ok()) { return state_->queryStatus; }
@@ -124,14 +124,14 @@ public:
     }
 
     kv::Status LoadAsync(const std::vector<kv::KVBuffer>& entries, kv::TaskId& taskId,
-                         const kv::KeyNamespace& = {}) override
+                         const kv::Namespace& = {}) override
     {
         state_->lastLoadEntries = entries;
         return Submit(entries, taskId);
     }
 
     kv::Status StoreAsync(const std::vector<kv::KVBuffer>& entries, kv::TaskId& taskId,
-                          const kv::KeyNamespace& = {},
+                          const kv::Namespace& = {},
                           std::function<kv::Status()> prerequisite = {}) override
     {
         state_->lastStoreWait = std::move(prerequisite);
@@ -141,7 +141,7 @@ public:
     }
 
     kv::Status DeleteAsync(const std::vector<kv::CacheKey>& keys, kv::TaskId& taskId,
-                           const kv::KeyNamespace& = {}) override
+                           const kv::Namespace& = {}) override
     {
         for (const auto& key : keys) { storedKeys_.erase(key); }
         return Submit(keys.size(), taskId);

@@ -79,17 +79,17 @@ public:
 
     // Submits query operations to routed transports.
     Status QueryAsync(const std::vector<CacheKey>& keys, TaskId& taskId,
-                      const KeyNamespace& namespaceId = {}) override;
+                      const Namespace& namespaceId = {}) override;
     // Submits load operations to routed transports.
     Status LoadAsync(const std::vector<KVBuffer>& entries, TaskId& taskId,
-                     const KeyNamespace& namespaceId = {}) override;
+                     const Namespace& namespaceId = {}) override;
     // Submits store operations to routed transports.
     Status StoreAsync(const std::vector<KVBuffer>& entries, TaskId& taskId,
-                      const KeyNamespace& namespaceId = {},
+                      const Namespace& namespaceId = {},
                       std::function<Status()> prerequisite = {}) override;
     // Submits delete operations to routed transports.
     Status DeleteAsync(const std::vector<CacheKey>& keys, TaskId& taskId,
-                       const KeyNamespace& namespaceId = {}) override;
+                       const Namespace& namespaceId = {}) override;
 
     // Checks an aggregate task.
     bool Check(TaskId taskId) override;
@@ -104,7 +104,7 @@ public:
 
 private:
     // Resolve one input key before it enters routing or transport tasks.
-    Status NormalizeKey(CacheKey& key, const KeyNamespace& namespaceId,
+    Status NormalizeKey(CacheKey& key, const Namespace& namespaceId,
                         std::uint64_t& baseOffset) const;
     Status ResolveVllmAscendKey(std::string_view key, std::string_view& identity,
                                 std::uint64_t& baseOffset) const;
@@ -116,10 +116,10 @@ private:
 
     // Creates and queues one entry-based client task.
     Status SubmitAsync(AsuOpType opType, const std::vector<KVBuffer>& entries, TaskId& taskId,
-                       const KeyNamespace& namespaceId, std::function<Status()> prerequisite = {});
+                       const Namespace& namespaceId, std::function<Status()> prerequisite = {});
     // Creates and queues one key-based client task.
     Status SubmitAsync(AsuOpType opType, const std::vector<CacheKey>& keys, TaskId& taskId,
-                       const KeyNamespace& namespaceId);
+                       const Namespace& namespaceId);
 
     // Runs queued tasks until shutdown and the queue are both complete.
     void WorkerLoop();

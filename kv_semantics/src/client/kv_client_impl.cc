@@ -232,7 +232,7 @@ Status KvClientImpl::Shutdown()
 }
 
 Status KvClientImpl::QueryAsync(const std::vector<CacheKey>& keys, TaskId& taskId,
-                                const KeyNamespace& namespaceId)
+                                const Namespace& namespaceId)
 {
     auto status = SubmitAsync(AsuOpType::QUERY, keys, taskId, namespaceId);
     RecordSubmit(AsuOpType::QUERY, keys.size(), status);
@@ -241,7 +241,7 @@ Status KvClientImpl::QueryAsync(const std::vector<CacheKey>& keys, TaskId& taskI
 }
 
 Status KvClientImpl::LoadAsync(const std::vector<KVBuffer>& entries, TaskId& taskId,
-                               const KeyNamespace& namespaceId)
+                               const Namespace& namespaceId)
 {
     const auto useBatchIo =
         entries.size() > 1 || (entries.size() == 1 && config_.useBatchIoForSingleKey);
@@ -252,8 +252,7 @@ Status KvClientImpl::LoadAsync(const std::vector<KVBuffer>& entries, TaskId& tas
 }
 
 Status KvClientImpl::StoreAsync(const std::vector<KVBuffer>& entries, TaskId& taskId,
-                                const KeyNamespace& namespaceId,
-                                std::function<Status()> prerequisite)
+                                const Namespace& namespaceId, std::function<Status()> prerequisite)
 {
     const auto useBatchIo =
         entries.size() > 1 || (entries.size() == 1 && config_.useBatchIoForSingleKey);
@@ -264,14 +263,14 @@ Status KvClientImpl::StoreAsync(const std::vector<KVBuffer>& entries, TaskId& ta
 }
 
 Status KvClientImpl::DeleteAsync(const std::vector<CacheKey>& keys, TaskId& taskId,
-                                 const KeyNamespace& namespaceId)
+                                 const Namespace& namespaceId)
 {
     auto status = SubmitAsync(AsuOpType::DELETE, keys, taskId, namespaceId);
     RecordSubmit(AsuOpType::DELETE, keys.size(), status);
     return status;
 }
 
-Status KvClientImpl::NormalizeKey(CacheKey& key, const KeyNamespace& namespaceId,
+Status KvClientImpl::NormalizeKey(CacheKey& key, const Namespace& namespaceId,
                                   std::uint64_t& baseOffset) const
 {
     baseOffset = 0;
@@ -473,7 +472,7 @@ Status KvClientImpl::RegisterRegionsOnce(const std::vector<MemoryRegion>& region
 }
 
 Status KvClientImpl::SubmitAsync(AsuOpType opType, const std::vector<KVBuffer>& entries,
-                                 TaskId& taskId, const KeyNamespace& namespaceId,
+                                 TaskId& taskId, const Namespace& namespaceId,
                                  std::function<Status()> prerequisite)
 {
     const auto taskStart = std::chrono::steady_clock::now();
@@ -552,7 +551,7 @@ Status KvClientImpl::SubmitAsync(AsuOpType opType, const std::vector<KVBuffer>& 
 }
 
 Status KvClientImpl::SubmitAsync(AsuOpType opType, const std::vector<CacheKey>& keys,
-                                 TaskId& taskId, const KeyNamespace& namespaceId)
+                                 TaskId& taskId, const Namespace& namespaceId)
 {
     const auto taskStart = std::chrono::steady_clock::now();
     auto snapshot = GetSnapshot();

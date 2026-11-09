@@ -2359,7 +2359,7 @@ TEST(KvClientImplTest, LayerNormalizationIsSharedByEveryKeyOperation)
     auto config = MakeConfig({10});
     config.keyResolution = {InferenceEngine::VLLM_ASCEND, 28, 1024};
     ASSERT_TRUE(client->Init(config).ok());
-    const KeyNamespace ns = std::string("tenant");
+    const Namespace ns = std::string("tenant");
     const std::vector<KVBuffer> input{
         {std::string("model@tp:0@hash@3"), {}, 17}
     };
