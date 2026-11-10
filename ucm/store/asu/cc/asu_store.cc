@@ -51,6 +51,7 @@ namespace {
 
 using AsuStatus = kv::Status;
 using AsuStatusCode = kv::StatusCode;
+using CacheKey = kv::BinaryKey;
 
 // Observe the Store call, including validation failures before KV submission.
 template <typename Call>
@@ -94,7 +95,7 @@ std::uint64_t HashAsuKey(const Detail::BlockId& block)
 kv::CacheKey MakeAsuKey(const Detail::BlockId& block)
 {
     const auto hash = HashAsuKey(block);
-    kv::BinaryKey key{};
+    CacheKey key{};
     std::memcpy(key.data(), &hash, key.size());
     return key;
 }
