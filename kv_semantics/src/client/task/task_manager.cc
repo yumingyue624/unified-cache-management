@@ -294,7 +294,7 @@ Status ClientTaskManager::BuildTransportTasks(const ClientTaskPtr& task)
                 auto transportTask = std::make_shared<TransportTask>();
                 transportTask->nodeId = nodeId;
                 transportTask->transport = snapshot->transports.at(nodeId);
-                transportTask->protocolNamespaceId = gnsid;
+                transportTask->kvNsId = gnsid;
                 task->transportTasks.push_back(std::move(transportTask));
             }
             task->transportTasks[iter->second]->originalIndices.push_back(index);

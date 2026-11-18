@@ -91,7 +91,7 @@ struct TransportTask {
 
     NodeId nodeId{0};
     // Client tasks provide an explicit namespace; direct transport callers use configuration.
-    std::optional<std::uint32_t> protocolNamespaceId;
+    std::optional<std::uint32_t> kvNsId;
     TaskId taskId{kInvalidTaskId};
     AsuOpType opType{AsuOpType::QUERY};
     std::weak_ptr<AsuTransport> transport;

@@ -312,11 +312,10 @@ std::unique_ptr<SqeRequest> BuildSqeRequest(
     KvOpcode opcode, const SubBatchRequestSource& source,
     const std::unordered_map<std::string, std::string>& attrs, std::uint16_t cid,
     const ScatterGatherEntry& flagBuffer, TransportSubBatchContext& subBatchContext,
-    std::optional<std::uint32_t> protocolNamespaceId = std::nullopt)
+    std::optional<std::uint32_t> kvNsId = std::nullopt)
 {
-    const auto namespaceId = protocolNamespaceId
-                                 ? *protocolNamespaceId
-                                 : GetTransportConfigAttr<std::uint32_t>(attrs, "kv_ns_id");
+    const auto namespaceId =
+        kvNsId ? *kvNsId : GetTransportConfigAttr<std::uint32_t>(attrs, "kv_ns_id");
     switch (opcode) {
         case KvOpcode::Store:
             if (source.entries == nullptr || source.entries->size != 1) { return nullptr; }
@@ -357,7 +356,7 @@ std::unique_ptr<SqeRequest> BuildSqeRequest(
 
 Status TransportTaskExecutor::BuildEntrySubBatchRequest(
     AsuOpType opType, const IoScheduler::ScheduledIoBatch& subBatch,
-    TransportSubBatchContext& subBatchContext, std::optional<std::uint32_t> protocolNamespaceId)
+    TransportSubBatchContext& subBatchContext, std::optional<std::uint32_t> kvNsId)
 {
     const auto source = SubBatchRequestSource::FromEntries(subBatch.entries);
     subBatchContext.entryStatus.assign(subBatch.entries.size, Status::OK());
@@ -374,16 +373,15 @@ Status TransportTaskExecutor::BuildEntrySubBatchRequest(
                                          flagBufferManager_, subBatchContext);
     if (!status.ok()) { return status; }
 
-    auto request =
-        BuildSqeRequest(opcode, source, config_.attrs, subBatchContext.cid,
-                        subBatchContext.flagBuffer, subBatchContext, protocolNamespaceId);
+    auto request = BuildSqeRequest(opcode, source, config_.attrs, subBatchContext.cid,
+                                   subBatchContext.flagBuffer, subBatchContext, kvNsId);
     return PackSubBatchRequest(protocolManager_, sendBufferManager_, opcode, *request,
                                subBatchContext);
 }
 
 Status TransportTaskExecutor::SubmitKeySubBatchRequest(
     AsuOpType opType, const IoScheduler::ScheduledKeyBatch& subBatch,
-    TransportSubBatchContext& subBatchContext, std::optional<std::uint32_t> protocolNamespaceId)
+    TransportSubBatchContext& subBatchContext, std::optional<std::uint32_t> kvNsId)
 {
     const auto source = SubBatchRequestSource::FromKeys(subBatch.keys);
     subBatchContext.entryStatus.assign(subBatch.keys.size, Status::OK());
@@ -393,9 +391,8 @@ Status TransportTaskExecutor::SubmitKeySubBatchRequest(
                                          flagBufferManager_, subBatchContext);
     if (!status.ok()) { return status; }
 
-    auto request =
-        BuildSqeRequest(opcode, source, config_.attrs, subBatchContext.cid,
-                        subBatchContext.flagBuffer, subBatchContext, protocolNamespaceId);
+    auto request = BuildSqeRequest(opcode, source, config_.attrs, subBatchContext.cid,
+                                   subBatchContext.flagBuffer, subBatchContext, kvNsId);
     return PackSubBatchRequest(protocolManager_, sendBufferManager_, opcode, *request,
                                subBatchContext);
 }
