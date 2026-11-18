@@ -27,6 +27,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <vector>
 #include "buffer/buffer_manager.h"
 #include "conn/connection_manager.h"
@@ -75,12 +76,14 @@ private:
 
     Status PrepareTaskSubBatches(const TransportTask& task,
                                  std::vector<TransportSubBatchContext>& subBatchContexts);
-    Status BuildEntrySubBatchRequest(AsuOpType opType,
-                                     const IoScheduler::ScheduledIoBatch& subBatch,
-                                     TransportSubBatchContext& subBatchContext);
-    Status SubmitKeySubBatchRequest(AsuOpType opType,
-                                    const IoScheduler::ScheduledKeyBatch& subBatch,
-                                    TransportSubBatchContext& subBatchContext);
+    Status BuildEntrySubBatchRequest(
+        AsuOpType opType, const IoScheduler::ScheduledIoBatch& subBatch,
+        TransportSubBatchContext& subBatchContext,
+        std::optional<std::uint32_t> protocolNamespaceId = std::nullopt);
+    Status SubmitKeySubBatchRequest(
+        AsuOpType opType, const IoScheduler::ScheduledKeyBatch& subBatch,
+        TransportSubBatchContext& subBatchContext,
+        std::optional<std::uint32_t> protocolNamespaceId = std::nullopt);
     Status SubmitKeepAliveRequest(TransportSubBatchContext& subBatchContext);
 
     Status AssignSubBatchConnections(std::vector<TransportSubBatchContext>& subBatchContexts);

@@ -281,26 +281,40 @@ Status ClientTaskManager::BuildTransportTasks(const ClientTaskPtr& task)
         }
     }
 
+    const bool keyOnly = task->opType == AsuOpType::QUERY || task->opType == AsuOpType::DELETE;
     task->transportTasks.reserve(routes.size());
     for (const auto& [nodeId, indices] : routes) {
-        auto transportTask = std::make_shared<TransportTask>();
-        transportTask->nodeId = nodeId;
-        transportTask->transport = snapshot->transports.at(nodeId);
-        transportTask->originalIndices.reserve(indices.size());
-        if (task->opType == AsuOpType::QUERY || task->opType == AsuOpType::DELETE) {
-            transportTask->keys.reserve(indices.size());
-            for (auto index : indices) {
-                transportTask->keys.push_back(std::move(task->keys[index]));
-                transportTask->originalIndices.push_back(index);
+        std::unordered_map<std::uint32_t, std::size_t> taskIndexByGnsid;
+        const auto firstTaskIndex = task->transportTasks.size();
+        for (auto index : indices) {
+            const auto gnsid = keyOnly ? task->keys[index].gnsid : task->entries[index].key.gnsid;
+            const auto [iter, inserted] =
+                taskIndexByGnsid.try_emplace(gnsid, task->transportTasks.size());
+            if (inserted) {
+                auto transportTask = std::make_shared<TransportTask>();
+                transportTask->nodeId = nodeId;
+                transportTask->transport = snapshot->transports.at(nodeId);
+                transportTask->protocolNamespaceId = gnsid;
+                task->transportTasks.push_back(std::move(transportTask));
             }
-        } else {
-            transportTask->entries.reserve(indices.size());
-            for (auto index : indices) {
-                transportTask->entries.push_back(std::move(task->entries[index]));
-                transportTask->originalIndices.push_back(index);
+            task->transportTasks[iter->second]->originalIndices.push_back(index);
+        }
+
+        // Move entries directly into their final vectors with exact capacity.
+        for (auto i = firstTaskIndex; i < task->transportTasks.size(); ++i) {
+            auto& transportTask = *task->transportTasks[i];
+            if (keyOnly) {
+                transportTask.keys.reserve(transportTask.originalIndices.size());
+                for (auto index : transportTask.originalIndices) {
+                    transportTask.keys.push_back(std::move(task->keys[index]));
+                }
+            } else {
+                transportTask.entries.reserve(transportTask.originalIndices.size());
+                for (auto index : transportTask.originalIndices) {
+                    transportTask.entries.push_back(std::move(task->entries[index]));
+                }
             }
         }
-        task->transportTasks.push_back(std::move(transportTask));
     }
     std::vector<ResolvedKVBuffer>{}.swap(task->entries);
     std::vector<ResolvedCacheKey>{}.swap(task->keys);

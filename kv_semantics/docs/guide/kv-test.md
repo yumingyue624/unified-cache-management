@@ -281,8 +281,9 @@ are passed through unchanged; layer-slot configuration is no longer used.
 
 Normalized keys carry a per-item global namespace ID (GNSID) as internal
 metadata; public `CacheKey` and `KVBuffer` types remain independent of this
-representation. The protocol-local namespace ID is configured through
-`transport.kv_ns_id`.
+representation. After routing keys to ASUs, the client groups each ASU's
+requests by GNSID and encodes that GNSID in every protocol request for the
+group. Direct transport callers can still use `transport.kv_ns_id`.
 
 When `view.config_path` is set, the loaded view is the ASU membership used by
 `KvClient`. Every ASU id in that view must have a matching `transport.asu_ids`
@@ -298,7 +299,7 @@ mean a consumer exists. The following fields have explicit consumers.
 
 | Field | Actual meaning |
 | --- | --- |
-| `transport.kv_ns_id` | KV namespace encoded in SQEs; does not select a separate Client Router. |
+| `transport.kv_ns_id` | KV namespace for direct transport requests. KvClient requests use the resolved GNSID. Neither affects ASU routing. |
 | `transport.dtype` | Store SQE data-type field (3 bits); must match the server protocol. |
 | `transport.dspec` | Store SQE data-specification field (5 bits); must match the server protocol. |
 | `transport.lr` | SQE LR flag for Load/Store, passed through without a Client-level policy. |
@@ -464,12 +465,9 @@ If `fake_backend.path` is empty, fake backend uses:
 ./kv-test-fake-backend-store
 ```
 
-During this temporary integration stage, fake backend maps each
-`TransportConfig.nodeId` into `TransportConfig.attrs["kv_ns_id"]` before
-`Transport::Init`. The packed SQE carries `kv_ns_id`, so the mock backend can
-recover a per-ASU namespace from the send buffer without changing the Transport
-`Send` interface. This is a kv-test-only temporary semantic mapping, not a
-long-term protocol statement that KVNS_ID is ASU ID.
+The fake backend uses the SQE's `kv_ns_id` as its directory identifier.
+For KvClient requests this is the resolved GNSID. Direct transport tests can
+still use distinct configured namespace IDs to simulate separate ASUs.
 
 The fake backend copies and queues each SQE before `Send` returns. Dedicated IO
 workers process queued requests in parallel and publish the CQE/flag buffer when
