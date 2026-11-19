@@ -65,7 +65,7 @@ std::vector<kv::Key> ExtractEntryKeys(const std::vector<ResolvedKVBuffer>& entri
     return keys;
 }
 
-std::uint32_t GetTargetNamespaceId([[maybe_unused]] NodeId nodeId, std::uint32_t gnsid)
+std::uint32_t GetTargetNamespaceId(NodeId nodeId, std::uint32_t gnsid)
 {
     // M800 uses the GNSID directly. M900 will look up a local ID by node and GNSID.
     return gnsid;
@@ -289,11 +289,11 @@ Status ClientTaskManager::BuildTransportTasks(const ClientTaskPtr& task)
 
     const bool keyOnly = task->opType == AsuOpType::QUERY || task->opType == AsuOpType::DELETE;
     for (const auto& [nodeId, indices] : routes) {
-        std::unordered_map<std::uint32_t, std::size_t> taskIndexByGnsid;
+        std::unordered_map<std::uint32_t, std::size_t> transportTaskIndexByGnsid;
         for (auto index : indices) {
             const auto gnsid = keyOnly ? task->keys[index].gnsid : task->entries[index].key.gnsid;
             const auto [iter, inserted] =
-                taskIndexByGnsid.try_emplace(gnsid, task->transportTasks.size());
+                transportTaskIndexByGnsid.try_emplace(gnsid, task->transportTasks.size());
             if (inserted) {
                 auto transportTask = std::make_shared<TransportTask>();
                 transportTask->nodeId = nodeId;
