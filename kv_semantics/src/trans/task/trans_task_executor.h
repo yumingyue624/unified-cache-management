@@ -27,7 +27,6 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <optional>
 #include <vector>
 #include "buffer/buffer_manager.h"
 #include "conn/connection_manager.h"
@@ -73,7 +72,6 @@ private:
     Status RegisterBufferMemory(BufferManager& bufferManager, MRHandle& mrHandle);
     Status UnregisterBufferMemory(MRHandle& mrHandle);
     std::uint16_t AllocateRequestCid();
-    std::uint32_t GetTargetNamespaceId(std::optional<std::uint32_t> namespaceId) const;
 
     Status PrepareTaskSubBatches(const TransportTask& task,
                                  std::vector<TransportSubBatchContext>& subBatchContexts);

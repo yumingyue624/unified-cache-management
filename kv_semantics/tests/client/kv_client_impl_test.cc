@@ -254,8 +254,7 @@ public:
         if (!task) {
             return Status::Error(StatusCode::INVALID_ARGUMENT, "fake transport task is null");
         }
-        state_->submittedNamespaceGroups.emplace_back(task->namespaceId.value_or(0),
-                                                      task->originalIndices);
+        state_->submittedNamespaceGroups.emplace_back(task->namespaceId, task->originalIndices);
         state_->submittedEntries.clear();
         state_->submittedKeys.clear();
         state_->submittedResolvedKeys.clear();

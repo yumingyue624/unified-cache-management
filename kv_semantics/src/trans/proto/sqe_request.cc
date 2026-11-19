@@ -311,9 +311,9 @@ KvKeepAliveRequest BuildKeepAliveRequest(std::uint16_t cid, const ScatterGatherE
 std::unique_ptr<SqeRequest> BuildSqeRequest(
     KvOpcode opcode, const SubBatchRequestSource& source,
     const std::unordered_map<std::string, std::string>& attrs, std::uint16_t cid,
-    const ScatterGatherEntry& flagBuffer, TransportSubBatchContext& subBatchContext)
+    const ScatterGatherEntry& flagBuffer, TransportSubBatchContext& subBatchContext,
+    std::uint32_t namespaceId)
 {
-    const auto namespaceId = subBatchContext.namespaceId;
     switch (opcode) {
         case KvOpcode::Store:
             if (source.entries == nullptr || source.entries->size != 1) { return nullptr; }
@@ -352,13 +352,6 @@ std::unique_ptr<SqeRequest> BuildSqeRequest(
 
 }  // namespace
 
-std::uint32_t TransportTaskExecutor::GetTargetNamespaceId(
-    std::optional<std::uint32_t> namespaceId) const
-{
-    if (namespaceId) { return *namespaceId; }
-    return GetTransportConfigAttr<std::uint32_t>(config_.attrs, "kv_ns_id");
-}
-
 Status TransportTaskExecutor::BuildEntrySubBatchRequest(
     AsuOpType opType, const IoScheduler::ScheduledIoBatch& subBatch,
     TransportSubBatchContext& subBatchContext)
@@ -379,7 +372,8 @@ Status TransportTaskExecutor::BuildEntrySubBatchRequest(
     if (!status.ok()) { return status; }
 
     auto request = BuildSqeRequest(opcode, source, config_.attrs, subBatchContext.cid,
-                                   subBatchContext.flagBuffer, subBatchContext);
+                                   subBatchContext.flagBuffer, subBatchContext,
+                                   subBatchContext.namespaceId);
     return PackSubBatchRequest(protocolManager_, sendBufferManager_, opcode, *request,
                                subBatchContext);
 }
@@ -397,7 +391,8 @@ Status TransportTaskExecutor::SubmitKeySubBatchRequest(
     if (!status.ok()) { return status; }
 
     auto request = BuildSqeRequest(opcode, source, config_.attrs, subBatchContext.cid,
-                                   subBatchContext.flagBuffer, subBatchContext);
+                                   subBatchContext.flagBuffer, subBatchContext,
+                                   subBatchContext.namespaceId);
     return PackSubBatchRequest(protocolManager_, sendBufferManager_, opcode, *request,
                                subBatchContext);
 }
@@ -414,7 +409,8 @@ Status TransportTaskExecutor::SubmitKeepAliveRequest(TransportSubBatchContext& s
     if (!status.ok()) { return status; }
 
     auto request = BuildSqeRequest(opcode, source, config_.attrs, subBatchContext.cid,
-                                   subBatchContext.flagBuffer, subBatchContext);
+                                   subBatchContext.flagBuffer, subBatchContext,
+                                   subBatchContext.namespaceId);
     return PackSubBatchRequest(protocolManager_, sendBufferManager_, opcode, *request,
                                subBatchContext);
 }

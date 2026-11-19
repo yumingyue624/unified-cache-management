@@ -31,7 +31,6 @@
 #include <functional>
 #include <memory>
 #include <mutex>
-#include <optional>
 #include <vector>
 #include "key_resolver.h"
 #include "kv_metrics/metrics.h"
@@ -90,8 +89,7 @@ struct TransportTask {
     TransportTask();
 
     NodeId nodeId{0};
-    // Client tasks provide an explicit namespace; direct transport callers use configuration.
-    std::optional<std::uint32_t> namespaceId;
+    std::uint32_t namespaceId{0};
     TaskId taskId{kInvalidTaskId};
     AsuOpType opType{AsuOpType::QUERY};
     std::weak_ptr<AsuTransport> transport;

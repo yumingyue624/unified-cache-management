@@ -54,8 +54,6 @@ void SetSubBatchSendFailed(TransportSubBatchContext& subBatchContext, const Stat
 Status TransportTaskExecutor::PrepareTaskSubBatches(
     const TransportTask& ctx, std::vector<TransportSubBatchContext>& subBatchContexts)
 {
-    const auto namespaceId =
-        IsKeepAliveOp(ctx.opType) ? 0U : GetTargetNamespaceId(ctx.namespaceId);
     if (IsEntryBatchOp(ctx.opType)) {
         const auto opType = ctx.opType;
         if (ctx.entries.empty()) {
@@ -68,7 +66,7 @@ Status TransportTaskExecutor::PrepareTaskSubBatches(
         for (std::size_t index = 0; index < subBatches.size(); ++index) {
             const auto& subBatch = subBatches[index];
             auto& subBatchContext = subBatchContexts.emplace_back();
-            subBatchContext.namespaceId = namespaceId;
+            subBatchContext.namespaceId = ctx.namespaceId;
             const auto subBatchStatus =
                 BuildEntrySubBatchRequest(opType, subBatch, subBatchContext);
             if (!subBatchStatus.ok()) {
@@ -91,7 +89,7 @@ Status TransportTaskExecutor::PrepareTaskSubBatches(
         for (std::size_t index = 0; index < subBatches.size(); ++index) {
             const auto& subBatch = subBatches[index];
             auto& subBatchContext = subBatchContexts.emplace_back();
-            subBatchContext.namespaceId = namespaceId;
+            subBatchContext.namespaceId = ctx.namespaceId;
             const auto subBatchStatus =
                 SubmitKeySubBatchRequest(ctx.opType, subBatch, subBatchContext);
             if (!subBatchStatus.ok()) {

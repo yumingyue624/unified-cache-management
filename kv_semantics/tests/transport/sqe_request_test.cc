@@ -208,7 +208,7 @@ protected:
     std::unique_ptr<AsuTransportImpl> transport_;
 };
 
-TEST_F(SqeRequestTest, ExplicitNamespaceOverridesTransportConfiguration)
+TEST_F(SqeRequestTest, TaskNamespaceIsEncodedInEachRequestType)
 {
     for (auto op : {AsuOpType::STORE, AsuOpType::LOAD, AsuOpType::BATCH_STORE,
                     AsuOpType::BATCH_LOAD, AsuOpType::QUERY, AsuOpType::DELETE}) {
@@ -223,7 +223,7 @@ TEST_F(SqeRequestTest, ExplicitNamespaceOverridesTransportConfiguration)
         ASSERT_TRUE(transport_->taskExecutor_->PrepareTaskSubBatches(task, batches).ok());
         ASSERT_EQ(batches.size(), 1U);
         const auto* sqe = reinterpret_cast<const std::uint32_t*>(batches[0].sendSge.local_addr);
-        EXPECT_EQ(sqe[1], *task.namespaceId);
+        EXPECT_EQ(sqe[1], task.namespaceId);
         const auto keyDword = op == AsuOpType::STORE || op == AsuOpType::LOAD ? 12U
                               : op == AsuOpType::BATCH_STORE || op == AsuOpType::BATCH_LOAD
                                   ? kSqeDwordCount + 1
@@ -233,20 +233,6 @@ TEST_F(SqeRequestTest, ExplicitNamespaceOverridesTransportConfiguration)
             0);
         transport_->taskExecutor_->ReleaseAllSubBatchResources(batches);
     }
-}
-
-TEST_F(SqeRequestTest, MissingTaskNamespaceUsesTransportConfiguration)
-{
-    TransportTask task;
-    task.opType = AsuOpType::DELETE;
-    task.keys = {MakeCacheKey("key")};
-    std::vector<TransportSubBatchContext> batches;
-    ASSERT_TRUE(transport_->taskExecutor_->PrepareTaskSubBatches(task, batches).ok());
-    ASSERT_EQ(batches.size(), 1U);
-    EXPECT_EQ(batches[0].namespaceId, 3U);
-    const auto* sqe = reinterpret_cast<const std::uint32_t*>(batches[0].sendSge.local_addr);
-    EXPECT_EQ(sqe[1], 3U);
-    transport_->taskExecutor_->ReleaseAllSubBatchResources(batches);
 }
 
 TEST_F(SqeRequestTest, ValidateSqeRequestAttrsRejectsMalformedValues)
