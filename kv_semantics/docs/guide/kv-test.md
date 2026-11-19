@@ -464,10 +464,6 @@ If `fake_backend.path` is empty, fake backend uses:
 ./kv-test-fake-backend-store
 ```
 
-The fake backend uses the SQE's `kv_ns_id` as its directory identifier.
-For KvClient requests this is the resolved GNSID. Direct transport tests can
-still use distinct configured namespace IDs to simulate separate ASUs.
-
 The fake backend copies and queues each SQE before `Send` returns. Dedicated IO
 workers process queued requests in parallel and publish the CQE/flag buffer when
 the mock file operation completes.
