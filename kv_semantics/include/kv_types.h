@@ -120,7 +120,7 @@ struct Status {
 
 // Per-request namespace and work that must finish before IO dispatch.
 struct IoOptions {
-    // XXH32 (seed 5381) produces the global namespace ID, not a protocol-local ID.
+    // The resolved namespace is hashed with XXH32 (seed 5381) and sent as the protocol ID.
     std::string kvns;
     // Runs once on the client worker; captured resources must remain valid until completion.
     std::function<Status()> prerequisite;
