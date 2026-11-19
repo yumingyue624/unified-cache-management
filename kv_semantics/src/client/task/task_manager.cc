@@ -282,7 +282,6 @@ Status ClientTaskManager::BuildTransportTasks(const ClientTaskPtr& task)
     }
 
     const bool keyOnly = task->opType == AsuOpType::QUERY || task->opType == AsuOpType::DELETE;
-    task->transportTasks.reserve(routes.size());
     for (const auto& [nodeId, indices] : routes) {
         std::unordered_map<std::uint32_t, std::size_t> taskIndexByGnsid;
         const auto firstTaskIndex = task->transportTasks.size();
