@@ -214,7 +214,7 @@ TEST_F(SqeRequestTest, ExplicitNamespaceOverridesTransportConfiguration)
                     AsuOpType::BATCH_LOAD, AsuOpType::QUERY, AsuOpType::DELETE}) {
         TransportTask task;
         task.opType = op;
-        task.kvNsId = 0x550d7456U;
+        task.namespaceId = 0x550d7456U;
         task.entries = MakeEntries(1);
         task.entries[0].key.gnsid = 0x550d7456U;
         SetMrKeys(task.entries, 1);
@@ -223,7 +223,7 @@ TEST_F(SqeRequestTest, ExplicitNamespaceOverridesTransportConfiguration)
         ASSERT_TRUE(transport_->taskExecutor_->PrepareTaskSubBatches(task, batches).ok());
         ASSERT_EQ(batches.size(), 1U);
         const auto* sqe = reinterpret_cast<const std::uint32_t*>(batches[0].sendSge.local_addr);
-        EXPECT_EQ(sqe[1], *task.kvNsId);
+        EXPECT_EQ(sqe[1], *task.namespaceId);
         const auto keyDword = op == AsuOpType::STORE || op == AsuOpType::LOAD ? 12U
                               : op == AsuOpType::BATCH_STORE || op == AsuOpType::BATCH_LOAD
                                   ? kSqeDwordCount + 1

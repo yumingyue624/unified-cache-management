@@ -79,11 +79,11 @@ private:
     Status BuildEntrySubBatchRequest(AsuOpType opType,
                                      const IoScheduler::ScheduledIoBatch& subBatch,
                                      TransportSubBatchContext& subBatchContext,
-                                     std::optional<std::uint32_t> kvNsId = std::nullopt);
+                                     std::optional<std::uint32_t> namespaceId = std::nullopt);
     Status SubmitKeySubBatchRequest(AsuOpType opType,
                                     const IoScheduler::ScheduledKeyBatch& subBatch,
                                     TransportSubBatchContext& subBatchContext,
-                                    std::optional<std::uint32_t> kvNsId = std::nullopt);
+                                    std::optional<std::uint32_t> namespaceId = std::nullopt);
     Status SubmitKeepAliveRequest(TransportSubBatchContext& subBatchContext);
 
     Status AssignSubBatchConnections(std::vector<TransportSubBatchContext>& subBatchContexts);

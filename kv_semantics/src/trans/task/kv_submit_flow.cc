@@ -67,7 +67,7 @@ Status TransportTaskExecutor::PrepareTaskSubBatches(
             const auto& subBatch = subBatches[index];
             auto& subBatchContext = subBatchContexts.emplace_back();
             const auto subBatchStatus =
-                BuildEntrySubBatchRequest(opType, subBatch, subBatchContext, ctx.kvNsId);
+                BuildEntrySubBatchRequest(opType, subBatch, subBatchContext, ctx.namespaceId);
             if (!subBatchStatus.ok()) {
                 KV_ERROR(
                     "Build entry sub-batch request failed index={} batch_size={} code={} "
@@ -89,7 +89,7 @@ Status TransportTaskExecutor::PrepareTaskSubBatches(
             const auto& subBatch = subBatches[index];
             auto& subBatchContext = subBatchContexts.emplace_back();
             const auto subBatchStatus =
-                SubmitKeySubBatchRequest(ctx.opType, subBatch, subBatchContext, ctx.kvNsId);
+                SubmitKeySubBatchRequest(ctx.opType, subBatch, subBatchContext, ctx.namespaceId);
             if (!subBatchStatus.ok()) {
                 KV_ERROR("Submit key sub-batch failed index={} batch_size={} code={} message={}",
                          index, subBatch.keys.size, static_cast<int>(subBatchStatus.code),
