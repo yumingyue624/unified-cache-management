@@ -464,6 +464,13 @@ If `fake_backend.path` is empty, fake backend uses:
 ./kv-test-fake-backend-store
 ```
 
+During this temporary integration stage, fake backend maps each
+`TransportConfig.nodeId` into `TransportConfig.attrs["kv_ns_id"]` before
+`Transport::Init`. The packed SQE carries `kv_ns_id`, so the mock backend can
+recover a per-ASU namespace from the send buffer without changing the Transport
+`Send` interface. This is a kv-test-only temporary semantic mapping, not a
+long-term protocol statement that KVNS_ID is ASU ID.
+
 The fake backend copies and queues each SQE before `Send` returns. Dedicated IO
 workers process queued requests in parallel and publish the CQE/flag buffer when
 the mock file operation completes.
