@@ -301,20 +301,11 @@ Status ClientTaskManager::BuildTransportTasks(const ClientTaskPtr& task)
                 transportTask->namespaceId = GetTargetNamespaceId(nodeId, gnsid);
                 task->transportTasks.push_back(std::move(transportTask));
             }
-            task->transportTasks[iter->second]->originalIndices.push_back(index);
-        }
-    }
-
-    // Move entries directly into their final vectors with exact capacity.
-    for (const auto& transportTask : task->transportTasks) {
-        if (keyOnly) {
-            transportTask->keys.reserve(transportTask->originalIndices.size());
-            for (auto index : transportTask->originalIndices) {
+            auto& transportTask = task->transportTasks[iter->second];
+            transportTask->originalIndices.push_back(index);
+            if (keyOnly) {
                 transportTask->keys.push_back(std::move(task->keys[index]));
-            }
-        } else {
-            transportTask->entries.reserve(transportTask->originalIndices.size());
-            for (auto index : transportTask->originalIndices) {
+            } else {
                 transportTask->entries.push_back(std::move(task->entries[index]));
             }
         }
