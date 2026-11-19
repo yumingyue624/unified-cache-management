@@ -54,6 +54,8 @@ void SetSubBatchSendFailed(TransportSubBatchContext& subBatchContext, const Stat
 Status TransportTaskExecutor::PrepareTaskSubBatches(
     const TransportTask& ctx, std::vector<TransportSubBatchContext>& subBatchContexts)
 {
+    const auto namespaceId =
+        IsKeepAliveOp(ctx.opType) ? 0U : GetTargetNamespaceId(ctx.namespaceId);
     if (IsEntryBatchOp(ctx.opType)) {
         const auto opType = ctx.opType;
         if (ctx.entries.empty()) {
@@ -66,8 +68,9 @@ Status TransportTaskExecutor::PrepareTaskSubBatches(
         for (std::size_t index = 0; index < subBatches.size(); ++index) {
             const auto& subBatch = subBatches[index];
             auto& subBatchContext = subBatchContexts.emplace_back();
+            subBatchContext.namespaceId = namespaceId;
             const auto subBatchStatus =
-                BuildEntrySubBatchRequest(opType, subBatch, subBatchContext, ctx.namespaceId);
+                BuildEntrySubBatchRequest(opType, subBatch, subBatchContext);
             if (!subBatchStatus.ok()) {
                 KV_ERROR(
                     "Build entry sub-batch request failed index={} batch_size={} code={} "
@@ -88,8 +91,9 @@ Status TransportTaskExecutor::PrepareTaskSubBatches(
         for (std::size_t index = 0; index < subBatches.size(); ++index) {
             const auto& subBatch = subBatches[index];
             auto& subBatchContext = subBatchContexts.emplace_back();
+            subBatchContext.namespaceId = namespaceId;
             const auto subBatchStatus =
-                SubmitKeySubBatchRequest(ctx.opType, subBatch, subBatchContext, ctx.namespaceId);
+                SubmitKeySubBatchRequest(ctx.opType, subBatch, subBatchContext);
             if (!subBatchStatus.ok()) {
                 KV_ERROR("Submit key sub-batch failed index={} batch_size={} code={} message={}",
                          index, subBatch.keys.size, static_cast<int>(subBatchStatus.code),

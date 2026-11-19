@@ -73,17 +73,16 @@ private:
     Status RegisterBufferMemory(BufferManager& bufferManager, MRHandle& mrHandle);
     Status UnregisterBufferMemory(MRHandle& mrHandle);
     std::uint16_t AllocateRequestCid();
+    std::uint32_t GetTargetNamespaceId(std::optional<std::uint32_t> namespaceId) const;
 
     Status PrepareTaskSubBatches(const TransportTask& task,
                                  std::vector<TransportSubBatchContext>& subBatchContexts);
     Status BuildEntrySubBatchRequest(AsuOpType opType,
                                      const IoScheduler::ScheduledIoBatch& subBatch,
-                                     TransportSubBatchContext& subBatchContext,
-                                     std::optional<std::uint32_t> namespaceId = std::nullopt);
+                                     TransportSubBatchContext& subBatchContext);
     Status SubmitKeySubBatchRequest(AsuOpType opType,
                                     const IoScheduler::ScheduledKeyBatch& subBatch,
-                                    TransportSubBatchContext& subBatchContext,
-                                    std::optional<std::uint32_t> namespaceId = std::nullopt);
+                                    TransportSubBatchContext& subBatchContext);
     Status SubmitKeepAliveRequest(TransportSubBatchContext& subBatchContext);
 
     Status AssignSubBatchConnections(std::vector<TransportSubBatchContext>& subBatchContexts);

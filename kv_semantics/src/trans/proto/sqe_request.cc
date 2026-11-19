@@ -311,34 +311,33 @@ KvKeepAliveRequest BuildKeepAliveRequest(std::uint16_t cid, const ScatterGatherE
 std::unique_ptr<SqeRequest> BuildSqeRequest(
     KvOpcode opcode, const SubBatchRequestSource& source,
     const std::unordered_map<std::string, std::string>& attrs, std::uint16_t cid,
-    const ScatterGatherEntry& flagBuffer, TransportSubBatchContext& subBatchContext,
-    std::optional<std::uint32_t> namespaceId = std::nullopt)
+    const ScatterGatherEntry& flagBuffer, TransportSubBatchContext& subBatchContext)
 {
-    if (!namespaceId) { namespaceId = GetTransportConfigAttr<std::uint32_t>(attrs, "kv_ns_id"); }
+    const auto namespaceId = subBatchContext.namespaceId;
     switch (opcode) {
         case KvOpcode::Store:
             if (source.entries == nullptr || source.entries->size != 1) { return nullptr; }
             return std::make_unique<KvStoreRequest>(
-                BuildStoreRequest(source.entries->data[0], attrs, cid, *namespaceId));
+                BuildStoreRequest(source.entries->data[0], attrs, cid, namespaceId));
         case KvOpcode::Retrieve:
             if (source.entries == nullptr || source.entries->size != 1) { return nullptr; }
             return std::make_unique<KvRetrieveRequest>(
-                BuildRetrieveRequest(source.entries->data[0], attrs, cid, *namespaceId));
+                BuildRetrieveRequest(source.entries->data[0], attrs, cid, namespaceId));
         case KvOpcode::BatchRetrieve:
             if (source.entries == nullptr) { return nullptr; }
             return std::make_unique<KvBatchRetrieveRequest>(
-                BuildBatchRetrieveRequest(*source.entries, attrs, cid, flagBuffer, *namespaceId));
+                BuildBatchRetrieveRequest(*source.entries, attrs, cid, flagBuffer, namespaceId));
         case KvOpcode::BatchStore:
             if (source.entries == nullptr) { return nullptr; }
             return std::make_unique<KvBatchStoreRequest>(
-                BuildBatchStoreRequest(*source.entries, attrs, cid, flagBuffer, *namespaceId));
+                BuildBatchStoreRequest(*source.entries, attrs, cid, flagBuffer, namespaceId));
         case KvOpcode::Delete:
             if (source.keys == nullptr) { return nullptr; }
             return std::make_unique<KvDeleteRequest>(
-                BuildDeleteRequest(*source.keys, cid, flagBuffer, *namespaceId));
+                BuildDeleteRequest(*source.keys, cid, flagBuffer, namespaceId));
         case KvOpcode::Exist: {
             if (source.keys == nullptr) { return nullptr; }
-            auto request = BuildExistRequest(*source.keys, attrs, cid, flagBuffer, *namespaceId);
+            auto request = BuildExistRequest(*source.keys, attrs, cid, flagBuffer, namespaceId);
             subBatchContext.useSeekControl = request.sc;
             return std::make_unique<KvExistRequest>(std::move(request));
         }
@@ -353,9 +352,16 @@ std::unique_ptr<SqeRequest> BuildSqeRequest(
 
 }  // namespace
 
+std::uint32_t TransportTaskExecutor::GetTargetNamespaceId(
+    std::optional<std::uint32_t> namespaceId) const
+{
+    if (namespaceId) { return *namespaceId; }
+    return GetTransportConfigAttr<std::uint32_t>(config_.attrs, "kv_ns_id");
+}
+
 Status TransportTaskExecutor::BuildEntrySubBatchRequest(
     AsuOpType opType, const IoScheduler::ScheduledIoBatch& subBatch,
-    TransportSubBatchContext& subBatchContext, std::optional<std::uint32_t> namespaceId)
+    TransportSubBatchContext& subBatchContext)
 {
     const auto source = SubBatchRequestSource::FromEntries(subBatch.entries);
     subBatchContext.entryStatus.assign(subBatch.entries.size, Status::OK());
@@ -373,14 +379,14 @@ Status TransportTaskExecutor::BuildEntrySubBatchRequest(
     if (!status.ok()) { return status; }
 
     auto request = BuildSqeRequest(opcode, source, config_.attrs, subBatchContext.cid,
-                                   subBatchContext.flagBuffer, subBatchContext, namespaceId);
+                                   subBatchContext.flagBuffer, subBatchContext);
     return PackSubBatchRequest(protocolManager_, sendBufferManager_, opcode, *request,
                                subBatchContext);
 }
 
 Status TransportTaskExecutor::SubmitKeySubBatchRequest(
     AsuOpType opType, const IoScheduler::ScheduledKeyBatch& subBatch,
-    TransportSubBatchContext& subBatchContext, std::optional<std::uint32_t> namespaceId)
+    TransportSubBatchContext& subBatchContext)
 {
     const auto source = SubBatchRequestSource::FromKeys(subBatch.keys);
     subBatchContext.entryStatus.assign(subBatch.keys.size, Status::OK());
@@ -391,7 +397,7 @@ Status TransportTaskExecutor::SubmitKeySubBatchRequest(
     if (!status.ok()) { return status; }
 
     auto request = BuildSqeRequest(opcode, source, config_.attrs, subBatchContext.cid,
-                                   subBatchContext.flagBuffer, subBatchContext, namespaceId);
+                                   subBatchContext.flagBuffer, subBatchContext);
     return PackSubBatchRequest(protocolManager_, sendBufferManager_, opcode, *request,
                                subBatchContext);
 }
